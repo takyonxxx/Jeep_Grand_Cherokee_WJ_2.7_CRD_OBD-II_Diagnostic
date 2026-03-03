@@ -539,7 +539,7 @@ class ELM327Emulator:
         return "OK"
 
     def _handle_obd(self, hex_cmd: str) -> str:
-        """OBD/KWP2000 hex komutunu işle."""
+        """OBD/KWP2000 hex komutunu isle. K-Line ve J1850 VPW destekler."""
         try:
             cmd_bytes = bytes.fromhex(hex_cmd)
         except ValueError:
@@ -551,11 +551,164 @@ class ELM327Emulator:
         service_id = cmd_bytes[0]
         data = cmd_bytes[1:]
 
+        # J1850 VPW mode (protocol 2) - TCM/ABS/Airbag
+        if self.protocol == 2:
+            return self._handle_j1850(service_id, data)
+
+        # K-Line KWP2000 mode (protocol 3/5) - Motor ECU / EPC
         resp = self.kwp.process(service_id, data)
         if resp is None:
             return "NO DATA"
 
         return self._format_response(resp)
+
+    def _handle_j1850(self, sid: int, data: bytes) -> str:
+        """J1850 VPW komutlarini isle (TCM, ABS, Airbag, BCM...)."""
+        target = self.tcm_state.active_target
+
+        # ReadDTC (SID 0x18) - DTC oku
+        if sid == 0x18:
+            if target == 0x28:  # TCM
+                dtcs = self.tcm_state.tcm_dtc_list
+            elif target == 0x40:  # ABS
+                dtcs = [(0xC0, 0x35, 0x01), (0xC0, 0x46, 0x28)]  # RF sensor + RR signal
+            elif target == 0x60:  # Airbag
+                dtcs = [(0xB1, 0x00, 0x18)]  # Airbag lamp (kayitli)
+            elif target == 0x80:  # BCM
+                dtcs = []
+            elif target == 0x62:  # SKIM
+                dtcs = []
+            else:
+                dtcs = []
+
+            if not dtcs:
+                return "NO DATA"
+
+            # J1850 DTC response: 58 <count> <DTC_HH> <DTC_LL> <status> ...
+            resp = "58 %02X" % len(dtcs)
+            for hi, lo, status in dtcs:
+                resp += " %02X %02X %02X" % (hi, lo, status)
+            return resp
+
+        # ClearDTC (SID 0x14)
+        if sid == 0x14:
+            if target == 0x28:
+                self.tcm_state.tcm_dtc_list.clear()
+                log.info("J1850 TCM DTC temizlendi")
+            elif target == 0x40:
+                log.info("J1850 ABS DTC temizlendi")
+            elif target == 0x60:
+                log.info("J1850 Airbag DTC temizlendi")
+            elif target == 0x80:
+                log.info("J1850 BCM DTC temizlendi")
+            else:
+                log.info("J1850 DTC temizlendi target=0x%02X", target)
+            return "54"  # positive response
+
+        # ReadDataByPID (SID 0x22)
+        if sid == 0x22 and len(data) >= 1:
+            pid = data[0]
+            if target == 0x28:  # TCM
+                return self._j1850_tcm_pid(pid)
+            elif target == 0x40:  # ABS
+                return self._j1850_abs_pid(pid)
+            elif target == 0x60:  # Airbag
+                return self._j1850_airbag_pid(pid)
+            elif target == 0x80:  # BCM
+                return self._j1850_bcm_pid(pid)
+            return "7F 22 31"  # requestOutOfRange
+
+        # ReadDTCByStatus (SID 0x19 variant)
+        if sid == 0x19:
+            return self._handle_j1850(0x18, data)  # redirect
+
+        return "7F %02X 11" % sid  # serviceNotSupported
+
+    def _j1850_tcm_pid(self, pid: int) -> str:
+        """J1850 TCM (NAG1 722.6) PID yanitlari."""
+        t = self.tcm_state
+        # Response: 62 <PID> <data...>
+        if pid == 0x01:  # Actual Gear
+            return "62 01 %02X" % t.current_gear
+        elif pid == 0x02:  # Selected Gear
+            return "62 02 %02X" % t.target_gear
+        elif pid == 0x10:  # Turbine RPM
+            rpm = int(t.turbine_rpm)
+            return "62 10 %02X %02X" % ((rpm >> 8) & 0xFF, rpm & 0xFF)
+        elif pid == 0x11:  # Output RPM
+            rpm = int(t.output_rpm)
+            return "62 11 %02X %02X" % ((rpm >> 8) & 0xFF, rpm & 0xFF)
+        elif pid == 0x14:  # Trans Temp (offset +40)
+            return "62 14 %02X" % min(255, int(t.trans_temp) + 40)
+        elif pid == 0x15:  # TCC Pressure
+            return "62 15 %02X" % int(t.tcc_pressure * 10)
+        elif pid == 0x20:  # Vehicle Speed
+            spd = int(t.vehicle_speed)
+            return "62 20 %02X %02X" % ((spd >> 8) & 0xFF, spd & 0xFF)
+        elif pid == 0x16:  # Solenoid Supply
+            return "62 16 %02X" % int(t.solenoid_voltage * 10)
+        elif pid == 0x17:  # TCC status
+            return "62 17 %02X" % t.tcc_status
+        else:
+            return "7F 22 31"  # requestOutOfRange
+
+    def _j1850_abs_pid(self, pid: int) -> str:
+        """J1850 ABS PID yanitlari."""
+        import random
+        base_speed = int(self.tcm_state.vehicle_speed)
+        if pid == 0x01:  # LF Wheel Speed
+            spd = base_speed + random.randint(-1, 1)
+            return "62 01 %02X %02X" % ((spd >> 8) & 0xFF, spd & 0xFF)
+        elif pid == 0x02:  # RF Wheel Speed
+            spd = base_speed + random.randint(-1, 1)
+            return "62 02 %02X %02X" % ((spd >> 8) & 0xFF, spd & 0xFF)
+        elif pid == 0x03:  # LR Wheel Speed
+            spd = base_speed + random.randint(-1, 1)
+            return "62 03 %02X %02X" % ((spd >> 8) & 0xFF, spd & 0xFF)
+        elif pid == 0x04:  # RR Wheel Speed
+            spd = base_speed + random.randint(-1, 1)
+            return "62 04 %02X %02X" % ((spd >> 8) & 0xFF, spd & 0xFF)
+        elif pid == 0x10:  # Vehicle Speed
+            return "62 10 %02X %02X" % ((base_speed >> 8) & 0xFF, base_speed & 0xFF)
+        elif pid == 0x20:  # Brake Switch
+            return "62 20 00"  # off
+        elif pid == 0x21:  # ABS Active
+            return "62 21 00"  # inactive
+        return "7F 22 31"
+
+    def _j1850_airbag_pid(self, pid: int) -> str:
+        """J1850 Airbag (ORC) PID yanitlari."""
+        if pid == 0x01:  # Airbag lamp status
+            return "62 01 00"  # off
+        elif pid == 0x02:  # Fault count
+            return "62 02 01"  # 1 fault
+        elif pid == 0x10:  # Driver squib 1 resistance
+            return "62 10 20"  # ~3.2 ohm (normal range)
+        elif pid == 0x11:  # Driver squib 2 resistance
+            return "62 11 1F"
+        elif pid == 0x12:  # Passenger squib 1 resistance
+            return "62 12 21"
+        elif pid == 0x13:  # Passenger squib 2 resistance
+            return "62 13 20"
+        elif pid == 0x20:  # Driver seat belt switch
+            return "62 20 01"  # buckled
+        elif pid == 0x21:  # Passenger seat belt switch
+            return "62 21 00"  # unbuckled
+        return "7F 22 31"
+
+    def _j1850_bcm_pid(self, pid: int) -> str:
+        """J1850 BCM (Body Controller) PID yanitlari."""
+        if pid == 0x01:  # Door ajar status (bitmask)
+            return "62 01 00"  # all closed
+        elif pid == 0x02:  # Headlamp status
+            return "62 02 00"  # off
+        elif pid == 0x03:  # Interior lamp
+            return "62 03 00"  # off
+        elif pid == 0x10:  # Battery IOD voltage
+            return "62 10 90"  # ~14.4V (raw/10)
+        elif pid == 0x11:  # Fuel level
+            return "62 11 50"  # ~50%
+        return "7F 22 31"
 
     def _format_response(self, raw_bytes: bytes) -> str:
         """Yanıt baytlarını ELM327 formatına dönüştür."""

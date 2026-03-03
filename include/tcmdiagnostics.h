@@ -2,82 +2,207 @@
 #include <QObject>
 #include <QMap>
 #include <QVariant>
+#include <QTimer>
 #include "elm327connection.h"
 #include "kwp2000handler.h"
 
-class TCMDiagnostics : public QObject
+// ============================================================
+// WJ 2.7 CRD Multi-Protocol Multi-Module Diagnostics
+// K-Line (ATSP5): 0x15=MotorECU, 0x20=EPC
+// J1850 VPW (ATSP2): 0x28=TCM, 0x40=ABS, 0x60=Airbag ...
+// ============================================================
+
+class WJDiagnostics : public QObject
 {
     Q_OBJECT
 public:
-    struct LiveParam {
-        uint8_t localID; QString name; QString unit;
-        double minVal; double maxVal; double factor; double offset;
-        int byteLen; bool isSigned;
-        bool isECU = false;
-    };
-    struct IOState {
-        uint8_t localID; QString name; bool isActive;
-        double currentValue; QString description;
-    };
-    enum class Gear : uint8_t {
-        Park=0,Reverse=1,Neutral=2,Drive1=3,Drive2=4,
-        Drive3=5,Drive4=6,Drive5=7,Limp=0xFF
+    // --- Gear Enum (NAG1 722.6) ---
+    enum class Gear : int {
+        Park=0, Reverse=1, Neutral=2,
+        Drive1=3, Drive2=4, Drive3=5, Drive4=6, Drive5=7,
+        Limp=8, Unknown=-1
     };
     Q_ENUM(Gear)
-    struct TCMStatus {
-        Gear currentGear=Gear::Park; Gear targetGear=Gear::Park;
-        double turbineRPM=0; double outputRPM=0; double engineRPM=0;
-        double vehicleSpeed=0; double transTemp=0;
-        double solenoidVoltage=0; double batteryVoltage=0;
-        double throttlePosition=0; double torqueConverterSlip=0;
-        bool tccEngaged=false; bool limpMode=false;
-        double coolantTemp=0; double turboBoost=0;
-        double mafSensor=0; double mapSensor=0; double linePressure=0;
+
+    // --- Module Addresses ---
+    enum class Module : uint8_t {
+        MotorECU     = 0x15,
+        EPC          = 0x20,
+        TCM          = 0x28,
+        TransferCase = 0x2A,
+        ABS          = 0x40,
+        Airbag       = 0x60,
+        SKIM         = 0x62,
+        ATC          = 0x68,
+        BCM          = 0x80,
+        Compass      = 0x87,
+        Cluster      = 0x90,
+        Radio        = 0x98,
+        Overhead     = 0xA0,
+    };
+    Q_ENUM(Module)
+
+    enum class BusType { KLine, J1850 };
+
+    // --- Data Structures ---
+    struct ModuleInfo {
+        Module id; QString name; QString shortName;
+        BusType bus; QString atshHeader; QString atwmWakeup; QString atspProtocol;
     };
 
-    explicit TCMDiagnostics(ELM327Connection *elm, QObject *parent=nullptr);
-    KWP2000Handler* kwp() const { return m_kwp; }
-    void startSession(std::function<void(bool)> callback=nullptr);
-    void stopSession();
-    void readTCMInfo(std::function<void(const QMap<QString,QString>&)> callback);
-    void readDTCs(std::function<void(const QList<KWP2000Handler::DTCInfo>&)> callback);
-    void clearDTCs(std::function<void(bool)> callback);
-    // Motor ECU (Bosch EDC15C2) durumu - Java wgdiag test vektorlerinden
-    struct ECUStatus {
-        double rpm=0; double injectionQty=0;      // 21 28: RPM, IQ (mg)
-        double coolantTemp=0; double iat=0;        // 21 12: coolant, intake air
-        double tps=0; double mapActual=0;          // 21 12: throttle, MAP
-        double aap=0;                              // 21 12: atmospheric pressure
-        double mafActual=0; double mafSpec=0;      // 21 20: MAF actual/specified
-        double railActual=0; double railSpec=0;    // 21 22: rail pressure
-        double mapSpec=0;                          // 21 22: MAP specified
-        double injCorr[5]={0,0,0,0,0};            // 21 28: injector corrections
+    struct DTCEntry {
+        QString code; QString description; uint8_t status;
+        bool isActive; int occurrences; Module source;
     };
-    void readAllLiveData(std::function<void(const TCMStatus&)> callback);
-    void readECULiveData(std::function<void(const ECUStatus&)> callback);
-    void readSingleParam(uint8_t localID, std::function<void(double)> callback);
-    void readIOStates(std::function<void(const QList<IOState>&)> callback);
-    void activateOutput(uint8_t localID, bool activate, std::function<void(bool)> callback);
+
+    struct LiveParam {
+        uint8_t localID; QString name; QString unit;
+        double minVal, maxVal, factor, offset;
+        int byteLen; bool isSigned;
+    };
+
+    struct IODefinition {
+        uint8_t localID;
+        QString name;
+        QString description;
+    };
+
+    struct IOState {
+        uint8_t localID;
+        bool isActive;
+        uint8_t rawValue;
+    };
+
+    struct ECUStatus {
+        double rpm=0, injectionQty=0;
+        double coolantTemp=0, iat=0, tps=0;
+        double mapActual=0, aap=0;
+        double mafActual=0, mafSpec=0;
+        double railActual=0, railSpec=0, mapSpec=0;
+        double injCorr[5]={0,0,0,0,0};
+        double boostPressure=0, boostSetpoint=0;
+        double batteryVoltage=0;
+    };
+
+    struct TCMStatus {
+        // Gear
+        Gear currentGear = Gear::Unknown;
+        int actualGear=0, selectedGear=0, maxGear=0;
+        // RPM
+        double turbineRPM=0, outputRPM=0;
+        // Temperatures & pressures
+        double transTemp=0, tccPressure=0;
+        double actualTCCslip=0, desTCCslip=0;
+        QString tccState;
+        double solenoidSupply=0;
+        double vehicleSpeed=0;
+        // Compat fields (eski dashboard icin)
+        double solenoidVoltage=0;
+        double batteryVoltage=0;
+        double coolantTemp=0;
+        double turboBoost=0;
+        double mafSensor=0;
+        double mapSensor=0;
+        double linePressure=0;
+        bool limpMode=false;
+    };
+
+    struct ABSStatus {
+        double wheelLF=0, wheelRF=0, wheelLR=0, wheelRR=0;
+        double vehicleSpeed=0;
+        bool absActive=false;
+        bool tractionControl=false;
+    };
+
+    struct AirbagStatus {
+        bool lampOn=false;
+        int faultCount=0;
+        QString driverSquib1, driverSquib2;
+        QString passengerSquib1, passengerSquib2;
+        QString driverCurtain, passengerCurtain;
+        QString driverSideImpact, passengerSideImpact;
+        QString seatBeltDriver, seatBeltPassenger;
+    };
+
+    // --- Constructor ---
+    explicit WJDiagnostics(ELM327Connection *elm, QObject *parent=nullptr);
+    KWP2000Handler* kwp() const { return m_kwp; }
+    ELM327Connection* elm() const { return m_elm; }
+
+    // --- Module Registry ---
+    static QList<ModuleInfo> allModules();
+    static ModuleInfo moduleInfo(Module mod);
+    static QString moduleName(Module mod);
+
+    // --- Protocol Switch ---
+    void switchToModule(Module mod, std::function<void(bool)> done=nullptr);
+    Module activeModule() const { return m_activeModule; }
+    BusType activeBus() const { return m_activeBus; }
+
+    // --- Session ---
+    void startSession(Module mod, std::function<void(bool)> cb=nullptr);
+    void startSession(std::function<void(bool)> cb); // compat: default=TCM
+    void stopSession();
+
+    // --- DTC ---
+    void readDTCs(Module mod, std::function<void(const QList<DTCEntry>&)> cb);
+    void readDTCs(std::function<void(const QList<KWP2000Handler::DTCInfo>&)> cb); // compat
+    void clearDTCs(Module mod, std::function<void(bool)> cb);
+    void clearDTCs(std::function<void(bool)> cb); // compat
+    void readModuleInfo(Module mod, std::function<void(const QMap<QString,QString>&)> cb);
+
+    // --- Live Data ---
+    void readECULiveData(std::function<void(const ECUStatus&)> cb);
+    void readTCMLiveData(std::function<void(const TCMStatus&)> cb);
+    void readABSLiveData(std::function<void(const ABSStatus&)> cb);
+    void readAllLiveData(std::function<void(const TCMStatus&)> cb); // compat
+    void readSingleParam(uint8_t localID, std::function<void(double)> cb); // compat
+
+    // --- I/O ---
+    QList<IODefinition> ioDefinitions() const;
+    void readIOStates(std::function<void(const QList<IOState>&)> cb);
+
+    // --- TCM Info (compat) ---
+    void readTCMInfo(std::function<void(const QMap<QString,QString>&)> cb);
+
+    // --- Raw ---
+    void rawBusDump(Module mod, const QList<uint8_t> &ids,
+                    std::function<void(uint8_t, const QByteArray&)> perID,
+                    std::function<void()> done);
+    void rawSendCommand(const QString &cmd, std::function<void(const QString&)> cb);
+
+    // --- Status ---
+    ECUStatus lastECUStatus() const { return m_lastECU; }
+    TCMStatus lastTCMStatus() const { return m_lastTCM; }
+    ABSStatus lastABSStatus() const { return m_lastABS; }
     QList<LiveParam> liveDataParams() const { return m_liveParams; }
-    QList<IOState> ioDefinitions() const;
-    TCMStatus lastStatus() const { return m_lastStatus; }
-    void switchToTCM(std::function<void()> done=nullptr);
-    void switchToECU(std::function<void()> done=nullptr);
+
 signals:
-    void sessionReady(bool success);
-    void statusUpdated(const TCMStatus &status);
-    void ecuStatusUpdated(const ECUStatus &ecuStatus);
-    void dtcListReady(const QList<KWP2000Handler::DTCInfo> &dtcs);
     void logMessage(const QString &msg);
+    void moduleReady(Module mod, bool success);
+    void dtcListReady(Module mod, const QList<DTCEntry> &dtcs);
+    void ecuStatusUpdated(const ECUStatus &st);
+    void tcmStatusUpdated(const TCMStatus &st);
+    void absStatusUpdated(const ABSStatus &st);
+
 private:
+    void parseECUBlock(uint8_t lid, const QByteArray &d, ECUStatus &ecu);
+    void fillTCMCompat(TCMStatus &tcm);
     void initLiveDataParams();
-    double decodeParam(const LiveParam &param, const QByteArray &data);
-    void parseECUBlock(uint8_t localID, const QByteArray &data, ECUStatus &ecu);
-    Gear decodeGear(uint8_t raw);
+    void _finishLegacySession(std::function<void(bool)> cb);
+    QList<DTCEntry> decodeJ1850DTCs(const QString &resp, Module src);
+    QList<DTCEntry> decodeKWPDTCs(const QByteArray &data, Module src);
+    QString dtcDescription(const QString &code, Module src);
+
     ELM327Connection *m_elm;
     KWP2000Handler *m_kwp;
+    Module m_activeModule = Module::MotorECU;
+    BusType m_activeBus = BusType::KLine;
+
+    ECUStatus m_lastECU;
+    TCMStatus m_lastTCM;
+    ABSStatus m_lastABS;
     QList<LiveParam> m_liveParams;
-    TCMStatus m_lastStatus;
-    ECUStatus m_lastECUStatus;
-    bool m_onECU = false;
 };
+
+using TCMDiagnostics = WJDiagnostics;

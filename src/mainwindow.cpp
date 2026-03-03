@@ -803,52 +803,29 @@ void MainWindow::onReadDTCs()
     QString src = m_dtcSourceECU ? "ECU (Motor)" : "TCM (Sanziman)";
     statusBar()->showMessage("Ariza kodlari okunuyor: " + src + "...");
 
-    // Header switch, then read DTCs
-    auto doRead = [this, src]() {
-        m_tcm->readDTCs([this, src](const QList<KWP2000Handler::DTCInfo> &dtcs) {
-            m_dtcTable->setRowCount(dtcs.size());
-            m_dtcCountLabel->setText(QString("Kaynak: %1 - %2 hata kodu").arg(src).arg(dtcs.size()));
+    auto mod = m_dtcSourceECU ? WJDiagnostics::Module::MotorECU : WJDiagnostics::Module::TCM;
+    m_tcm->readDTCs(mod, [this, src](const QList<WJDiagnostics::DTCEntry> &dtcs) {
+        m_dtcTable->setRowCount(0);
+        for (const auto &d : dtcs) {
+            int row = m_dtcTable->rowCount();
+            m_dtcTable->insertRow(row);
+            m_dtcTable->setItem(row, 0, new QTableWidgetItem(d.code));
+            m_dtcTable->setItem(row, 1, new QTableWidgetItem(d.description));
+            m_dtcTable->setItem(row, 2, new QTableWidgetItem(d.isActive ? "Aktif" : "Kayitli"));
+            m_dtcTable->setItem(row, 3, new QTableWidgetItem(
+                QString("0x%1").arg(d.status, 2, 16, QChar('0')).toUpper()));
 
-            for (int i = 0; i < dtcs.size(); ++i) {
-                const auto &dtc = dtcs[i];
-
-                m_dtcTable->setItem(i, 0, new QTableWidgetItem(src));
-                m_dtcTable->setItem(i, 1, new QTableWidgetItem(dtc.codeStr));
-                m_dtcTable->setItem(i, 2, new QTableWidgetItem(dtc.description));
-                m_dtcTable->setItem(i, 3, new QTableWidgetItem(
-                    QString("0x%1").arg(dtc.status, 2, 16, QChar('0'))));
-                m_dtcTable->setItem(i, 4, new QTableWidgetItem(
-                    dtc.isActive ? "AKTIF" : "Kayitli"));
-                m_dtcTable->setItem(i, 5, new QTableWidgetItem(
-                    QString::number(dtc.occurrences)));
-
-                // Kaynak rengi
-                QColor srcColor = m_dtcSourceECU ? QColor(60, 60, 20) : QColor(20, 40, 60);
-                m_dtcTable->item(i, 0)->setBackground(srcColor);
-
-                if (dtc.isActive) {
-                    for (int col = 1; col < 6; ++col) {
-                        m_dtcTable->item(i, col)->setBackground(QColor(80, 20, 20));
-                        m_dtcTable->item(i, col)->setForeground(QColor(255, 100, 100));
-                    }
-                }
-                if (dtc.codeStr == "P2602") {
-                    for (int col = 1; col < 6; ++col) {
-                        m_dtcTable->item(i, col)->setBackground(QColor(80, 60, 0));
-                        m_dtcTable->item(i, col)->setForeground(QColor(255, 200, 50));
-                    }
+            if (d.isActive) {
+                for (int col = 0; col < 4; ++col) {
+                    m_dtcTable->item(row, col)->setBackground(QColor(80, 20, 20));
+                    m_dtcTable->item(row, col)->setForeground(QColor(255, 100, 100));
                 }
             }
-            m_readDtcBtn->setEnabled(true);
-            statusBar()->showMessage(QString("%1 ariza kodu okundu (%2)").arg(dtcs.size()).arg(src));
-        });
-    };
-
-    if (m_dtcSourceECU) {
-        m_tcm->switchToECU([doRead]() { doRead(); });
-    } else {
-        m_tcm->switchToTCM([doRead]() { doRead(); });
-    }
+        }
+        m_readDtcBtn->setEnabled(true);
+        m_dtcCountLabel->setText(QString("Kaynak: %1 - %2 hata kodu").arg(src).arg(dtcs.size()));
+        statusBar()->showMessage(QString("%1 ariza kodu okundu (%2)").arg(dtcs.size()).arg(src));
+    });
 }
 
 void MainWindow::onClearDTCs()
@@ -864,24 +841,17 @@ void MainWindow::onClearDTCs()
         m_clearDtcBtn->setEnabled(false);
         statusBar()->showMessage(src + " ariza kodlari siliniyor...");
 
-        auto doClear = [this, src]() {
-            m_tcm->clearDTCs([this, src](bool success) {
-                m_clearDtcBtn->setEnabled(true);
-                if (success) {
-                    m_dtcTable->setRowCount(0);
-                    m_dtcCountLabel->setText(QString("Kaynak: %1 - 0 hata kodu").arg(src));
-                    statusBar()->showMessage(src + " ariza kodlari silindi");
-                } else {
-                    statusBar()->showMessage(src + " ariza kodlari silinemedi!");
-                }
-            });
-        };
-
-        if (m_dtcSourceECU) {
-            m_tcm->switchToECU([doClear]() { doClear(); });
-        } else {
-            m_tcm->switchToTCM([doClear]() { doClear(); });
-        }
+        auto mod = m_dtcSourceECU ? WJDiagnostics::Module::MotorECU : WJDiagnostics::Module::TCM;
+        m_tcm->clearDTCs(mod, [this, src](bool success) {
+            m_clearDtcBtn->setEnabled(true);
+            if (success) {
+                m_dtcTable->setRowCount(0);
+                m_dtcCountLabel->setText(QString("Kaynak: %1 - 0 hata kodu").arg(src));
+                statusBar()->showMessage(src + " ariza kodlari silindi");
+            } else {
+                statusBar()->showMessage(src + " ariza kodlari silinemedi!");
+            }
+        });
     }
 }
 
@@ -1083,49 +1053,35 @@ void MainWindow::onRawBusDump()
             m_logText->append(QString("<font color='#88ff88'>       RX [%1 byte]: %2</font>").arg(resp.size()).arg(hex.trimmed()));
     };
 
-    QList<uint8_t> tcmIDs = {0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,
-                              0x0B,0x0C,0x0D,0x0E,0x0F,0x10,0x11,0x12,0x13,0x14,
-                              0x15,0x16,0x20,0x21,0x22,0x23,0x30};
-    QList<uint8_t> ecuIDs = {0x12,0x20,0x22,0x26,0x28};
-
-    auto ctx = std::make_shared<int>(0);
-    auto allIDs = std::make_shared<QList<QPair<QString,uint8_t>>>();
-    for (auto id : tcmIDs) allIDs->append({"#00cccc", id});
-    allIDs->append({"switch", 0xFF});
-    for (auto id : ecuIDs) allIDs->append({"#ffcc00", id});
+    // Phase 1: Motor ECU (K-Line 0x15)
+    QList<uint8_t> ecuIDs = {0x12, 0x20, 0x22, 0x26, 0x28};
+    // Phase 2: TCM (J1850 VPW 0x28)
+    QList<uint8_t> tcmPIDs = {0x01, 0x02, 0x10, 0x11, 0x14, 0x15, 0x16, 0x17, 0x20};
 
     m_logText->append("<font color='white'>========== HAM BUS DUMP BASLADI ==========</font>");
-    m_logText->append("<font color='#00cccc'>--- TCM (0x10) Header: ATSH8110F1 ---</font>");
+    m_logText->append("<font color='#ffcc00'>--- Motor ECU (0x15) K-Line ATSH8115F1 ---</font>");
 
-    auto readNext = std::make_shared<std::function<void()>>();
-    *readNext = [this, ctx, allIDs, readNext, logHex]() {
-        if (*ctx >= allIDs->size()) {
-            m_tcm->switchToTCM([this]() {
-                m_logText->append("<font color='white'>========== HAM BUS DUMP TAMAMLANDI ==========</font>");
-                m_rawDumpBtn->setEnabled(true);
-                m_rawDumpBtn->setText("Ham Veri Oku (TCM+ECU)");
-            });
-            return;
-        }
-        auto pair = allIDs->at(*ctx);
-        if (pair.first == "switch") {
-            (*ctx)++;
-            m_tcm->switchToECU([this, readNext]() {
-                m_logText->append("<font color='#ffcc00'>--- ECU (0x15) Header: ATSH8115F1 ---</font>");
-                QTimer::singleShot(50, *readNext);
-            });
-            return;
-        }
-        QString color = pair.first;
-        uint8_t lid = pair.second;
-        QString cmdStr = QString("21 %1").arg(lid, 2, 16, QChar('0')).toUpper();
-        m_tcm->kwp()->readLocalData(lid, [this, ctx, readNext, logHex, color, cmdStr](const QByteArray &data) {
-            logHex(color, cmdStr, data);
-            (*ctx)++;
-            QTimer::singleShot(40, *readNext);
+    // Phase 1: Read ECU blocks via K-Line
+    m_tcm->rawBusDump(WJDiagnostics::Module::MotorECU, ecuIDs,
+        [this, logHex](uint8_t lid, const QByteArray &data) {
+            QString cmd = QString("21 %1").arg(lid, 2, 16, QChar('0')).toUpper();
+            logHex("#ffcc00", cmd, data);
+        },
+        [this, logHex, tcmPIDs]() {
+            // Phase 2: Switch to J1850 VPW and read TCM PIDs
+            m_logText->append("<font color='#00cccc'>--- TCM (0x28) J1850 VPW ATSH242822 ---</font>");
+
+            m_tcm->rawBusDump(WJDiagnostics::Module::TCM, tcmPIDs,
+                [this, logHex](uint8_t pid, const QByteArray &data) {
+                    QString cmd = QString("22 %1").arg(pid, 2, 16, QChar('0')).toUpper();
+                    logHex("#00cccc", cmd, data);
+                },
+                [this]() {
+                    m_logText->append("<font color='white'>========== HAM BUS DUMP TAMAMLANDI ==========</font>");
+                    m_rawDumpBtn->setEnabled(true);
+                    m_rawDumpBtn->setText("Ham Veri Oku (ECU+TCM)");
+                });
         });
-    };
-    m_tcm->switchToTCM([readNext]() { (*readNext)(); });
 }
 
 void MainWindow::onRawSendCustom()
