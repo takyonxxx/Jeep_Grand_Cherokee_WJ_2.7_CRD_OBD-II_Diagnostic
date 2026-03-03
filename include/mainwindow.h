@@ -32,7 +32,6 @@ private slots:
     void onLiveDataUpdated(const QMap<uint8_t,double>&);
     void onFullStatusUpdated(const TCMDiagnostics::TCMStatus&);
     void onReadIO();
-    void onReadTCMInfo();
     void onLogMessage(const QString&);
     void onRawBusDump();
     void onRawSendCustom();
@@ -63,7 +62,7 @@ private:
     bool m_tcmSessionActive = false;
     bool m_ecuSessionActive = false;
     QLabel *m_connStatusLabel,*m_elmVersionLabel,*m_batteryVoltLabel;
-    QLabel *m_tcmPartLabel,*m_tcmSwLabel,*m_tcmHwLabel;
+    QTimer *m_batteryTimer = nullptr;  // ATRV periyodik okuma
     QTableWidget *m_dtcTable; QPushButton *m_readDtcBtn,*m_clearDtcBtn; QLabel *m_dtcCountLabel;
     QPushButton *m_dtcTcmBtn,*m_dtcEcuBtn;
     bool m_dtcSourceECU = false; // false=TCM, true=ECU

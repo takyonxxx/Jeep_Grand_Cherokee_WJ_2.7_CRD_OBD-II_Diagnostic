@@ -10,6 +10,7 @@
 #include <QColor>
 #include <QApplication>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QScreen>
 #include <QScrollArea>
 #include <QScroller>
@@ -56,12 +57,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     setWindowTitle("WJ Diag - Jeep Grand Cherokee 2.7 CRD | NAG1 722.6 TCM");
 
-#ifdef Q_OS_ANDROID
-    // Android: tam ekran, ekran açık tut
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
     showMaximized();
+#ifdef Q_OS_ANDROID
     keepScreenOn(true);
+#endif
 #else
-    resize(900, 700);
+    // Windows/macOS: iPhone 16 Pro logical resolution ile basla (393x852pt)
+    resize(393, 852);
+    setMinimumSize(360, 640);
 #endif
 }
 
@@ -99,17 +103,16 @@ void MainWindow::setupUI()
     QWidget *central = new QWidget(this);
     QVBoxLayout *mainLayout = new QVBoxLayout(central);
 
-#ifdef Q_OS_ANDROID
-    // Android: daha büyük font ve margin
-    int btnH = 48;
-    mainLayout->setContentsMargins(4, 4, 4, 4);
-    mainLayout->setSpacing(4);
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
+    // Mobil: iPhone 16 Pro 393x852pt, Android benzer
+    mainLayout->setContentsMargins(3, 2, 3, 2);
+    mainLayout->setSpacing(2);
     QFont appFont = QApplication::font();
-    appFont.setPointSize(11);
+    appFont.setPointSize(10);
     QApplication::setFont(appFont);
 #else
-    int btnH = 0; // default
-    Q_UNUSED(btnH)
+    mainLayout->setContentsMargins(6, 6, 6, 6);
+    mainLayout->setSpacing(4);
 #endif
 
     // === ÜST PANEL: Durum Göstergeleri ===
@@ -122,13 +125,24 @@ void MainWindow::setupUI()
 
     // === TABLAR ===
     m_tabs = new QTabWidget();
-    m_tabs->addTab(createConnectionTab(), "Bağlantı");
-    m_tabs->addTab(createDTCTab(),        "Arıza Kodları");
-    m_tabs->addTab(createLiveDataTab(),   "Canlı Veri");
-    m_tabs->addTab(createIOTab(),         "I/O Kontrol");
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
+    // Mobil: kompakt tab basliklari
+    m_tabs->setStyleSheet(
+        "QTabWidget::pane{border:1px solid #2a2a4a;border-top:none;}"
+        "QTabBar::tab{background:#1a1a2e;color:#8888aa;padding:4px 6px;"
+        "border:1px solid #2a2a4a;border-bottom:none;border-radius:3px 3px 0 0;"
+        "font-size:9px;min-width:40px;}"
+        "QTabBar::tab:selected{background:#2a2a4a;color:#00ff88;font-weight:bold;}"
+    );
+    m_tabs->tabBar()->setExpanding(true);
+#endif
+    m_tabs->addTab(createConnectionTab(), "Baglanti");
+    m_tabs->addTab(createDTCTab(),        "Ariza");
+    m_tabs->addTab(createLiveDataTab(),   "Canli Veri");
+    m_tabs->addTab(createIOTab(),         "I/O");
     m_tabs->addTab(createABSTab(),        "ABS");
     m_tabs->addTab(createAirbagTab(),     "Airbag");
-    m_tabs->addTab(createLogTab(),        "İletişim Log");
+    m_tabs->addTab(createLogTab(),        "Log");
 
     mainLayout->addWidget(m_tabs);
     setCentralWidget(central);
@@ -147,22 +161,22 @@ QFrame* MainWindow::createGaugeCard(const QString &title, const QString &initVal
 {
     QFrame *card = new QFrame();
     card->setFrameShape(QFrame::StyledPanel);
-    card->setStyleSheet("QFrame{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:6px;padding:4px;}");
-    card->setMinimumWidth(80);
+    card->setStyleSheet("QFrame{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:4px;padding:2px;}");
+    card->setMinimumWidth(70);
     card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     QVBoxLayout *lay = new QVBoxLayout(card);
-    lay->setContentsMargins(4,2,4,2); lay->setSpacing(0);
+    lay->setContentsMargins(2,1,2,1); lay->setSpacing(0);
     QLabel *tl = new QLabel(title);
-    tl->setStyleSheet("color:#8888aa;font-size:9px;border:none;background:transparent;");
+    tl->setStyleSheet("color:#8888aa;font-size:8px;border:none;background:transparent;");
     tl->setAlignment(Qt::AlignCenter); lay->addWidget(tl);
     QLabel *vl = new QLabel(initValue);
     vl->setAlignment(Qt::AlignCenter);
-    vl->setStyleSheet("color:#00ff88;font-size:20px;font-weight:bold;"
+    vl->setStyleSheet("color:#00ff88;font-size:16px;font-weight:bold;"
         "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;");
     lay->addWidget(vl);
     QLabel *ul = new QLabel(unit);
     ul->setAlignment(Qt::AlignCenter);
-    ul->setStyleSheet("color:#6666aa;font-size:8px;border:none;background:transparent;");
+    ul->setStyleSheet("color:#6666aa;font-size:7px;border:none;background:transparent;");
     lay->addWidget(ul);
     *valueLabel = vl; *unitLabel = ul;
     return card;
@@ -174,20 +188,20 @@ QWidget* MainWindow::createDashboardPanel()
     QGridLayout *g = new QGridLayout(p);
     g->setContentsMargins(2,2,2,2); g->setSpacing(3);
 
-    // Row 0: Vites, Hiz, RPM, Su Sicakligi
+    // Row 0: Vites, Hiz, Turbin RPM, Trans Sicaklik
     g->addWidget(createGaugeCard("VITES","---","",&m_dashGearVal,&m_dashGearUnit), 0,0);
     g->addWidget(createGaugeCard("HIZ","---","km/h",&m_dashSpeedVal,&m_dashSpeedUnit), 0,1);
-    g->addWidget(createGaugeCard("RPM","---","rpm",&m_dashRpmVal,&m_dashRpmUnit), 0,2);
-    g->addWidget(createGaugeCard("SU SICAK","---","C",&m_dashCoolantVal,&m_dashCoolantUnit), 0,3);
+    g->addWidget(createGaugeCard("TURBIN","---","rpm",&m_dashRpmVal,&m_dashRpmUnit), 0,2);
+    g->addWidget(createGaugeCard("TRANS","---","C",&m_dashCoolantVal,&m_dashCoolantUnit), 0,3);
 
-    // Row 1: Turbo, MAF, MAP, Basinc
-    g->addWidget(createGaugeCard("TURBO","---","bar",&m_dashBoostVal,&m_dashBoostUnit), 1,0);
-    g->addWidget(createGaugeCard("MAF","---","g/s",&m_dashMafVal,&m_dashMafUnit), 1,1);
-    g->addWidget(createGaugeCard("MAP","---","kPa",&m_dashMapVal,&m_dashMapUnit), 1,2);
-    g->addWidget(createGaugeCard("BASINC","---","bar",&m_dashPressVal,&m_dashPressUnit), 1,3);
+    // Row 1: TCC Basinc, Mod PSI, Cikis RPM, Shift PSI
+    g->addWidget(createGaugeCard("TCC PSI","---","PSI",&m_dashBoostVal,&m_dashBoostUnit), 1,0);
+    g->addWidget(createGaugeCard("MOD PSI","---","PSI",&m_dashMafVal,&m_dashMafUnit), 1,1);
+    g->addWidget(createGaugeCard("CIKIS","---","rpm",&m_dashMapVal,&m_dashMapUnit), 1,2);
+    g->addWidget(createGaugeCard("SHIFT","---","PSI",&m_dashPressVal,&m_dashPressUnit), 1,3);
 
-    // Row 2: Selenoid V, Aku V, Limp (3 cards spanning 4 cols)
-    g->addWidget(createGaugeCard("SELENOID V","---","V",&m_dashSolVoltVal,&m_dashSolVoltUnit), 2,0);
+    // Row 2: Selenoid V, Aku V, Limp
+    g->addWidget(createGaugeCard("SOL V","---","V",&m_dashSolVoltVal,&m_dashSolVoltUnit), 2,0);
     g->addWidget(createGaugeCard("AKU","---","V",&m_dashBatVoltVal,&m_dashBatVoltUnit), 2,1);
     g->addWidget(createGaugeCard("LIMP","---","",&m_dashLimpVal,&m_dashLimpUnit), 2,2,1,2);
 
@@ -196,7 +210,7 @@ QWidget* MainWindow::createDashboardPanel()
 }
 
 void MainWindow::setGaugeColor(QLabel *vl, const QString &c) {
-    vl->setStyleSheet(QString("color:%1;font-size:20px;font-weight:bold;"
+    vl->setStyleSheet(QString("color:%1;font-size:16px;font-weight:bold;"
         "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;").arg(c));
 }
 
@@ -260,7 +274,7 @@ QWidget* MainWindow::createConnectionTab()
         "Jeep Grand Cherokee 2002-2005 WJ/WG 2.7 CRD Only\n"
         "Motor ECU: K-Line (ATSP5) | TCM/ABS/Airbag/Diger: J1850 VPW (ATSP2)\n"
         "Orijinal ELM327 onerisi: ATFI, ATWM, ATSH destegi gerekli");
-    compatInfo->setStyleSheet("background:#1a2a1a;padding:6px;border-radius:4px;"
+    compatInfo->setStyleSheet("background:#1a2a1a;padding:4px;border-radius:4px;"
                               "color:#88cc88;font-family:monospace;font-size:9px;");
     compatInfo->setWordWrap(true);
     layout->addWidget(compatInfo);
@@ -281,8 +295,8 @@ QWidget* MainWindow::createConnectionTab()
 
     m_connectBtn = new QPushButton("Bağlan");
     m_disconnectBtn = new QPushButton("Bağlantıyı Kes");
-    m_connectBtn->setMinimumHeight(44);
-    m_disconnectBtn->setMinimumHeight(44);
+    m_connectBtn->setMinimumHeight(34);
+    m_disconnectBtn->setMinimumHeight(34);
     m_disconnectBtn->setEnabled(false);
 
 
@@ -315,29 +329,19 @@ QWidget* MainWindow::createConnectionTab()
 
     m_startSessionBtn = new QPushButton("TCM Oturumu Baslat");
     m_startSessionBtn->setEnabled(false);
-    m_startSessionBtn->setMinimumHeight(44);
+    m_startSessionBtn->setMinimumHeight(34);
     m_startSessionBtn->setStyleSheet(
         "QPushButton{background:#1a3a5a;color:white;border:1px solid #3a6a9a;border-radius:4px;}"
         "QPushButton:hover{background:#2a4a6a;}");
     tcmLayout->addWidget(m_startSessionBtn);
 
     QLabel *tcmProto = new QLabel(
-        "Protokol: K-Line ISO 9141-2 (ATSP3)\n"
-        "Adres: 0x10 (EGS - NAG1 722.6)\n"
-        "Header: 81 10 F1  |  Init: 5-baud @ 0x10");
-    tcmProto->setStyleSheet("background:#1a2a3a;padding:6px;border-radius:4px;"
-                            "color:#88ff88;font-family:monospace;font-size:10px;");
+        "Protokol: J1850 VPW (ATSP2)\n"
+        "Adres: 0x28 (TCM - NAG1 722.6)\n"
+        "Header: ATSH2428xx  |  SID 0x22 ReadDataByPID");
+    tcmProto->setStyleSheet("background:#1a2a3a;padding:4px;border-radius:4px;"
+                            "color:#88ff88;font-family:monospace;font-size:9px;");
     tcmLayout->addWidget(tcmProto);
-
-    QPushButton *readInfoBtn = new QPushButton("TCM Bilgilerini Oku");
-    tcmLayout->addWidget(readInfoBtn);
-
-    m_tcmPartLabel = new QLabel("Part No: ---");
-    m_tcmSwLabel   = new QLabel("Yazilim: ---");
-    m_tcmHwLabel   = new QLabel("Donanim: ---");
-    tcmLayout->addWidget(m_tcmPartLabel);
-    tcmLayout->addWidget(m_tcmSwLabel);
-    tcmLayout->addWidget(m_tcmHwLabel);
 
     layout->addWidget(tcmBox);
 
@@ -348,25 +352,25 @@ QWidget* MainWindow::createConnectionTab()
 
     m_startEcuBtn = new QPushButton("ECU Oturumu Baslat");
     m_startEcuBtn->setEnabled(false);
-    m_startEcuBtn->setMinimumHeight(44);
+    m_startEcuBtn->setMinimumHeight(34);
     m_startEcuBtn->setStyleSheet(
         "QPushButton{background:#3a3a1a;color:white;border:1px solid #6a6a3a;border-radius:4px;}"
         "QPushButton:hover{background:#4a4a2a;}");
     ecuLayout->addWidget(m_startEcuBtn);
 
     QLabel *ecuProto = new QLabel(
-        "Protokol: K-Line ISO 9141-2 (ATSP3)\n"
+        "Protokol: K-Line ISO 14230-4 (ATSP5)\n"
         "Adres: 0x15 (Motor ECU - Bosch EDC15C2)\n"
-        "Header: 81 15 F1  |  ATSP5 + ATFI");
-    ecuProto->setStyleSheet("background:#2a2a1a;padding:6px;border-radius:4px;"
-                            "color:#ffdd88;font-family:monospace;font-size:10px;");
+        "Header: ATSH8115F1  |  ATWM8115F13E");
+    ecuProto->setStyleSheet("background:#2a2a1a;padding:4px;border-radius:4px;"
+                            "color:#ffdd88;font-family:monospace;font-size:9px;");
     ecuLayout->addWidget(ecuProto);
 
     layout->addWidget(ecuBox);
 
     // === Aktif Header Gostergesi ===
     m_activeHeaderLabel = new QLabel("Aktif Header: ---  (Baglanti bekleniyor)");
-    m_activeHeaderLabel->setStyleSheet("background:#2a2a3a;padding:8px;border-radius:4px;"
+    m_activeHeaderLabel->setStyleSheet("background:#2a2a3a;padding:4px;border-radius:4px;"
                                        "color:#aaaaaa;font-family:monospace;font-weight:bold;");
     m_activeHeaderLabel->setAlignment(Qt::AlignCenter);
     layout->addWidget(m_activeHeaderLabel);
@@ -411,7 +415,6 @@ QWidget* MainWindow::createConnectionTab()
             updateActiveHeaderLabel();
         });
     });
-    connect(readInfoBtn, &QPushButton::clicked, this, &MainWindow::onReadTCMInfo);
 
     connect(m_startEcuBtn, &QPushButton::clicked, this, [this]() {
         m_ecuSessionActive = !m_ecuSessionActive;
@@ -449,7 +452,7 @@ QWidget* MainWindow::createDTCTab()
     m_dtcTcmBtn = new QPushButton("TCM (Sanziman)");
     m_dtcTcmBtn->setCheckable(true);
     m_dtcTcmBtn->setChecked(true);
-    m_dtcTcmBtn->setMinimumHeight(36);
+    m_dtcTcmBtn->setMinimumHeight(34);
     m_dtcTcmBtn->setStyleSheet(
         "QPushButton{background:#1a3a5a;color:white;border:1px solid #3a6a9a;border-radius:4px;padding:4px 12px;}"
         "QPushButton:checked{background:#2a5a2a;color:#88ff88;border:1px solid #4a8a4a;font-weight:bold;}");
@@ -457,7 +460,7 @@ QWidget* MainWindow::createDTCTab()
     m_dtcEcuBtn = new QPushButton("ECU (Motor)");
     m_dtcEcuBtn->setCheckable(true);
     m_dtcEcuBtn->setChecked(false);
-    m_dtcEcuBtn->setMinimumHeight(36);
+    m_dtcEcuBtn->setMinimumHeight(34);
     m_dtcEcuBtn->setStyleSheet(
         "QPushButton{background:#3a3a1a;color:white;border:1px solid #6a6a3a;border-radius:4px;padding:4px 12px;}"
         "QPushButton:checked{background:#2a5a2a;color:#88ff88;border:1px solid #4a8a4a;font-weight:bold;}");
@@ -492,8 +495,8 @@ QWidget* MainWindow::createDTCTab()
     m_clearDtcBtn = new QPushButton("Ariza Kodlarini Sil");
     m_dtcCountLabel = new QLabel("Kaynak: TCM - 0 hata kodu");
 
-    m_readDtcBtn->setMinimumHeight(44);
-    m_clearDtcBtn->setMinimumHeight(44);
+    m_readDtcBtn->setMinimumHeight(34);
+    m_clearDtcBtn->setMinimumHeight(34);
     m_readDtcBtn->setEnabled(false);
     m_clearDtcBtn->setEnabled(false);
 
@@ -523,7 +526,7 @@ QWidget* MainWindow::createDTCTab()
         "NOT: P2602 (Selenoid Voltaji) genellikle zayif aku veya "
         "sanziman 13-pin soket kontagi nedeniyle olusur.");
     p2602Note->setWordWrap(true);
-    p2602Note->setStyleSheet("background:#3a3a20;padding:8px;border-radius:4px;color:#ffcc44;");
+    p2602Note->setStyleSheet("background:#3a3a20;padding:4px;border-radius:4px;color:#ffcc44;");
     layout->addWidget(p2602Note);
 
     connect(m_readDtcBtn, &QPushButton::clicked, this, &MainWindow::onReadDTCs);
@@ -543,9 +546,9 @@ QWidget* MainWindow::createLiveDataTab()
     m_stopLiveBtn  = new QPushButton("Durdur");
     m_logBtn       = new QPushButton("CSV'ye Kaydet...");
 
-    m_startLiveBtn->setMinimumHeight(44);
-    m_stopLiveBtn->setMinimumHeight(44);
-    m_logBtn->setMinimumHeight(44);
+    m_startLiveBtn->setMinimumHeight(34);
+    m_stopLiveBtn->setMinimumHeight(34);
+    m_logBtn->setMinimumHeight(34);
     m_startLiveBtn->setEnabled(false);
     m_stopLiveBtn->setEnabled(false);
 
@@ -614,23 +617,25 @@ QWidget* MainWindow::createLiveDataTab()
     connect(m_logBtn, &QPushButton::clicked, this, [this]() {
         if (m_liveData->isLogging()) {
             m_liveData->stopLogging();
-            m_logBtn->setText("CSV'ye Kaydet...");
+            m_logBtn->setText("CSV Kaydet");
+            statusBar()->showMessage("Log kaydedildi");
         } else {
-#ifdef Q_OS_ANDROID
-            // Android: Documents klasörüne kaydet
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
+            // Mobil: Documents klasorune otomatik kaydet
             QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
             if (dir.isEmpty())
                 dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-            QString path = dir + "/wjdiag_"
+            QString fname = "wjdiag_"
                 + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") + ".csv";
+            QString path = dir + "/" + fname;
             QDir().mkpath(dir);
 #else
             QString path = QFileDialog::getSaveFileName(
-                this, "Log Dosyası Kaydet", "wjdiag_log.csv", "CSV (*.csv)");
+                this, "Log Dosyasi Kaydet", "wjdiag_log.csv", "CSV (*.csv)");
 #endif
             if (!path.isEmpty()) {
                 m_liveData->startLogging(path);
-                m_logBtn->setText("Kaydı Durdur");
+                m_logBtn->setText("Kaydi Durdur");
                 statusBar()->showMessage("Log: " + path);
             }
         }
@@ -645,7 +650,7 @@ QWidget* MainWindow::createIOTab()
     QVBoxLayout *layout = new QVBoxLayout(w);
 
     m_readIOBtn = new QPushButton("I/O Durumlarını Oku");
-    m_readIOBtn->setMinimumHeight(44);
+    m_readIOBtn->setMinimumHeight(34);
     m_readIOBtn->setEnabled(false);
     layout->addWidget(m_readIOBtn);
 
@@ -701,11 +706,11 @@ QWidget* MainWindow::createABSTab()
     // DTC Butonlari
     QHBoxLayout *btnLayout = new QHBoxLayout();
     m_absReadDtcBtn = new QPushButton("ABS DTC Oku");
-    m_absReadDtcBtn->setMinimumHeight(44);
+    m_absReadDtcBtn->setMinimumHeight(34);
     m_absClearDtcBtn = new QPushButton("ABS DTC Sil");
-    m_absClearDtcBtn->setMinimumHeight(44);
+    m_absClearDtcBtn->setMinimumHeight(34);
     m_absLiveBtn = new QPushButton("ABS Canli Veri");
-    m_absLiveBtn->setMinimumHeight(44);
+    m_absLiveBtn->setMinimumHeight(34);
     btnLayout->addWidget(m_absReadDtcBtn);
     btnLayout->addWidget(m_absClearDtcBtn);
     btnLayout->addWidget(m_absLiveBtn);
@@ -729,7 +734,7 @@ QWidget* MainWindow::createABSTab()
     m_absRRLabel = new QLabel("Sag Arka: ---");
     m_absSpeedLabel = new QLabel("Arac Hizi: ---");
     for (auto *l : {m_absLFLabel, m_absRFLabel, m_absLRLabel, m_absRRLabel, m_absSpeedLabel})
-        l->setStyleSheet("color:#00ff88;font-size:14px;font-family:monospace;");
+        l->setStyleSheet("color:#00ff88;font-size:12px;font-family:monospace;");
     lg->addWidget(m_absLFLabel, 0, 0);  lg->addWidget(m_absRFLabel, 0, 1);
     lg->addWidget(m_absLRLabel, 1, 0);  lg->addWidget(m_absRRLabel, 1, 1);
     lg->addWidget(m_absSpeedLabel, 2, 0, 1, 2);
@@ -793,9 +798,9 @@ QWidget* MainWindow::createAirbagTab()
 
     QHBoxLayout *btnLayout = new QHBoxLayout();
     m_airbagReadDtcBtn = new QPushButton("Airbag DTC Oku");
-    m_airbagReadDtcBtn->setMinimumHeight(44);
+    m_airbagReadDtcBtn->setMinimumHeight(34);
     m_airbagClearDtcBtn = new QPushButton("Airbag DTC Sil");
-    m_airbagClearDtcBtn->setMinimumHeight(44);
+    m_airbagClearDtcBtn->setMinimumHeight(34);
     m_airbagClearDtcBtn->setStyleSheet("QPushButton{background:#5a2020;color:#ff8888;border:1px solid #8a4040;border-radius:4px;}"
                                         "QPushButton:hover{background:#6a3030;}");
     btnLayout->addWidget(m_airbagReadDtcBtn);
@@ -817,7 +822,7 @@ QWidget* MainWindow::createAirbagTab()
         "DIKKAT: Airbag DTC silme islemi sadece arizalar giderildikten sonra yapilmalidir.\n"
         "Aktif airbag arizasi durumunda arac guvenli degildir!");
     warning->setWordWrap(true);
-    warning->setStyleSheet("background:#4a2020;padding:8px;border-radius:4px;"
+    warning->setStyleSheet("background:#4a2020;padding:4px;border-radius:4px;"
                            "color:#ff6666;font-weight:bold;");
     layout->addWidget(warning);
 
@@ -878,9 +883,34 @@ QWidget* MainWindow::createLogTab()
     connect(clearLogBtn, &QPushButton::clicked, m_logText, &QTextEdit::clear);
     logBtnLayout->addWidget(clearLogBtn);
 
+    QPushButton *saveLogBtn = new QPushButton("Log Kaydet");
+    saveLogBtn->setStyleSheet("background:#2a3a2a; color:#88ff88; font-weight:bold; padding:4px 8px;");
+    connect(saveLogBtn, &QPushButton::clicked, this, [this]() {
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
+        QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        if (dir.isEmpty())
+            dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QDir().mkpath(dir);
+        QString path = dir + "/wjdiag_log_"
+            + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") + ".txt";
+#else
+        QString path = QFileDialog::getSaveFileName(
+            this, "Log Kaydet", "wjdiag_comm.txt", "Text (*.txt)");
+#endif
+        if (!path.isEmpty()) {
+            QFile f(path);
+            if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                f.write(m_logText->toPlainText().toUtf8());
+                f.close();
+                statusBar()->showMessage("Log kaydedildi: " + path);
+            }
+        }
+    });
+    logBtnLayout->addWidget(saveLogBtn);
+
     // --- Ham Bus Veri Dump butonu ---
     m_rawDumpBtn = new QPushButton("Ham Veri Oku (TCM+ECU)");
-    m_rawDumpBtn->setStyleSheet("background:#2a4858; color:#00ffcc; font-weight:bold; padding:6px 12px;");
+    m_rawDumpBtn->setStyleSheet("background:#2a4858; color:#00ffcc; font-weight:bold; padding:4px 12px;");
     m_rawDumpBtn->setToolTip("TCM ve ECU'dan tum local ID'leri okuyup ham hex veriyi log'a basar");
     connect(m_rawDumpBtn, &QPushButton::clicked, this, &MainWindow::onRawBusDump);
     logBtnLayout->addWidget(m_rawDumpBtn);
@@ -893,13 +923,14 @@ QWidget* MainWindow::createLogTab()
     logBtnLayout->addWidget(cmdLabel);
 
     m_rawCmdEdit = new QLineEdit();
-    m_rawCmdEdit->setPlaceholderText("Ornek: 21 01  veya  ATRV");
-    m_rawCmdEdit->setFixedWidth(200);
-    m_rawCmdEdit->setStyleSheet("background:#1a1a2e; color:#00ff00; border:1px solid #444; padding:4px;");
+    m_rawCmdEdit->setPlaceholderText("21 01 veya ATRV");
+    m_rawCmdEdit->setMinimumWidth(100);
+    m_rawCmdEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_rawCmdEdit->setStyleSheet("background:#1a1a2e; color:#00ff00; border:1px solid #444; padding:3px;");
     logBtnLayout->addWidget(m_rawCmdEdit);
 
     m_rawSendBtn = new QPushButton("Gonder");
-    m_rawSendBtn->setStyleSheet("background:#4a2858; color:#ff88ff; font-weight:bold; padding:6px 12px;");
+    m_rawSendBtn->setStyleSheet("background:#4a2858; color:#ff88ff; font-weight:bold; padding:4px 12px;");
     connect(m_rawSendBtn, &QPushButton::clicked, this, &MainWindow::onRawSendCustom);
     connect(m_rawCmdEdit, &QLineEdit::returnPressed, this, &MainWindow::onRawSendCustom);
     logBtnLayout->addWidget(m_rawSendBtn);
@@ -927,7 +958,7 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
 {
     switch (state) {
     case ELM327Connection::ConnectionState::Disconnected:
-        m_connStatusLabel->setText("Durum: Bağlı Değil");
+        m_connStatusLabel->setText("Durum: Bagli Degil");
         m_connStatusLabel->setStyleSheet("color: red; font-weight: bold;");
         m_connectBtn->setEnabled(true);
         m_disconnectBtn->setEnabled(false);
@@ -936,7 +967,8 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
         m_clearDtcBtn->setEnabled(false);
         m_startLiveBtn->setEnabled(false);
         m_readIOBtn->setEnabled(false);
-        statusBar()->showMessage("Bağlantı kesildi");
+        if (m_batteryTimer) m_batteryTimer->stop();
+        statusBar()->showMessage("Baglanti kesildi");
         break;
 
     case ELM327Connection::ConnectionState::Connecting:
@@ -952,14 +984,37 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
         break;
 
     case ELM327Connection::ConnectionState::Ready:
-        m_connStatusLabel->setText("Durum: Hazır ✓");
+        m_connStatusLabel->setText("Durum: Hazir");
         m_connStatusLabel->setStyleSheet("color: lime; font-weight: bold;");
         m_connectBtn->setEnabled(false);
         m_disconnectBtn->setEnabled(true);
         m_startSessionBtn->setEnabled(true);
         m_elmVersionLabel->setText("Versiyon: " + m_elm->elmVersion());
-        m_batteryVoltLabel->setText("Akü Voltajı: " + m_elm->elmVoltage());
-        statusBar()->showMessage("ELM327 hazır - Diagnostik oturum başlatabilirsiniz");
+        m_batteryVoltLabel->setText("Aku: " + m_elm->elmVoltage());
+
+        // Aku voltaji periyodik okuma (5 saniyede bir ATRV)
+        if (!m_batteryTimer) {
+            m_batteryTimer = new QTimer(this);
+            connect(m_batteryTimer, &QTimer::timeout, this, [this]() {
+                if (m_elm->isConnected()) {
+                    m_elm->sendCommand("ATRV", [this](const QString &resp) {
+                        if (!resp.contains("ERROR") && !resp.contains("?")) {
+                            QString volts = resp.trimmed().remove("V").trimmed();
+                            bool ok;
+                            double v = volts.toDouble(&ok);
+                            if (ok) {
+                                m_batteryVoltLabel->setText(QString("Aku: %1 V").arg(v, 0, 'f', 1));
+                                m_dashBatVoltVal->setText(QString::number(v, 'f', 1));
+                                setGaugeColor(m_dashBatVoltVal,
+                                    v < 11.5 ? "#ff4444" : v < 12.5 ? "#ffaa00" : "#00ff88");
+                            }
+                        }
+                    });
+                }
+            });
+        }
+        m_batteryTimer->start(5000);
+        statusBar()->showMessage("ELM327 hazir - Diagnostik oturum baslatabilirsiniz");
         break;
 
     case ELM327Connection::ConnectionState::Error:
@@ -1135,15 +1190,6 @@ void MainWindow::onReadIO()
     });
 }
 
-void MainWindow::onReadTCMInfo()
-{
-    m_tcm->readTCMInfo([this](const QMap<QString, QString> &info) {
-        m_tcmPartLabel->setText("Part No: " + info.value("PartNumber", "Okunamadı"));
-        m_tcmSwLabel->setText("Yazılım: " + info.value("SoftwareVersion", "Okunamadı"));
-        m_tcmHwLabel->setText("Donanım: " + info.value("HardwareVersion", "Okunamadı"));
-    });
-}
-
 void MainWindow::onLogMessage(const QString &msg)
 {
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
@@ -1178,19 +1224,19 @@ void MainWindow::updateActiveHeaderLabel()
     QString style;
     if (m_tcmSessionActive && m_ecuSessionActive) {
         text = "Aktif: TCM (J1850) + ECU (K-Line)  |  Dual Mode";
-        style = "background:#2a3a2a;padding:8px;border-radius:4px;"
+        style = "background:#2a3a2a;padding:4px;border-radius:4px;"
                 "color:#88ffaa;font-family:monospace;font-weight:bold;";
     } else if (m_tcmSessionActive) {
         text = "Aktif: TCM  |  J1850 VPW  |  ATSH2428xx  |  NAG1 722.6";
-        style = "background:#1a3a5a;padding:8px;border-radius:4px;"
+        style = "background:#1a3a5a;padding:4px;border-radius:4px;"
                 "color:#88ccff;font-family:monospace;font-weight:bold;";
     } else if (m_ecuSessionActive) {
         text = "Aktif: ECU  |  ATSH 81 15 F1  |  Motor OM612 (EDC15C2)";
-        style = "background:#3a3a1a;padding:8px;border-radius:4px;"
+        style = "background:#3a3a1a;padding:4px;border-radius:4px;"
                 "color:#ffcc44;font-family:monospace;font-weight:bold;";
     } else {
         text = "Aktif Header: ---  (Oturum baslatilmadi)";
-        style = "background:#2a2a3a;padding:8px;border-radius:4px;"
+        style = "background:#2a2a3a;padding:4px;border-radius:4px;"
                 "color:#aaaaaa;font-family:monospace;font-weight:bold;";
     }
     m_activeHeaderLabel->setText(text);
