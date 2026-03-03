@@ -126,6 +126,8 @@ void MainWindow::setupUI()
     m_tabs->addTab(createDTCTab(),        "Arıza Kodları");
     m_tabs->addTab(createLiveDataTab(),   "Canlı Veri");
     m_tabs->addTab(createIOTab(),         "I/O Kontrol");
+    m_tabs->addTab(createABSTab(),        "ABS");
+    m_tabs->addTab(createAirbagTab(),     "Airbag");
     m_tabs->addTab(createLogTab(),        "İletişim Log");
 
     mainLayout->addWidget(m_tabs);
@@ -683,6 +685,179 @@ QWidget* MainWindow::createIOTab()
     return w;
 }
 
+QWidget* MainWindow::createABSTab()
+{
+    QWidget *w = new QWidget();
+    QVBoxLayout *layout = new QVBoxLayout(w);
+
+    // ABS Bilgi
+    QLabel *absInfo = new QLabel("ABS / ESP Modulu (J1850 VPW - Adres: 0x40)");
+    absInfo->setStyleSheet("color:#88ccff;font-weight:bold;padding:4px;");
+    layout->addWidget(absInfo);
+
+    // DTC Butonlari
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    m_absReadDtcBtn = new QPushButton("ABS DTC Oku");
+    m_absReadDtcBtn->setMinimumHeight(44);
+    m_absClearDtcBtn = new QPushButton("ABS DTC Sil");
+    m_absClearDtcBtn->setMinimumHeight(44);
+    m_absLiveBtn = new QPushButton("ABS Canli Veri");
+    m_absLiveBtn->setMinimumHeight(44);
+    btnLayout->addWidget(m_absReadDtcBtn);
+    btnLayout->addWidget(m_absClearDtcBtn);
+    btnLayout->addWidget(m_absLiveBtn);
+    layout->addLayout(btnLayout);
+
+    // DTC Tablosu
+    m_absDtcTable = new QTableWidget(0, 4);
+    m_absDtcTable->setHorizontalHeaderLabels({"Kod", "Aciklama", "Durum", "Status"});
+    m_absDtcTable->horizontalHeader()->setStretchLastSection(true);
+    m_absDtcTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_absDtcTable->setAlternatingRowColors(true);
+    m_absDtcTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    layout->addWidget(m_absDtcTable);
+
+    // Canli veri label'lari
+    QGroupBox *liveGroup = new QGroupBox("Tekerlek Hizlari");
+    QGridLayout *lg = new QGridLayout(liveGroup);
+    m_absLFLabel = new QLabel("Sol On: ---");
+    m_absRFLabel = new QLabel("Sag On: ---");
+    m_absLRLabel = new QLabel("Sol Arka: ---");
+    m_absRRLabel = new QLabel("Sag Arka: ---");
+    m_absSpeedLabel = new QLabel("Arac Hizi: ---");
+    for (auto *l : {m_absLFLabel, m_absRFLabel, m_absLRLabel, m_absRRLabel, m_absSpeedLabel})
+        l->setStyleSheet("color:#00ff88;font-size:14px;font-family:monospace;");
+    lg->addWidget(m_absLFLabel, 0, 0);  lg->addWidget(m_absRFLabel, 0, 1);
+    lg->addWidget(m_absLRLabel, 1, 0);  lg->addWidget(m_absRRLabel, 1, 1);
+    lg->addWidget(m_absSpeedLabel, 2, 0, 1, 2);
+    layout->addWidget(liveGroup);
+
+    m_absDtcCountLabel = new QLabel("0 hata kodu");
+    layout->addWidget(m_absDtcCountLabel);
+
+    // Sinyaller
+    connect(m_absReadDtcBtn, &QPushButton::clicked, this, [this]() {
+        m_absReadDtcBtn->setEnabled(false);
+        m_tcm->readDTCs(WJDiagnostics::Module::ABS, [this](const QList<WJDiagnostics::DTCEntry> &dtcs) {
+            m_absDtcTable->setRowCount(0);
+            for (const auto &d : dtcs) {
+                int row = m_absDtcTable->rowCount();
+                m_absDtcTable->insertRow(row);
+                m_absDtcTable->setItem(row, 0, new QTableWidgetItem(d.code));
+                m_absDtcTable->setItem(row, 1, new QTableWidgetItem(d.description));
+                m_absDtcTable->setItem(row, 2, new QTableWidgetItem(d.isActive ? "Aktif" : "Kayitli"));
+                m_absDtcTable->setItem(row, 3, new QTableWidgetItem(
+                    QString("0x%1").arg(d.status, 2, 16, QChar('0')).toUpper()));
+                if (d.isActive) {
+                    for (int c=0;c<4;c++) {
+                        m_absDtcTable->item(row,c)->setBackground(QColor(80,20,20));
+                        m_absDtcTable->item(row,c)->setForeground(QColor(255,100,100));
+                    }
+                }
+            }
+            m_absDtcCountLabel->setText(QString("%1 hata kodu").arg(dtcs.size()));
+            m_absReadDtcBtn->setEnabled(true);
+        });
+    });
+
+    connect(m_absClearDtcBtn, &QPushButton::clicked, this, [this]() {
+        m_tcm->clearDTCs(WJDiagnostics::Module::ABS, [this](bool ok) {
+            if (ok) { m_absDtcTable->setRowCount(0); m_absDtcCountLabel->setText("DTC silindi"); }
+        });
+    });
+
+    connect(m_absLiveBtn, &QPushButton::clicked, this, [this]() {
+        m_tcm->readABSLiveData([this](const WJDiagnostics::ABSStatus &abs) {
+            m_absLFLabel->setText(QString("Sol On: %1 km/h").arg(abs.wheelLF));
+            m_absRFLabel->setText(QString("Sag On: %1 km/h").arg(abs.wheelRF));
+            m_absLRLabel->setText(QString("Sol Arka: %1 km/h").arg(abs.wheelLR));
+            m_absRRLabel->setText(QString("Sag Arka: %1 km/h").arg(abs.wheelRR));
+            m_absSpeedLabel->setText(QString("Arac Hizi: %1 km/h").arg(abs.vehicleSpeed));
+        });
+    });
+
+    return w;
+}
+
+QWidget* MainWindow::createAirbagTab()
+{
+    QWidget *w = new QWidget();
+    QVBoxLayout *layout = new QVBoxLayout(w);
+
+    QLabel *airbagInfo = new QLabel("Airbag / ORC Modulu (J1850 VPW - Adres: 0x60)");
+    airbagInfo->setStyleSheet("color:#ff8844;font-weight:bold;padding:4px;");
+    layout->addWidget(airbagInfo);
+
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    m_airbagReadDtcBtn = new QPushButton("Airbag DTC Oku");
+    m_airbagReadDtcBtn->setMinimumHeight(44);
+    m_airbagClearDtcBtn = new QPushButton("Airbag DTC Sil");
+    m_airbagClearDtcBtn->setMinimumHeight(44);
+    m_airbagClearDtcBtn->setStyleSheet("QPushButton{background:#5a2020;color:#ff8888;border:1px solid #8a4040;border-radius:4px;}"
+                                        "QPushButton:hover{background:#6a3030;}");
+    btnLayout->addWidget(m_airbagReadDtcBtn);
+    btnLayout->addWidget(m_airbagClearDtcBtn);
+    layout->addLayout(btnLayout);
+
+    m_airbagDtcTable = new QTableWidget(0, 4);
+    m_airbagDtcTable->setHorizontalHeaderLabels({"Kod", "Aciklama", "Durum", "Status"});
+    m_airbagDtcTable->horizontalHeader()->setStretchLastSection(true);
+    m_airbagDtcTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_airbagDtcTable->setAlternatingRowColors(true);
+    m_airbagDtcTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    layout->addWidget(m_airbagDtcTable);
+
+    m_airbagDtcCountLabel = new QLabel("0 hata kodu");
+    layout->addWidget(m_airbagDtcCountLabel);
+
+    QLabel *warning = new QLabel(
+        "DIKKAT: Airbag DTC silme islemi sadece arizalar giderildikten sonra yapilmalidir.\n"
+        "Aktif airbag arizasi durumunda arac guvenli degildir!");
+    warning->setWordWrap(true);
+    warning->setStyleSheet("background:#4a2020;padding:8px;border-radius:4px;"
+                           "color:#ff6666;font-weight:bold;");
+    layout->addWidget(warning);
+
+    // Sinyaller
+    connect(m_airbagReadDtcBtn, &QPushButton::clicked, this, [this]() {
+        m_airbagReadDtcBtn->setEnabled(false);
+        m_tcm->readDTCs(WJDiagnostics::Module::Airbag, [this](const QList<WJDiagnostics::DTCEntry> &dtcs) {
+            m_airbagDtcTable->setRowCount(0);
+            for (const auto &d : dtcs) {
+                int row = m_airbagDtcTable->rowCount();
+                m_airbagDtcTable->insertRow(row);
+                m_airbagDtcTable->setItem(row, 0, new QTableWidgetItem(d.code));
+                m_airbagDtcTable->setItem(row, 1, new QTableWidgetItem(d.description));
+                m_airbagDtcTable->setItem(row, 2, new QTableWidgetItem(d.isActive ? "Aktif" : "Kayitli"));
+                m_airbagDtcTable->setItem(row, 3, new QTableWidgetItem(
+                    QString("0x%1").arg(d.status, 2, 16, QChar('0')).toUpper()));
+                if (d.isActive) {
+                    for (int c=0;c<4;c++) {
+                        m_airbagDtcTable->item(row,c)->setBackground(QColor(80,20,20));
+                        m_airbagDtcTable->item(row,c)->setForeground(QColor(255,100,100));
+                    }
+                }
+            }
+            m_airbagDtcCountLabel->setText(QString("%1 hata kodu").arg(dtcs.size()));
+            m_airbagReadDtcBtn->setEnabled(true);
+        });
+    });
+
+    connect(m_airbagClearDtcBtn, &QPushButton::clicked, this, [this]() {
+        auto reply = QMessageBox::warning(this, "Airbag DTC Sil",
+            "Airbag hata kodlarini silmek istediginizden emin misiniz?\n\n"
+            "Bu islemi sadece ariza giderildikten sonra yapin!",
+            QMessageBox::Yes | QMessageBox::No);
+        if (reply == QMessageBox::Yes) {
+            m_tcm->clearDTCs(WJDiagnostics::Module::Airbag, [this](bool ok) {
+                if (ok) { m_airbagDtcTable->setRowCount(0); m_airbagDtcCountLabel->setText("DTC silindi"); }
+            });
+        }
+    });
+
+    return w;
+}
+
 QWidget* MainWindow::createLogTab()
 {
     QWidget *w = new QWidget();
@@ -999,11 +1174,11 @@ void MainWindow::updateActiveHeaderLabel()
     QString text;
     QString style;
     if (m_tcmSessionActive && m_ecuSessionActive) {
-        text = "Aktif: TCM + ECU  |  Dual Mode  |  Otomatik Header Switch";
+        text = "Aktif: TCM (J1850) + ECU (K-Line)  |  Dual Mode";
         style = "background:#2a3a2a;padding:8px;border-radius:4px;"
                 "color:#88ffaa;font-family:monospace;font-weight:bold;";
     } else if (m_tcmSessionActive) {
-        text = "Aktif: TCM  |  ATSH 81 10 F1  |  NAG1 722.6";
+        text = "Aktif: TCM  |  J1850 VPW  |  ATSH2428xx  |  NAG1 722.6";
         style = "background:#1a3a5a;padding:8px;border-radius:4px;"
                 "color:#88ccff;font-family:monospace;font-weight:bold;";
     } else if (m_ecuSessionActive) {

@@ -566,6 +566,12 @@ class ELM327Emulator:
         """J1850 VPW komutlarini isle (TCM, ABS, Airbag, BCM...)."""
         target = self.tcm_state.active_target
 
+        # DiagSession (SID 0x10)
+        if sid == 0x10:
+            session_type = data[0] if data else 0x89
+            log.info("J1850 DiagSession type=0x%02X target=0x%02X", session_type, target)
+            return "50 %02X" % session_type  # positive response
+
         # ReadDTC (SID 0x18) - DTC oku
         if sid == 0x18:
             if target == 0x28:  # TCM
@@ -622,33 +628,107 @@ class ELM327Emulator:
         if sid == 0x19:
             return self._handle_j1850(0x18, data)  # redirect
 
+        # ReadIdentification (SID 0xA0) - TCM modul bilgisi
+        if sid == 0xA0 and len(data) >= 1:
+            option = data[0]
+            if option == 0x01:  # Part Number
+                return "E0 01 4E 41 47 31 2D 37 32 32 2E 36"  # "NAG1-722.6"
+            elif option == 0x02:  # Software Version
+                return "E0 02 56 31 2E 30 33"  # "V1.03"
+            elif option == 0x03:  # Hardware Version
+                return "E0 03 48 57 31 2E 30 30"  # "HW1.00"
+            return "7F A0 31"
+
+        # ReadAdaptation (SID 0xA3) - adaptasyon verileri
+        if sid == 0xA3:
+            return "E3 00 80 00 80 00 80"  # dummy adaptation
+
         return "7F %02X 11" % sid  # serviceNotSupported
 
     def _j1850_tcm_pid(self, pid: int) -> str:
-        """J1850 TCM (NAG1 722.6) PID yanitlari."""
+        """J1850 TCM (NAG1 722.6) PID yanitlari - APK referansindan."""
         t = self.tcm_state
         # Response: 62 <PID> <data...>
-        if pid == 0x01:  # Actual Gear
+        # === 1-byte degerler ===
+        if pid == 0x01:    # Actual Gear
             return "62 01 %02X" % t.current_gear
         elif pid == 0x02:  # Selected Gear
             return "62 02 %02X" % t.target_gear
-        elif pid == 0x10:  # Turbine RPM
-            rpm = int(t.turbine_rpm)
-            return "62 10 %02X %02X" % ((rpm >> 8) & 0xFF, rpm & 0xFF)
-        elif pid == 0x11:  # Output RPM
-            rpm = int(t.output_rpm)
-            return "62 11 %02X %02X" % ((rpm >> 8) & 0xFF, rpm & 0xFF)
-        elif pid == 0x14:  # Trans Temp (offset +40)
+        elif pid == 0x03:  # Max Gear
+            return "62 03 %02X" % min(5, t.current_gear + 2)
+        elif pid == 0x04:  # Shift Selector Position
+            return "62 04 %02X" % t.selector_pos
+        elif pid == 0x14:  # Transmission Temp (offset +40)
             return "62 14 %02X" % min(255, int(t.trans_temp) + 40)
-        elif pid == 0x15:  # TCC Pressure
-            return "62 15 %02X" % int(t.tcc_pressure * 10)
-        elif pid == 0x20:  # Vehicle Speed
-            spd = int(t.vehicle_speed)
-            return "62 20 %02X %02X" % ((spd >> 8) & 0xFF, spd & 0xFF)
-        elif pid == 0x16:  # Solenoid Supply
-            return "62 16 %02X" % int(t.solenoid_voltage * 10)
-        elif pid == 0x17:  # TCC status
+        elif pid == 0x15:  # TCC Pressure (*10 PSI)
+            return "62 15 %02X" % min(255, int(t.tcc_pressure * 10))
+        elif pid == 0x16:  # Solenoid Supply Voltage (*10 = 0.1V)
+            return "62 16 %02X" % min(255, int(t.solenoid_voltage))
+        elif pid == 0x17:  # TCC Clutch State
             return "62 17 %02X" % t.tcc_status
+        elif pid == 0x1A:  # Act 1245 Solenoid (duty %)
+            return "62 1A %02X" % random.randint(20, 80)
+        elif pid == 0x1B:  # Set 1245 Solenoid
+            return "62 1B %02X" % random.randint(20, 80)
+        elif pid == 0x1C:  # Act 2-3 Solenoid
+            return "62 1C %02X" % random.randint(20, 80)
+        elif pid == 0x1D:  # Set 2-3 Solenoid
+            return "62 1D %02X" % random.randint(20, 80)
+        elif pid == 0x1E:  # Act 3-4 Solenoid
+            return "62 1E %02X" % random.randint(20, 80)
+        elif pid == 0x1F:  # Set 3-4 Solenoid
+            return "62 1F %02X" % random.randint(20, 80)
+        elif pid == 0x25:  # Park Lockout Solenoid
+            return "62 25 %02X" % (1 if t.current_gear == 0 else 0)
+        elif pid == 0x26:  # Park/Neutral Switch
+            return "62 26 %02X" % (1 if t.current_gear <= 2 else 0)
+        elif pid == 0x27:  # Brake Light Switch
+            return "62 27 00"
+        elif pid == 0x28:  # Primary Brake Switch
+            return "62 28 00"
+        elif pid == 0x29:  # Secondary Brake Switch
+            return "62 29 00"
+        elif pid == 0x2A:  # Kickdown Switch
+            return "62 2A 00"
+        elif pid == 0x2B:  # Fuel QTY Torque
+            return "62 2B %02X" % random.randint(30, 90)
+        elif pid == 0x2C:  # Swirl Solenoid
+            return "62 2C 00"
+        elif pid == 0x2D:  # Wastegate Solenoid
+            return "62 2D %02X" % random.randint(0, 50)
+        elif pid == 0x30:  # Calculated Gear
+            return "62 30 %02X" % t.current_gear
+        # === 2-byte degerler ===
+        elif pid == 0x10:  # Turbine RPM
+            rpm = int(t.turbine_rpm) & 0xFFFF
+            return "62 10 %02X %02X" % ((rpm >> 8) & 0xFF, rpm & 0xFF)
+        elif pid == 0x11:  # Input RPM (N2)
+            rpm = int(t.turbine_rpm * 0.95) & 0xFFFF
+            return "62 11 %02X %02X" % ((rpm >> 8) & 0xFF, rpm & 0xFF)
+        elif pid == 0x12:  # Input RPM (N3)
+            rpm = int(t.turbine_rpm * 0.90) & 0xFFFF
+            return "62 12 %02X %02X" % ((rpm >> 8) & 0xFF, rpm & 0xFF)
+        elif pid == 0x13:  # Output RPM
+            rpm = int(t.output_rpm) & 0xFFFF
+            return "62 13 %02X %02X" % ((rpm >> 8) & 0xFF, rpm & 0xFF)
+        elif pid == 0x18:  # Actual TCC Slip (signed)
+            slip = int(t.turbine_rpm - t.output_rpm) & 0xFFFF
+            return "62 18 %02X %02X" % ((slip >> 8) & 0xFF, slip & 0xFF)
+        elif pid == 0x19:  # Desired TCC Slip (signed)
+            return "62 19 00 32"  # ~50 rpm
+        elif pid == 0x20:  # Vehicle Speed
+            spd = int(t.vehicle_speed) & 0xFFFF
+            return "62 20 %02X %02X" % ((spd >> 8) & 0xFF, spd & 0xFF)
+        elif pid == 0x21:  # Front Vehicle Speed
+            spd = int(t.vehicle_speed) & 0xFFFF
+            return "62 21 %02X %02X" % ((spd >> 8) & 0xFF, spd & 0xFF)
+        elif pid == 0x22:  # Rear Vehicle Speed
+            spd = int(t.vehicle_speed) & 0xFFFF
+            return "62 22 %02X %02X" % ((spd >> 8) & 0xFF, spd & 0xFF)
+        elif pid == 0x23:  # Shift PSI
+            return "62 23 %02X %02X" % (0, random.randint(50, 120))
+        elif pid == 0x24:  # Modulation PSI
+            return "62 24 %02X %02X" % (0, random.randint(60, 100))
         else:
             return "7F 22 31"  # requestOutOfRange
 

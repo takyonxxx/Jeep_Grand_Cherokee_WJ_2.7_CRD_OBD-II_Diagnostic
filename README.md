@@ -240,26 +240,61 @@ Control option byte `07` = shortTermAdjustment. Value bytes are uint16 big-endia
 | `ATSH2428A0` | ReadECUIdentification |
 | `ATSH2428A3` | ReadECUIdentification (variant) |
 
-### 5.2 TCM Live Data Parameters
+### 5.2 TCM Live Data Parameters (J1850 VPW PID Table)
 
-- Actual Gear / Selected Gear / Calculated Gear / Max Gear
-- Turbine RPM / Input RPM (N2) / Input RPM (N3) / Output RPM
-- Transmission Temp
-- TCC Pressure / Actual TCC slip / Des TCC slip
-- Torque Converter Clutch state
-- Act/Set 1245 Solenoid / Act/Set 2-3 Solenoid / Act/Set 3-4 Solenoid
-- Solenoid Supply
-- Park Lockout Solenoid
-- Front Vehicle speed / Rear Vehicle speed
-- Vehicle Speed
-- Kickdown Switch Actuated
-- SLP / SLP Input
-- Pressure Switch
-- Shift PSI / Modulation PSI
-- Park/Neutral Switch
-- Brake Switch / Primary Brake Switch / Secondary Brake Switch
-- RPM (engine RPM via CAN)
-- Gear Ratio
+Read via `ATSH242822` header, command `22 XX`, response `62 XX <data>`.
+
+| PID | Parameter | Unit | Bytes | Formula |
+|-----|-----------|------|-------|---------|
+| 0x01 | Actual Gear | - | 1 | raw (0=P,1=R,2=N,3-7=D1-D5) |
+| 0x02 | Selected Gear | - | 1 | raw |
+| 0x03 | Max Gear | - | 1 | raw |
+| 0x04 | Shift Selector Position | - | 1 | raw |
+| 0x10 | Turbine RPM | rpm | 2 | (HH<<8)\|LL |
+| 0x11 | Input RPM (N2) | rpm | 2 | (HH<<8)\|LL |
+| 0x12 | Input RPM (N3) | rpm | 2 | (HH<<8)\|LL |
+| 0x13 | Output RPM | rpm | 2 | (HH<<8)\|LL |
+| 0x14 | Transmission Temp | °C | 1 | raw - 40 |
+| 0x15 | TCC Pressure | PSI | 1 | raw * 0.1 |
+| 0x16 | Solenoid Supply | V | 1 | raw * 0.1 |
+| 0x17 | TCC Clutch State | - | 1 | 0=off,1=partial,2=locked |
+| 0x18 | Actual TCC Slip | rpm | 2 | signed int16 |
+| 0x19 | Desired TCC Slip | rpm | 2 | signed int16 |
+| 0x1A | Act 1245 Solenoid | % | 1 | raw * 0.39 |
+| 0x1B | Set 1245 Solenoid | % | 1 | raw * 0.39 |
+| 0x1C | Act 2-3 Solenoid | % | 1 | raw * 0.39 |
+| 0x1D | Set 2-3 Solenoid | % | 1 | raw * 0.39 |
+| 0x1E | Act 3-4 Solenoid | % | 1 | raw * 0.39 |
+| 0x1F | Set 3-4 Solenoid | % | 1 | raw * 0.39 |
+| 0x20 | Vehicle Speed | km/h | 2 | (HH<<8)\|LL |
+| 0x21 | Front Vehicle Speed | km/h | 2 | (HH<<8)\|LL |
+| 0x22 | Rear Vehicle Speed | km/h | 2 | (HH<<8)\|LL |
+| 0x23 | Shift PSI | PSI | 2 | (HH<<8)\|LL * 0.1 |
+| 0x24 | Modulation PSI | PSI | 2 | (HH<<8)\|LL * 0.1 |
+| 0x25 | Park Lockout Solenoid | - | 1 | 0=off,1=on |
+| 0x26 | Park/Neutral Switch | - | 1 | 0=off,1=on |
+| 0x27 | Brake Light Switch | - | 1 | 0=off,1=on |
+| 0x28 | Primary Brake Switch | - | 1 | 0=off,1=on |
+| 0x29 | Secondary Brake Switch | - | 1 | 0=off,1=on |
+| 0x2A | Kickdown Switch | - | 1 | 0=off,1=on |
+| 0x2B | Fuel QTY Torque | % | 1 | raw * 0.39 |
+| 0x2C | Swirl Solenoid | - | 1 | 0=off,1=on |
+| 0x2D | Wastegate Solenoid | % | 1 | raw * 0.39 |
+| 0x30 | Calculated Gear | - | 1 | raw |
+
+#### 5.2.1 Freeze Frame Data (DTC ile birlikte kayıt)
+
+| Field | Description |
+|-------|-------------|
+| AG | Actual Gear at fault |
+| CG | Calculated Gear at fault |
+| TG | Target Gear at fault |
+| Battery | Battery voltage (V) |
+| Km | Odometer (km) |
+| RPM | Engine RPM |
+| RpmTurb | Turbine RPM |
+| SLP | Selector Lever Position |
+| PIS | Pressure Switch Input State |
 
 ### 5.3 NAG1 TCM Fault Code Table (Mercedes ID Format)
 
@@ -352,12 +387,21 @@ Each stored DTC includes freeze frame data with:
 - C3/JR ABS Only
 - RS/RG ABS w/Traction Control
 
-### 6.3 ABS Live Data Parameters
+### 6.3 ABS Live Data Parameters (J1850 VPW PID Table)
 
-- LF Wheel Speed / RF Wheel Speed / LR Wheel Speed / RR Wheel Speed
-- Front Vehicle speed / Rear Vehicle speed
-- Brake Light Switch / Park Brake
-- Primary Brake Switch / Secondary Brake Switch
+Read via `ATSH244022` header, command `22 XX`, response `62 XX <data>`.
+
+| PID | Parameter | Unit | Bytes | Formula |
+|-----|-----------|------|-------|---------|
+| 0x01 | LF Wheel Speed | km/h | 2 | (HH<<8)\|LL |
+| 0x02 | RF Wheel Speed | km/h | 2 | (HH<<8)\|LL |
+| 0x03 | LR Wheel Speed | km/h | 2 | (HH<<8)\|LL |
+| 0x04 | RR Wheel Speed | km/h | 2 | (HH<<8)\|LL |
+| 0x10 | Vehicle Speed | km/h | 2 | (HH<<8)\|LL |
+| 0x20 | Brake Light Switch | - | 1 | 0=off,1=on |
+| 0x21 | ABS Active | - | 1 | 0=inactive,1=active |
+| 0x22 | Park Brake | - | 1 | 0=off,1=on |
+| 0x23 | Traction Control Active | - | 1 | 0=off,1=on |
 
 ### 6.4 ABS Fault Code Descriptions
 
@@ -405,7 +449,24 @@ Each stored DTC includes freeze frame data with:
 | `ATSH2460A3` | Read ECU Identification (variant) |
 | `ATSH2460B4` | DTC Clear |
 
-### 7.2 Airbag Fault Code Descriptions
+### 7.2 Airbag Live Data Parameters
+
+Read via `ATSH246022` header, command `22 XX`, response `62 XX <data>`.
+
+| PID | Parameter | Bytes |
+|-----|-----------|-------|
+| 0x01 | Airbag Lamp Status | 1 |
+| 0x02 | Fault Count | 1 |
+| 0x10 | Driver Squib 1 Resistance | 1 |
+| 0x11 | Driver Squib 2 Resistance | 1 |
+| 0x12 | Passenger Squib 1 Resistance | 1 |
+| 0x13 | Passenger Squib 2 Resistance | 1 |
+| 0x14 | Driver Curtain Resistance | 1 |
+| 0x15 | Passenger Curtain Resistance | 1 |
+| 0x20 | Seat Belt Driver | 1 |
+| 0x21 | Seat Belt Passenger | 1 |
+
+### 7.3 Airbag Fault Code Descriptions
 
 | Description |
 |-------------|

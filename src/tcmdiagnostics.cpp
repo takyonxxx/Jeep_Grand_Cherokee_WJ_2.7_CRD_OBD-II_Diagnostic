@@ -13,6 +13,7 @@ WJDiagnostics::WJDiagnostics(ELM327Connection *elm, QObject *parent)
     m_kwp = new KWP2000Handler(elm, this);
     connect(m_kwp, &KWP2000Handler::logMessage,
             this, &WJDiagnostics::logMessage);
+    initLiveDataParams();
 }
 
 // --- Static Module Registry ---
@@ -631,41 +632,39 @@ QString WJDiagnostics::dtcDescription(const QString &code, Module src)
 // Compat Methods (eski mainwindow/livedata API uyumu icin)
 // ============================================================
 
-// startSession(callback) - compat: K-Line TCM (0x10) oturum ac
-// Eski UI K-Line uzerinden calisiyor, J1850'ye gecmeden KWP session acar
+// startSession(callback) - compat: APK referansina gore J1850 VPW TCM (0x28)
 void WJDiagnostics::startSession(std::function<void(bool)> cb)
 {
-    // K-Line'da kal, eski header'i kur (0x10 = eski TCM adresi)
-    emit logMessage("TCM oturumu baslatiliyor (K-Line 0x10)...");
-    m_activeBus = BusType::KLine;
+    emit logMessage("TCM oturumu baslatiliyor (J1850 VPW 0x28)...");
+    m_activeBus = BusType::J1850;
+    m_activeModule = Module::TCM;
 
-    m_elm->sendCommand("ATSP5", [this, cb](const QString&) {
-        m_elm->sendCommand("ATFI", [this, cb](const QString &fi) {
-            if (fi.contains("?") || fi.contains("ERROR")) {
-                m_elm->sendCommand("ATSP3", [this, cb](const QString&) {
-                    this->_finishLegacySession(cb);
+    m_elm->sendCommand("ATSP2", [this, cb](const QString&) {
+        QTimer::singleShot(50, this, [this, cb]() {
+            m_elm->sendCommand("ATSH242810", [this, cb](const QString&) {
+                // J1850'de session baslat: SID 0x10 0x89 (DiagSession)
+                m_elm->sendCommand("10 89", [this, cb](const QString &resp) {
+                    bool ok = !resp.contains("ERROR") && !resp.contains("NO DATA") && !resp.contains("?");
+                    if (ok) {
+                        emit logMessage("TCM J1850 oturumu aktif (ATSH242810)");
+                        initLiveDataParams();
+                    } else {
+                        // Bazi moduller session gerektirmez, yine de devam et
+                        emit logMessage("TCM J1850 session yaniti: " + resp + " (devam ediliyor)");
+                        initLiveDataParams();
+                        ok = true;
+                    }
+                    if (cb) cb(ok);
                 });
-            } else {
-                this->_finishLegacySession(cb);
-            }
+            });
         });
     });
 }
 
 void WJDiagnostics::_finishLegacySession(std::function<void(bool)> cb)
 {
-    m_elm->sendCommand("ATSH8110F1", [this, cb](const QString&) {
-        m_elm->sendCommand("ATWM8110F13E", [this, cb](const QString&) {
-            m_kwp->startDiagnosticSession(KWP2000Handler::DefaultSession,
-                [this, cb](bool success) {
-                    if (success) {
-                        emit logMessage("TCM K-Line oturumu aktif (0x10)");
-                        initLiveDataParams();
-                    }
-                    if (cb) cb(success);
-                });
-        });
-    });
+    // Artik kullanilmiyor (J1850'ye gecildi)
+    if (cb) cb(false);
 }
 
 // readDTCs(callback) - compat: aktif modul
@@ -695,51 +694,77 @@ void WJDiagnostics::clearDTCs(std::function<void(bool)> cb)
     clearDTCs(m_activeModule, cb);
 }
 
-// readAllLiveData - compat: K-Line uzerinden TCM local ID'lerden oku
+// readAllLiveData - J1850 VPW uzerinden TCM PID'lerden oku (APK referansi)
 void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
 {
     auto tcm = std::make_shared<TCMStatus>();
     auto step = std::make_shared<int>(0);
     auto doNext = std::make_shared<std::function<void()>>();
 
-    // Okunacak local ID'ler (emulator'un destekledigi)
-    QList<uint8_t> ids = {0x01,0x02,0x04,0x05,0x07,0x08,0x09,0x0A,0x0B,0x0E,0x0F,
-                          0x12,0x13,0x14,0x15,0x20,0x23,0x30};
+    // APK'dan cikarilan J1850 TCM PID'ler
+    // Header ATSH242822 ile okunur, komut: "22 XX", yanit: "62 XX <data>"
+    QList<uint8_t> pids = {
+        0x01, // Actual Gear (1B)
+        0x02, // Selected Gear (1B)
+        0x03, // Max Gear (1B)
+        0x10, // Turbine RPM (2B)
+        0x13, // Output RPM (2B)
+        0x14, // Transmission Temp (1B, +40 offset)
+        0x15, // TCC Pressure (1B, *10)
+        0x16, // Solenoid Supply (1B, *0.1V)
+        0x17, // TCC State (1B)
+        0x18, // Actual TCC Slip (2B, signed)
+        0x19, // Desired TCC Slip (2B, signed)
+        0x20, // Vehicle Speed (2B)
+        0x23, // Shift PSI (2B)
+        0x24, // Modulation PSI (2B)
+    };
 
-    *doNext = [this, tcm, step, doNext, ids, cb]() {
-        if (*step >= ids.size()) {
+    // Oncelikle ATSH242822 ayarla
+    m_elm->sendCommand("ATSH242822", [this, tcm, step, doNext, pids, cb](const QString&) {
+
+    *doNext = [this, tcm, step, doNext, pids, cb]() {
+        if (*step >= pids.size()) {
             fillTCMCompat(*tcm);
             m_lastTCM = *tcm;
             emit tcmStatusUpdated(*tcm);
             if (cb) cb(*tcm);
             return;
         }
-        uint8_t lid = ids[*step];
-        m_kwp->readLocalData(lid, [this, tcm, step, doNext, lid](const QByteArray &data) {
-            if (data.size() >= 4) {
-                uint8_t valByte = static_cast<uint8_t>(data[2]);
-                uint16_t val16 = (static_cast<uint8_t>(data[2]) << 8) | static_cast<uint8_t>(data[3]);
+        uint8_t pid = pids[*step];
+        QString cmd = QString("22 %1").arg(pid, 2, 16, QChar('0')).toUpper();
+
+        m_elm->sendCommand(cmd, [this, tcm, step, doNext, pid](const QString &resp) {
+            // Yanit: "62 XX YY" (1 byte) veya "62 XX HH LL" (2 byte)
+            // ELM327 boşluksuz hex string doner: "6201xx" veya "620100xx"
+            QByteArray raw;
+            QString cleaned = resp.trimmed().remove(' ');
+            for (int i = 0; i + 1 < cleaned.length(); i += 2)
+                raw.append(static_cast<char>(cleaned.mid(i, 2).toUInt(nullptr, 16)));
+
+            // raw[0]=0x62, raw[1]=PID, raw[2...]=data
+            if (raw.size() >= 3 && static_cast<uint8_t>(raw[0]) == 0x62) {
+                uint8_t valByte = static_cast<uint8_t>(raw[2]);
+                uint16_t val16 = valByte;
+                if (raw.size() >= 4)
+                    val16 = (static_cast<uint8_t>(raw[2]) << 8) | static_cast<uint8_t>(raw[3]);
                 int16_t sval16 = static_cast<int16_t>(val16);
 
-                switch (lid) {
+                switch (pid) {
                 case 0x01: tcm->actualGear = valByte; break;
                 case 0x02: tcm->selectedGear = valByte; break;
-                case 0x04: tcm->turbineRPM = val16; break;
-                case 0x05: tcm->outputRPM = val16; break;
-                case 0x07: tcm->vehicleSpeed = val16; break;
-                case 0x08: tcm->transTemp = static_cast<int8_t>(valByte); break;
-                case 0x09: tcm->solenoidSupply = valByte * 0.1; break;
-                case 0x0A: tcm->actualTCCslip = sval16; break;
-                case 0x0B: tcm->desTCCslip = sval16; break;
-                case 0x0E: tcm->linePressure = val16 * 0.1; break;
-                case 0x0F: tcm->tccPressure = val16 * 0.1; break;
-                case 0x12: tcm->coolantTemp = static_cast<int8_t>(valByte); break;
-                case 0x13: tcm->turboBoost = val16 * 0.01; break;
-                case 0x14: tcm->mafSensor = val16; break;
-                case 0x15: tcm->mapSensor = val16; break;
-                case 0x20: tcm->batteryVoltage = valByte * 0.1; break;
-                case 0x23: tcm->limpMode = (valByte != 0); break;
-                case 0x30: tcm->maxGear = valByte; break;
+                case 0x03: tcm->maxGear = valByte; break;
+                case 0x10: tcm->turbineRPM = val16; break;
+                case 0x13: tcm->outputRPM = val16; break;
+                case 0x14: tcm->transTemp = valByte - 40; break;
+                case 0x15: tcm->tccPressure = valByte * 0.1; break;
+                case 0x16: tcm->solenoidSupply = valByte * 0.1; break;
+                case 0x17: /* TCC state string */ break;
+                case 0x18: tcm->actualTCCslip = sval16; break;
+                case 0x19: tcm->desTCCslip = sval16; break;
+                case 0x20: tcm->vehicleSpeed = val16; break;
+                case 0x23: tcm->linePressure = val16 * 0.1; break;
+                case 0x24: /* modulation PSI */ break;
                 }
             }
             (*step)++;
@@ -747,24 +772,39 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
         });
     };
     (*doNext)();
+
+    }); // ATSH242822 callback end
 }
 
-// readSingleParam - compat: tek bir KWP local ID oku
+// readSingleParam - J1850 VPW tek PID oku
 void WJDiagnostics::readSingleParam(uint8_t localID, std::function<void(double)> cb)
 {
-    m_kwp->readLocalData(localID, [this, localID, cb](const QByteArray &data) {
+    QString cmd = QString("22 %1").arg(localID, 2, 16, QChar('0')).toUpper();
+    m_elm->sendCommand(cmd, [this, localID, cb](const QString &resp) {
         double val = 0;
-        if (data.size() >= 4) {
-            // Basit: ilk 2 data byte'i uint16 olarak oku
-            uint16_t raw = (static_cast<uint8_t>(data[2]) << 8) | static_cast<uint8_t>(data[3]);
-            // LiveParam tablosundan factor/offset bul
+        QByteArray raw;
+        QString cleaned = resp.trimmed().remove(' ');
+        for (int i = 0; i + 1 < cleaned.length(); i += 2)
+            raw.append(static_cast<char>(cleaned.mid(i, 2).toUInt(nullptr, 16)));
+
+        if (raw.size() >= 3 && static_cast<uint8_t>(raw[0]) == 0x62) {
+            uint8_t valByte = static_cast<uint8_t>(raw[2]);
+            uint16_t raw16 = valByte;
+            if (raw.size() >= 4)
+                raw16 = (static_cast<uint8_t>(raw[2]) << 8) | static_cast<uint8_t>(raw[3]);
+
+            bool found = false;
             for (const auto &p : m_liveParams) {
                 if (p.localID == localID) {
-                    val = raw * p.factor + p.offset;
+                    if (p.byteLen == 1)
+                        val = valByte * p.factor + p.offset;
+                    else
+                        val = raw16 * p.factor + p.offset;
+                    found = true;
                     break;
                 }
             }
-            if (val == 0) val = raw; // fallback
+            if (!found) val = raw16;
         }
         if (cb) cb(val);
     });
@@ -774,72 +814,97 @@ void WJDiagnostics::readSingleParam(uint8_t localID, std::function<void(double)>
 void WJDiagnostics::fillTCMCompat(TCMStatus &tcm)
 {
     tcm.solenoidVoltage = tcm.solenoidSupply;
-    tcm.linePressure = tcm.tccPressure;
+    if (tcm.linePressure == 0) tcm.linePressure = tcm.tccPressure;
     if (tcm.actualGear >= 0 && tcm.actualGear <= 7)
         tcm.currentGear = static_cast<Gear>(tcm.actualGear);
-    tcm.limpMode = (tcm.maxGear <= 2 && tcm.transTemp > 130);
+    else
+        tcm.currentGear = Gear::Unknown;
+    // limpMode: readAllLiveData 0x23 ile set edilmisse dokunma
+    // aksi halde maxGear/transTemp'ten hesapla
+    if (tcm.maxGear > 0 && tcm.maxGear <= 2 && tcm.transTemp > 130)
+        tcm.limpMode = true;
 }
 
-// readTCMInfo - compat: K-Line TCM bilgisi oku (0x10 header)
+// readTCMInfo - J1850 VPW ile TCM modul bilgisi oku (ATSH2428A0)
 void WJDiagnostics::readTCMInfo(std::function<void(const QMap<QString,QString>&)> cb)
 {
     auto r = std::make_shared<QMap<QString,QString>>();
     (*r)["Module"] = "NAG1 722.6 TCM";
-    (*r)["Bus"] = "K-Line";
+    (*r)["Bus"] = "J1850 VPW";
 
-    auto n = std::make_shared<int>(3);
-    auto chk = [r, n, cb]() { if (--(*n) <= 0 && cb) cb(*r); };
+    // APK ATSH2428A0 kullaniyor (SID 0xA0 = ReadIdentification)
+    m_elm->sendCommand("ATSH2428A0", [this, r, cb](const QString&) {
+        // A0 01 = Part Number
+        m_elm->sendCommand("A0 01", [this, r, cb](const QString &resp1) {
+            if (!resp1.contains("ERROR") && !resp1.contains("NO DATA"))
+                (*r)["PartNumber"] = resp1.trimmed();
+            else
+                (*r)["PartNumber"] = "N/A";
 
-    m_kwp->readECUIdentification(0x91, [r, chk](const QByteArray &d) {
-        if (d.size() > 2) {
-            (*r)["PartNumber"] = QString::fromLatin1(d.mid(2)).trimmed();
-            (*r)["HardwareVersion"] = (*r)["PartNumber"];
-        }
-        chk();
-    });
-    m_kwp->readECUIdentification(0x90, [r, chk](const QByteArray &d) {
-        if (d.size() > 2) (*r)["VIN"] = QString::fromLatin1(d.mid(2)).trimmed();
-        chk();
-    });
-    m_kwp->readECUIdentification(0x86, [r, chk](const QByteArray &d) {
-        if (d.size() > 2) (*r)["SoftwareVersion"] = QString::fromLatin1(d.mid(2)).trimmed();
-        chk();
+            // A0 02 = Software Version
+            m_elm->sendCommand("A0 02", [this, r, cb](const QString &resp2) {
+                if (!resp2.contains("ERROR") && !resp2.contains("NO DATA"))
+                    (*r)["SoftwareVersion"] = resp2.trimmed();
+                else
+                    (*r)["SoftwareVersion"] = "N/A";
+
+                // A0 03 = Hardware Version
+                m_elm->sendCommand("A0 03", [this, r, cb](const QString &resp3) {
+                    if (!resp3.contains("ERROR") && !resp3.contains("NO DATA"))
+                        (*r)["HardwareVersion"] = resp3.trimmed();
+                    else
+                        (*r)["HardwareVersion"] = "N/A";
+
+                    // Header'i geri cevir
+                    m_elm->sendCommand("ATSH242822", [r, cb](const QString&) {
+                        if (cb) cb(*r);
+                    });
+                });
+            });
+        });
     });
 }
 
-// initLiveDataParams - TCM canli veri parametre listesi (K-Line local ID'ler)
+// initLiveDataParams - TCM J1850 VPW PID listesi (APK referansi)
 void WJDiagnostics::initLiveDataParams()
 {
+    // APK referansindan: J1850 VPW, ATSH242822, "22 XX" komutu
     m_liveParams = {
-        {0x01, "Mevcut Vites",               "",      0,   7,   1.0,    0, 1, false},
-        {0x02, "Hedef Vites",                 "",      0,   7,   1.0,    0, 1, false},
-        {0x03, "Vites Kolu Pozisyonu",        "",      0,  15,   1.0,    0, 1, false},
-        {0x04, "Turbin (Giris) RPM",          "rpm",   0, 8000, 1.0,    0, 2, false},
-        {0x05, "Cikis Mili RPM",              "rpm",   0, 8000, 1.0,    0, 2, false},
-        {0x06, "Motor RPM (TCM)",             "rpm",   0, 8000, 1.0,    0, 2, false},
-        {0x07, "Arac Hizi",                   "km/h",  0, 300,  1.0,    0, 2, false},
-        {0x08, "Sanziman Sicakligi",          "C",   -40, 200,  1.0,  -40, 1, true},
-        {0x09, "Selenoid Besleme Gerilimi",   "V",     0,  20,  0.1,    0, 1, false},
-        {0x0A, "TCC Kayma (Gercek)",          "rpm",   0, 2000, 1.0,    0, 2, true},
-        {0x0B, "TCC Kayma (Hedef)",           "rpm",   0, 2000, 1.0,    0, 2, true},
-        {0x0C, "1245 Selenoid (Gercek)",      "%",     0, 100,  0.39,   0, 1, false},
-        {0x0D, "2-3 Selenoid (Gercek)",       "%",     0, 100,  0.39,   0, 1, false},
-        {0x0E, "Hat Basinci",                 "bar",   0,  25,  0.1,    0, 2, false},
-        {0x0F, "TCC Basinci",                 "bar",   0,  25,  0.1,    0, 2, false},
-        {0x10, "Park Kilidi Selenoid",        "",      0,   1,  1.0,    0, 1, false},
-        {0x11, "Fren Sivici",                 "",      0,   1,  1.0,    0, 1, false},
-        {0x12, "Motor Sicakligi (TCM CAN)",   "C",   -40, 150,  1.0,  -40, 1, true},
-        {0x13, "Turbo Basinci (TCM CAN)",     "bar",   0,   3,  0.01,   0, 2, false},
-        {0x14, "MAF Sensoru (TCM CAN)",       "mg/s",  0, 1500, 1.0,    0, 2, false},
-        {0x15, "MAP Sensoru (TCM CAN)",       "mbar",  0, 3000, 1.0,    0, 2, false},
-        {0x16, "Aktor Tork Talebi",           "%",     0, 100,  0.39,   0, 1, false},
-        {0x20, "Aku Voltaji",                 "V",     0,  20,  0.1,    0, 1, false},
-        {0x21, "3-4 Selenoid (Gercek)",       "%",     0, 100,  0.39,   0, 1, false},
-        {0x22, "Kickdown Sivici",             "",      0,   1,  1.0,    0, 1, false},
-        {0x23, "Limp Mode",                   "",      0,   1,  1.0,    0, 1, false},
-        {0x30, "Max Vites",                   "",      0,   7,  1.0,    0, 1, false},
+        {0x01, "Actual Gear",                 "",      0,   7,   1.0,    0, 1, false},
+        {0x02, "Selected Gear",               "",      0,   7,   1.0,    0, 1, false},
+        {0x03, "Max Gear",                    "",      0,   7,   1.0,    0, 1, false},
+        {0x04, "Shift Selector Position",     "",      0,  15,   1.0,    0, 1, false},
+        {0x10, "Turbine RPM",                 "rpm",   0, 8000, 1.0,    0, 2, false},
+        {0x11, "Input RPM (N2)",              "rpm",   0, 8000, 1.0,    0, 2, false},
+        {0x12, "Input RPM (N3)",              "rpm",   0, 8000, 1.0,    0, 2, false},
+        {0x13, "Output RPM",                  "rpm",   0, 8000, 1.0,    0, 2, false},
+        {0x14, "Transmission Temp",           "C",   -40, 200,  1.0,  -40, 1, false},
+        {0x15, "TCC Pressure",                "PSI",   0, 255,  0.1,    0, 1, false},
+        {0x16, "Solenoid Supply",             "V",     0,  20,  0.1,    0, 1, false},
+        {0x17, "TCC Clutch State",            "",      0,   5,  1.0,    0, 1, false},
+        {0x18, "Actual TCC Slip",             "rpm",-2000,2000, 1.0,    0, 2, true},
+        {0x19, "Desired TCC Slip",            "rpm",-2000,2000, 1.0,    0, 2, true},
+        {0x1A, "Act 1245 Solenoid",           "%",     0, 100,  0.39,   0, 1, false},
+        {0x1B, "Set 1245 Solenoid",           "%",     0, 100,  0.39,   0, 1, false},
+        {0x1C, "Act 2-3 Solenoid",            "%",     0, 100,  0.39,   0, 1, false},
+        {0x1D, "Set 2-3 Solenoid",            "%",     0, 100,  0.39,   0, 1, false},
+        {0x1E, "Act 3-4 Solenoid",            "%",     0, 100,  0.39,   0, 1, false},
+        {0x1F, "Set 3-4 Solenoid",            "%",     0, 100,  0.39,   0, 1, false},
+        {0x20, "Vehicle Speed",               "km/h",  0, 300,  1.0,    0, 2, false},
+        {0x21, "Front Vehicle Speed",         "km/h",  0, 300,  1.0,    0, 2, false},
+        {0x22, "Rear Vehicle Speed",          "km/h",  0, 300,  1.0,    0, 2, false},
+        {0x23, "Shift PSI",                   "PSI",   0, 500,  0.1,    0, 2, false},
+        {0x24, "Modulation PSI",              "PSI",   0, 500,  0.1,    0, 2, false},
+        {0x25, "Park Lockout Solenoid",       "",      0,   1,  1.0,    0, 1, false},
+        {0x26, "Park/Neutral Switch",         "",      0,   1,  1.0,    0, 1, false},
+        {0x27, "Brake Light Switch",          "",      0,   1,  1.0,    0, 1, false},
+        {0x28, "Primary Brake Switch",        "",      0,   1,  1.0,    0, 1, false},
+        {0x29, "Secondary Brake Switch",      "",      0,   1,  1.0,    0, 1, false},
+        {0x2A, "Kickdown Switch",             "",      0,   1,  1.0,    0, 1, false},
+        {0x2B, "Fuel QTY Torque",             "%",     0, 100,  0.39,   0, 1, false},
+        {0x30, "Calculated Gear",             "",      0,   7,  1.0,    0, 1, false},
     };
-    emit logMessage(QString("Canli veri: %1 parametre yuklendi").arg(m_liveParams.size()));
+    emit logMessage(QString("Canli veri: %1 parametre yuklendi (J1850 VPW)").arg(m_liveParams.size()));
 }
 
 // ioDefinitions - I/O kontrol tanimlari (NAG1 selenoidler)
