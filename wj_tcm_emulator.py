@@ -458,6 +458,11 @@ class ELM327Emulator:
             self.linefeed = True
             return "OK"
 
+        # ATIFR0 - IFR (In-Frame Response) off (J1850 VPW)
+        if at.startswith("IFR"):
+            log.info("IFR mode: %s", at)
+            return "OK"
+
         # ATS0/ATS1 - Spaces
         if at == "S0":
             self.spaces = False

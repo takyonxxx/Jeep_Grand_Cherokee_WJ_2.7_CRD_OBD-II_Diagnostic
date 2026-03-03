@@ -258,7 +258,7 @@ QWidget* MainWindow::createConnectionTab()
     // Uyumluluk bilgisi
     QLabel *compatInfo = new QLabel(
         "Jeep Grand Cherokee 2002-2005 WJ/WG 2.7 CRD Only\n"
-        "Motor/TCM: K-Line (ATSP5) | Diger: J1850 VPW (ATSP2)\n"
+        "Motor ECU: K-Line (ATSP5) | TCM/ABS/Airbag/Diger: J1850 VPW (ATSP2)\n"
         "Orijinal ELM327 onerisi: ATFI, ATWM, ATSH destegi gerekli");
     compatInfo->setStyleSheet("background:#1a2a1a;padding:6px;border-radius:4px;"
                               "color:#88cc88;font-family:monospace;font-size:9px;");

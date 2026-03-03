@@ -209,6 +209,8 @@ void ELM327Connection::initializeELM()
 {
     m_genuineELM = true;
 
+    // === APK uyumlu init sirasi ===
+
     // 1) Reset
     sendCommand("ATZ", [this](const QString &resp) {
         m_elmVersion = resp;
@@ -220,95 +222,50 @@ void ELM327Connection::initializeELM()
         }
     }, 5000);
 
-    // 2) Echo off
-    sendCommand("ATE0", nullptr);
+    // 2) Echo on (APK ATE1 kullaniyor)
+    sendCommand("ATE1", nullptr);
 
-    // 3) Linefeed off
-    sendCommand("ATL0", nullptr);
-
-    // 4) Spaces off
-    sendCommand("ATS0", nullptr);
-
-    // 5) Headers on
+    // 3) Headers on (J1850 header'lari gormek icin)
     sendCommand("ATH1", nullptr);
 
-    // 6) Adaptive timing auto2
+    // 4) IFR kapatma (J1850 VPW icin onemli - APK ATIFR0 kullaniyor)
+    sendCommand("ATIFR0", [this](const QString &resp) {
+        if (resp.contains("?")) {
+            emit logMessage("ATIFR0 desteklenmiyor (clone ELM327)");
+        }
+    });
+
+    // 5) Adaptive timing auto2
     sendCommand("ATAT2", nullptr);
 
-    // 7) Timeout 400ms (0x64 * 4ms)
+    // 6) Timeout 400ms (0x64 * 4ms)
     sendCommand("ATST64", nullptr);
 
-    // 8) Battery voltage
+    // 7) Battery voltage
     sendCommand("ATRV", [this](const QString &resp) {
         m_elmVoltage = resp;
         emit logMessage("Battery voltage: " + resp);
     });
 
-    // 9) Protocol: KWP fast init (ATSP5) - jeepswj.com uses this
-    sendCommand("ATSP5", [this](const QString &resp) {
+    // 8) Protokol: J1850 VPW (ATSP2) - TCM/ABS/Airbag icin
+    // APK oncelikle bunu kurar, K-Line'a modul bazinda gecer
+    sendCommand("ATSP2", [this](const QString &resp) {
         if (resp.contains("OK")) {
-            emit logMessage("Protocol: ISO 14230-4 KWP fast init (ATSP5)");
-            m_protocol = Protocol::KWP_FAST;
-        } else {
-            emit logMessage("ATSP5 failed, will fallback to ATSP3");
+            emit logMessage("Protocol: SAE J1850 VPW (ATSP2)");
+            m_protocol = Protocol::J1850_VPW;
         }
     });
 
-    // 10) Test ATFI (fast init) - genuine ELM327 only
-    sendCommand("ATFI", [this](const QString &resp) {
-        if (resp.contains("?") || resp.contains("ERROR")) {
-            m_genuineELM = false;
-            emit logMessage("ATFI not supported - fake/clone ELM327");
-            m_protocol = Protocol::ISO_9141;
-        } else {
-            emit logMessage("ATFI OK - genuine ELM327");
-        }
-    });
-
-    // 11) Describe protocol + fallback if needed
-    sendCommand("ATDP", [this](const QString &resp) {
-        emit logMessage("Active protocol: " + resp);
-        if (m_protocol == Protocol::ISO_9141) {
-            sendCommand("ATSP3", [this](const QString &r) {
-                if (r.contains("OK"))
-                    emit logMessage("Fallback: ISO 9141-2 (ATSP3)");
-            });
-        }
-    });
-
-    // 12) Wakeup message: TesterPresent to TCM (keep-alive)
-    // ATWM 81 10 F1 3E = TesterPresent(3E) to TCM(10) from F1
-    sendCommand("ATWM8110F13E", [this](const QString &resp) {
-        if (resp.contains("OK")) {
-            emit logMessage("Wakeup message: TesterPresent to TCM");
-        } else if (resp.contains("?")) {
-            m_genuineELM = false;
-            emit logMessage("ATWM not supported - fake/clone ELM327");
-        }
-    });
-
-    // 13) TCM header: 81 10 F1
-    sendCommand("ATSH8110F1", [this](const QString &resp) {
-        if (resp.contains("OK"))
-            emit logMessage("TCM header: 81 10 F1");
-    });
-
-    // 14) 5-baud init address for TCM
-    sendCommand("ATIIA10", [this](const QString &resp) {
-        Q_UNUSED(resp)
-        emit logMessage("Init address: 0x10 (TCM)");
-    });
-
-    // 15) Ready
+    // 9) Ready
     sendCommand("ATI", [this](const QString &resp) {
         Q_UNUSED(resp)
         setState(ConnectionState::Ready);
         emit connected();
         if (m_genuineELM) {
-            emit logMessage("ELM327 ready - genuine chip, full feature support");
+            emit logMessage("ELM327 ready - J1850 VPW default");
         } else {
-            emit logMessage("ELM327 ready - WARNING: clone/fake, limited features");
-            emit fakeELMDetected("ATFI or ATWM not supported");
+            emit logMessage("ELM327 ready - WARNING: clone/fake detected");
+            emit fakeELMDetected("ATIFR0 not supported");
         }
     });
 }

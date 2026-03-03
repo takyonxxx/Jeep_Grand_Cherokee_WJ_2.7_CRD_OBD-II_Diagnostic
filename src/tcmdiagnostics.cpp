@@ -165,7 +165,7 @@ void WJDiagnostics::readDTCs(Module mod, std::function<void(const QList<DTCEntry
             });
         } else {
             // J1850 VPW DTC read
-            m_elm->sendCommand("1800FF00", [this, mod, cb](const QString &resp) {
+            m_elm->sendCommand("18 02 FF 00", [this, mod, cb](const QString &resp) {
                 auto dtcs = decodeJ1850DTCs(resp, mod);
                 emit dtcListReady(mod, dtcs);
                 if (cb) cb(dtcs);
@@ -182,7 +182,7 @@ void WJDiagnostics::clearDTCs(Module mod, std::function<void(bool)> cb)
         if (moduleInfo(mod).bus == BusType::KLine) {
             m_kwp->clearAllDTCs(cb);
         } else {
-            m_elm->sendCommand("140000", [this, mod, cb](const QString &resp) {
+            m_elm->sendCommand("14 00 00", [this, mod, cb](const QString &resp) {
                 bool ok = !resp.contains("7F") && !resp.contains("ERROR");
                 emit logMessage(QString("%1 DTC sil: %2")
                     .arg(moduleName(mod), ok ? "OK" : "FAIL"));
@@ -477,13 +477,30 @@ QList<WJDiagnostics::DTCEntry> WJDiagnostics::decodeJ1850DTCs(const QString &res
     if (c.contains("NODATA") || c.contains("ERROR") || c.size() < 6)
         return result;
 
-    int start = 0;
-    if (c.startsWith("58")) start = 4;
+    // ATH1 modunda header byte'lari var: "281058..." veya "281058xx..."
+    // "58" (positive response SID 0x18+0x40) byte'ini bul
+    int pos58 = c.indexOf("58", 0, Qt::CaseInsensitive);
+    if (pos58 < 0 || pos58 % 2 != 0) return result;
 
-    for (int i = start; i + 3 < c.size(); i += 4) {
+    c = c.mid(pos58); // "58" den itibaren al
+
+    // 58 <count> <DTC_HI DTC_LO STATUS> ...
+    // count byte'ini al
+    if (c.size() < 4) return result;
+    int count = c.mid(2, 2).toUInt(nullptr, 16);
+
+    int start = 4; // "58 CC" den sonra
+    for (int i = 0; i < count && start + 5 < c.size(); i++, start += 6) {
         bool ok;
-        uint16_t raw = c.mid(i, 4).toUInt(&ok, 16);
-        if (!ok || raw == 0) continue;
+        uint8_t hi = c.mid(start, 2).toUInt(&ok, 16);
+        if (!ok) continue;
+        uint8_t lo = c.mid(start + 2, 2).toUInt(&ok, 16);
+        if (!ok) continue;
+        uint8_t status = c.mid(start + 4, 2).toUInt(&ok, 16);
+        if (!ok) continue;
+
+        uint16_t raw = (hi << 8) | lo;
+        if (raw == 0) continue;
 
         DTCEntry e;
         char pfx;
@@ -493,7 +510,10 @@ QList<WJDiagnostics::DTCEntry> WJDiagnostics::decodeJ1850DTCs(const QString &res
         }
         e.code = QString("%1%2").arg(pfx).arg(raw & 0x3FFF, 4, 16, QChar('0')).toUpper();
         e.description = dtcDescription(e.code, src);
-        e.status = 0; e.isActive = true; e.occurrences = 1; e.source = src;
+        e.status = status;
+        e.isActive = (status & 0x01) != 0;
+        e.occurrences = 1;
+        e.source = src;
         result.append(e);
     }
     return result;
@@ -701,23 +721,44 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
     auto step = std::make_shared<int>(0);
     auto doNext = std::make_shared<std::function<void()>>();
 
-    // APK'dan cikarilan J1850 TCM PID'ler
+    // APK'dan cikarilan J1850 TCM PID'ler - TUMU
     // Header ATSH242822 ile okunur, komut: "22 XX", yanit: "62 XX <data>"
     QList<uint8_t> pids = {
         0x01, // Actual Gear (1B)
         0x02, // Selected Gear (1B)
         0x03, // Max Gear (1B)
+        0x04, // Shift Selector Position (1B)
         0x10, // Turbine RPM (2B)
+        0x11, // Input RPM N2 (2B)
+        0x12, // Input RPM N3 (2B)
         0x13, // Output RPM (2B)
         0x14, // Transmission Temp (1B, +40 offset)
-        0x15, // TCC Pressure (1B, *10)
+        0x15, // TCC Pressure (1B, *0.1)
         0x16, // Solenoid Supply (1B, *0.1V)
-        0x17, // TCC State (1B)
+        0x17, // TCC Clutch State (1B)
         0x18, // Actual TCC Slip (2B, signed)
         0x19, // Desired TCC Slip (2B, signed)
+        0x1A, // Act 1245 Solenoid (1B, *0.39%)
+        0x1B, // Set 1245 Solenoid (1B, *0.39%)
+        0x1C, // Act 2-3 Solenoid (1B, *0.39%)
+        0x1D, // Set 2-3 Solenoid (1B, *0.39%)
+        0x1E, // Act 3-4 Solenoid (1B, *0.39%)
+        0x1F, // Set 3-4 Solenoid (1B, *0.39%)
         0x20, // Vehicle Speed (2B)
+        0x21, // Front Vehicle Speed (2B)
+        0x22, // Rear Vehicle Speed (2B)
         0x23, // Shift PSI (2B)
         0x24, // Modulation PSI (2B)
+        0x25, // Park Lockout Solenoid (1B)
+        0x26, // Park/Neutral Switch (1B)
+        0x27, // Brake Light Switch (1B)
+        0x28, // Primary Brake Switch (1B)
+        0x29, // Secondary Brake Switch (1B)
+        0x2A, // Kickdown Switch (1B)
+        0x2B, // Fuel QTY Torque (1B, *0.39%)
+        0x2C, // Swirl Solenoid (1B)
+        0x2D, // Wastegate Solenoid (1B, *0.39%)
+        0x30, // Calculated Gear (1B)
     };
 
     // Oncelikle ATSH242822 ayarla
@@ -735,15 +776,46 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
         QString cmd = QString("22 %1").arg(pid, 2, 16, QChar('0')).toUpper();
 
         m_elm->sendCommand(cmd, [this, tcm, step, doNext, pid](const QString &resp) {
-            // Yanit: "62 XX YY" (1 byte) veya "62 XX HH LL" (2 byte)
-            // ELM327 boşluksuz hex string doner: "6201xx" veya "620100xx"
+            // ELM327 J1850 yanit (ATE1 + ATH1 acik):
+            // Satir 1 (echo): "22 01" (komut echo'su)
+            // Satir 2 (yanit): "28 10 62 01 03" (header + data)
+            // Satir 3: ">" (prompt - zaten kesilmis)
+            //
+            // Parse: echo satirini atla, yanit satirindan "62" bul
             QByteArray raw;
-            QString cleaned = resp.trimmed().remove(' ');
-            for (int i = 0; i + 1 < cleaned.length(); i += 2)
-                raw.append(static_cast<char>(cleaned.mid(i, 2).toUInt(nullptr, 16)));
+            QStringList lines = resp.split('\r', Qt::SkipEmptyParts);
+
+            // Son gecerli hex satirini bul (echo'dan sonraki = gercek yanit)
+            for (int li = lines.size() - 1; li >= 0; li--) {
+                QString cleaned = lines[li].trimmed().remove(' ');
+                if (cleaned.isEmpty()) continue;
+                // Hata yanitlari
+                if (cleaned.contains("NODATA") || cleaned.contains("ERROR") ||
+                    cleaned.contains("UNABLE") || cleaned.contains("?") ||
+                    cleaned.contains("BUSBUSY") || cleaned.contains("STOPPED")) continue;
+                // Echo satirini atla (komutumuzla baslar: "22XX")
+                QString echoCheck = QString("22%1").arg(pid, 2, 16, QChar('0')).toUpper();
+                if (cleaned.startsWith(echoCheck) && cleaned.length() <= echoCheck.length() + 2) continue;
+
+                // "62" byte'inin pozisyonunu bul
+                int pos62 = cleaned.indexOf("62", 0, Qt::CaseInsensitive);
+                if (pos62 < 0 || pos62 % 2 != 0) continue;
+
+                // Dogrudan PID byte'ini da kontrol et: "62 XX" olmali
+                QString pidCheck = QString("62%1").arg(pid, 2, 16, QChar('0')).toUpper();
+                int posPid = cleaned.indexOf(pidCheck, 0, Qt::CaseInsensitive);
+                if (posPid < 0 || posPid % 2 != 0) continue;
+
+                // posPid'den itibaren parse et
+                QString dataHex = cleaned.mid(posPid);
+                for (int i = 0; i + 1 < dataHex.length(); i += 2)
+                    raw.append(static_cast<char>(dataHex.mid(i, 2).toUInt(nullptr, 16)));
+                break;
+            }
 
             // raw[0]=0x62, raw[1]=PID, raw[2...]=data
-            if (raw.size() >= 3 && static_cast<uint8_t>(raw[0]) == 0x62) {
+            if (raw.size() >= 3 && static_cast<uint8_t>(raw[0]) == 0x62
+                && static_cast<uint8_t>(raw[1]) == pid) {
                 uint8_t valByte = static_cast<uint8_t>(raw[2]);
                 uint16_t val16 = valByte;
                 if (raw.size() >= 4)
@@ -754,17 +826,38 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
                 case 0x01: tcm->actualGear = valByte; break;
                 case 0x02: tcm->selectedGear = valByte; break;
                 case 0x03: tcm->maxGear = valByte; break;
+                case 0x04: /* selector position */ break;
                 case 0x10: tcm->turbineRPM = val16; break;
+                case 0x11: /* input RPM N2 */ break;
+                case 0x12: /* input RPM N3 */ break;
                 case 0x13: tcm->outputRPM = val16; break;
                 case 0x14: tcm->transTemp = valByte - 40; break;
                 case 0x15: tcm->tccPressure = valByte * 0.1; break;
                 case 0x16: tcm->solenoidSupply = valByte * 0.1; break;
-                case 0x17: /* TCC state string */ break;
+                case 0x17: /* TCC clutch state */ break;
                 case 0x18: tcm->actualTCCslip = sval16; break;
                 case 0x19: tcm->desTCCslip = sval16; break;
+                case 0x1A: /* act 1245 sol */ break;
+                case 0x1B: /* set 1245 sol */ break;
+                case 0x1C: /* act 2-3 sol */ break;
+                case 0x1D: /* set 2-3 sol */ break;
+                case 0x1E: /* act 3-4 sol */ break;
+                case 0x1F: /* set 3-4 sol */ break;
                 case 0x20: tcm->vehicleSpeed = val16; break;
+                case 0x21: /* front speed */ break;
+                case 0x22: /* rear speed */ break;
                 case 0x23: tcm->linePressure = val16 * 0.1; break;
                 case 0x24: /* modulation PSI */ break;
+                case 0x25: /* park lockout */ break;
+                case 0x26: /* park/neutral */ break;
+                case 0x27: /* brake light */ break;
+                case 0x28: /* primary brake */ break;
+                case 0x29: /* secondary brake */ break;
+                case 0x2A: /* kickdown */ break;
+                case 0x2B: /* fuel qty torque */ break;
+                case 0x2C: /* swirl solenoid */ break;
+                case 0x2D: /* wastegate sol */ break;
+                case 0x30: /* calculated gear */ break;
                 }
             }
             (*step)++;
@@ -783,9 +876,28 @@ void WJDiagnostics::readSingleParam(uint8_t localID, std::function<void(double)>
     m_elm->sendCommand(cmd, [this, localID, cb](const QString &resp) {
         double val = 0;
         QByteArray raw;
-        QString cleaned = resp.trimmed().remove(' ');
-        for (int i = 0; i + 1 < cleaned.length(); i += 2)
-            raw.append(static_cast<char>(cleaned.mid(i, 2).toUInt(nullptr, 16)));
+
+        // ATE1 + ATH1: echo satiri + header'li yanit
+        QStringList lines = resp.split('\r', Qt::SkipEmptyParts);
+        for (int li = lines.size() - 1; li >= 0; li--) {
+            QString cleaned = lines[li].trimmed().remove(' ');
+            if (cleaned.isEmpty() || cleaned.contains("NODATA") ||
+                cleaned.contains("ERROR") || cleaned.contains("BUSBUSY")) continue;
+
+            // Echo satirini atla
+            QString echoCheck = QString("22%1").arg(localID, 2, 16, QChar('0')).toUpper();
+            if (cleaned.startsWith(echoCheck) && cleaned.length() <= echoCheck.length() + 2) continue;
+
+            // "62 XX" pattern bul
+            QString pidCheck = QString("62%1").arg(localID, 2, 16, QChar('0')).toUpper();
+            int posPid = cleaned.indexOf(pidCheck, 0, Qt::CaseInsensitive);
+            if (posPid < 0 || posPid % 2 != 0) continue;
+
+            QString dataHex = cleaned.mid(posPid);
+            for (int i = 0; i + 1 < dataHex.length(); i += 2)
+                raw.append(static_cast<char>(dataHex.mid(i, 2).toUInt(nullptr, 16)));
+            break;
+        }
 
         if (raw.size() >= 3 && static_cast<uint8_t>(raw[0]) == 0x62) {
             uint8_t valByte = static_cast<uint8_t>(raw[2]);
@@ -902,6 +1014,8 @@ void WJDiagnostics::initLiveDataParams()
         {0x29, "Secondary Brake Switch",      "",      0,   1,  1.0,    0, 1, false},
         {0x2A, "Kickdown Switch",             "",      0,   1,  1.0,    0, 1, false},
         {0x2B, "Fuel QTY Torque",             "%",     0, 100,  0.39,   0, 1, false},
+        {0x2C, "Swirl Solenoid",              "",      0,   1,  1.0,    0, 1, false},
+        {0x2D, "Wastegate Solenoid",          "%",     0, 100,  0.39,   0, 1, false},
         {0x30, "Calculated Gear",             "",      0,   7,  1.0,    0, 1, false},
     };
     emit logMessage(QString("Canli veri: %1 parametre yuklendi (J1850 VPW)").arg(m_liveParams.size()));
