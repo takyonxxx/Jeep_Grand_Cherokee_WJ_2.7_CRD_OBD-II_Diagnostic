@@ -11,6 +11,7 @@
 #include <QGroupBox>
 #include <QStatusBar>
 #include <QProgressBar>
+#include <QFrame>
 
 #include "elm327connection.h"
 #include "kwp2000handler.h"
@@ -46,13 +47,18 @@ private slots:
 
 private:
     void setupUI();
+    QWidget* createDashboardPanel();
+    QFrame* createGaugeCard(const QString &title, const QString &initValue,
+                            const QString &unit, QLabel **valueLabel, QLabel **unitLabel);
     QWidget* createConnectionTab();
     QWidget* createDTCTab();
     QWidget* createLiveDataTab();
     QWidget* createIOTab();
     QWidget* createLogTab();
 
+    void updateDashboardFromLiveData(const QMap<uint8_t, double> &values);
     void updateStatusLabels(const TCMDiagnostics::TCMStatus &status);
+    void setGaugeColor(QLabel *valueLabel, const QString &color);
     QString gearToString(TCMDiagnostics::Gear gear);
 
 #ifdef Q_OS_ANDROID
@@ -94,11 +100,21 @@ private:
     QPushButton  *m_stopLiveBtn;
     QPushButton  *m_logBtn;
 
-    // Status panel
+    // Dashboard gauge value+unit labels
+    QLabel       *m_dashGearVal;       QLabel *m_dashGearUnit;
+    QLabel       *m_dashRpmVal;        QLabel *m_dashRpmUnit;
+    QLabel       *m_dashSpeedVal;      QLabel *m_dashSpeedUnit;
+    QLabel       *m_dashTempVal;       QLabel *m_dashTempUnit;
+    QLabel       *m_dashSolVoltVal;    QLabel *m_dashSolVoltUnit;
+    QLabel       *m_dashBatVoltVal;    QLabel *m_dashBatVoltUnit;
+    QLabel       *m_dashThrottleVal;   QLabel *m_dashThrottleUnit;
+    QLabel       *m_dashLimpVal;       QLabel *m_dashLimpUnit;
+
+    // Compat aliases
     QLabel       *m_gearLabel;
     QLabel       *m_rpmLabel;
     QLabel       *m_tempLabel;
-    QLabel       *m_solVoltLabel;  // ← P2602 selenoid voltaj!
+    QLabel       *m_solVoltLabel;
     QLabel       *m_limpLabel;
     QProgressBar *m_throttleBar;
 

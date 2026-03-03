@@ -1,4 +1,4 @@
-#include "mainwindow.h"
+﻿#include "mainwindow.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -14,6 +14,7 @@
 #include <QScrollArea>
 #include <QScroller>
 #include <QDir>
+#include <QFrame>
 
 #ifdef Q_OS_ANDROID
 #include <QJniObject>
@@ -104,32 +105,12 @@ void MainWindow::setupUI()
 #endif
 
     // === ÜST PANEL: Durum Göstergeleri ===
-    QGroupBox *statusBox = new QGroupBox("TCM Durum");
-    QGridLayout *statusGrid = new QGridLayout(statusBox);
-
-    m_gearLabel    = new QLabel("Vites: ---");
-    m_rpmLabel     = new QLabel("Türbin: --- rpm");
-    m_tempLabel    = new QLabel("Sıcaklık: --- °C");
-    m_solVoltLabel = new QLabel("Selenoid V: --- V");
-    m_limpLabel    = new QLabel("Limp: ---");
-    m_throttleBar  = new QProgressBar();
+    // === DASHBOARD PANEL ===
+    mainLayout->addWidget(createDashboardPanel());
+    m_throttleBar = new QProgressBar();
     m_throttleBar->setRange(0, 100);
-    m_throttleBar->setFormat("Gaz: %v%");
-
-    QFont bigFont;
-    bigFont.setPointSize(14);
-    bigFont.setBold(true);
-    m_gearLabel->setFont(bigFont);
-    m_solVoltLabel->setFont(bigFont);
-
-    statusGrid->addWidget(m_gearLabel,    0, 0);
-    statusGrid->addWidget(m_rpmLabel,     0, 1);
-    statusGrid->addWidget(m_tempLabel,    0, 2);
-    statusGrid->addWidget(m_solVoltLabel, 1, 0);
-    statusGrid->addWidget(m_limpLabel,    1, 1);
-    statusGrid->addWidget(m_throttleBar,  1, 2);
-
-    mainLayout->addWidget(statusBox);
+    m_throttleBar->setVisible(false);
+    mainLayout->addWidget(m_throttleBar);
 
     // === TABLAR ===
     m_tabs = new QTabWidget();
@@ -144,6 +125,96 @@ void MainWindow::setupUI()
 
     // Durum çubuğu
     //statusBar()->showMessage("Bağlantı bekleniyor...");
+}
+
+
+// ================================================================
+// Dashboard gauge card and panel
+// ================================================================
+
+QFrame* MainWindow::createGaugeCard(const QString &title, const QString &initValue,
+    const QString &unit, QLabel **valueLabel, QLabel **unitLabel)
+{
+    QFrame *card = new QFrame();
+    card->setFrameShape(QFrame::StyledPanel);
+    card->setStyleSheet("QFrame{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:6px;padding:4px;}");
+    card->setMinimumWidth(90);
+    card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    QVBoxLayout *lay = new QVBoxLayout(card);
+    lay->setContentsMargins(6,3,6,3); lay->setSpacing(0);
+    QLabel *tl = new QLabel(title);
+    tl->setStyleSheet("color:#8888aa;font-size:10px;border:none;background:transparent;");
+    tl->setAlignment(Qt::AlignCenter); lay->addWidget(tl);
+    QLabel *vl = new QLabel(initValue);
+    vl->setAlignment(Qt::AlignCenter);
+    vl->setStyleSheet("color:#00ff88;font-size:22px;font-weight:bold;"
+        "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;");
+    lay->addWidget(vl);
+    QLabel *ul = new QLabel(unit);
+    ul->setAlignment(Qt::AlignCenter);
+    ul->setStyleSheet("color:#6666aa;font-size:9px;border:none;background:transparent;");
+    lay->addWidget(ul);
+    *valueLabel = vl; *unitLabel = ul;
+    return card;
+}
+
+QWidget* MainWindow::createDashboardPanel()
+{
+    QWidget *p = new QWidget();
+    QGridLayout *g = new QGridLayout(p);
+    g->setContentsMargins(2,2,2,2); g->setSpacing(4);
+    g->addWidget(createGaugeCard("VITES","---","",&m_dashGearVal,&m_dashGearUnit),0,0);
+    g->addWidget(createGaugeCard("TURBIN","---","rpm",&m_dashRpmVal,&m_dashRpmUnit),0,1);
+    g->addWidget(createGaugeCard("HIZ","---","km/h",&m_dashSpeedVal,&m_dashSpeedUnit),0,2);
+    g->addWidget(createGaugeCard("GAZ","---","%",&m_dashThrottleVal,&m_dashThrottleUnit),0,3);
+    g->addWidget(createGaugeCard("SICAKLIK","---","C",&m_dashTempVal,&m_dashTempUnit),1,0);
+    g->addWidget(createGaugeCard("SELENOID V","---","V",&m_dashSolVoltVal,&m_dashSolVoltUnit),1,1);
+    g->addWidget(createGaugeCard("AKU","---","V",&m_dashBatVoltVal,&m_dashBatVoltUnit),1,2);
+    g->addWidget(createGaugeCard("LIMP","---","",&m_dashLimpVal,&m_dashLimpUnit),1,3);
+    for(int c=0;c<4;++c) g->setColumnStretch(c,1);
+    m_gearLabel=m_dashGearVal; m_rpmLabel=m_dashRpmVal;
+    m_tempLabel=m_dashTempVal; m_solVoltLabel=m_dashSolVoltVal; m_limpLabel=m_dashLimpVal;
+    return p;
+}
+
+void MainWindow::setGaugeColor(QLabel *vl, const QString &c) {
+    vl->setStyleSheet(QString("color:%1;font-size:22px;font-weight:bold;"
+        "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;").arg(c));
+}
+
+void MainWindow::updateDashboardFromLiveData(const QMap<uint8_t, double> &v)
+{
+    if(v.contains(0x01)){
+        int g=(int)v[0x01];
+        m_dashGearVal->setText(gearToString((TCMDiagnostics::Gear)g));
+        setGaugeColor(m_dashGearVal, g>=3 ? "#00ff88" : "#ffcc44");
+    }
+    if(v.contains(0x04)) m_dashRpmVal->setText(QString::number(v[0x04],'f',0));
+    if(v.contains(0x07)) m_dashSpeedVal->setText(QString::number(v[0x07],'f',0));
+    if(v.contains(0x0B)){
+        m_dashThrottleVal->setText(QString::number(v[0x0B],'f',1));
+        m_throttleBar->setValue((int)v[0x0B]);
+    }
+    if(v.contains(0x08)){
+        double t=v[0x08];
+        m_dashTempVal->setText(QString::number(t,'f',0));
+        setGaugeColor(m_dashTempVal, t>120?"#ff4444" : t>100?"#ffaa00" : "#00ff88");
+    }
+    if(v.contains(0x09)){
+        double s=v[0x09];
+        m_dashSolVoltVal->setText(QString::number(s,'f',1));
+        setGaugeColor(m_dashSolVoltVal, s<9.0?"#ff4444" : s<11.0?"#ffaa00" : "#00ff88");
+    }
+    if(v.contains(0x0A)){
+        double b=v[0x0A];
+        m_dashBatVoltVal->setText(QString::number(b,'f',1));
+        setGaugeColor(m_dashBatVoltVal, b<11.5?"#ff4444" : b<12.5?"#ffaa00" : "#00ff88");
+    }
+    if(v.contains(0x16)){
+        bool l=v[0x16]>0;
+        m_dashLimpVal->setText(l ? "AKTIF!" : "Normal");
+        setGaugeColor(m_dashLimpVal, l ? "#ff4444" : "#00ff88");
+    }
 }
 
 QWidget* MainWindow::createConnectionTab()
@@ -718,6 +789,9 @@ void MainWindow::onLiveDataUpdated(const QMap<uint8_t, double> &values)
             }
         }
     }
+
+    // Update dashboard gauges from live data
+    updateDashboardFromLiveData(values);
 }
 
 void MainWindow::onFullStatusUpdated(const TCMDiagnostics::TCMStatus &status)
