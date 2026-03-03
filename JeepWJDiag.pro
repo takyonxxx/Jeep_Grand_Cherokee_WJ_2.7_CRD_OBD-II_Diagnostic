@@ -1,6 +1,6 @@
 QT += core network widgets
 CONFIG += c++17
-TARGET = WJDiag
+TARGET = JeepWJDiag
 TEMPLATE = app
 
 INCLUDEPATH += include
@@ -26,12 +26,3 @@ android {
     ANDROID_MIN_SDK_VERSION = 24
     ANDROID_TARGET_SDK_VERSION = 34
 }
-
-
-# Simulator notes (kept as comments for reference)
-# simulator https://github.com/Ircama/ELM327-emulator/releases
-# pip install setuptools
-# pip install ELM327-emulator
-# elm -n 35000 -s car
-# elm -p COM8 -s car
-# elm -n 35000 -s car
