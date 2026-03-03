@@ -44,6 +44,8 @@ private:
     QWidget* createDTCTab();
     QWidget* createLiveDataTab();
     QWidget* createIOTab();
+    QWidget* createABSTab();
+    QWidget* createAirbagTab();
     QWidget* createLogTab();
     void updateDashboardFromLiveData(const QMap<uint8_t,double>&);
     void updateStatusLabels(const TCMDiagnostics::TCMStatus&);
@@ -79,6 +81,15 @@ private:
     QLabel *m_dashLimpVal,*m_dashLimpUnit;
     QProgressBar *m_throttleBar;
     QTableWidget *m_ioTable; QPushButton *m_readIOBtn;
+    // ABS tab
+    QTableWidget *m_absDtcTable=nullptr;
+    QPushButton *m_absReadDtcBtn=nullptr, *m_absClearDtcBtn=nullptr, *m_absLiveBtn=nullptr;
+    QLabel *m_absLFLabel=nullptr, *m_absRFLabel=nullptr, *m_absLRLabel=nullptr, *m_absRRLabel=nullptr;
+    QLabel *m_absSpeedLabel=nullptr, *m_absDtcCountLabel=nullptr;
+    // Airbag tab
+    QTableWidget *m_airbagDtcTable=nullptr;
+    QPushButton *m_airbagReadDtcBtn=nullptr, *m_airbagClearDtcBtn=nullptr;
+    QLabel *m_airbagDtcCountLabel=nullptr;
     QTextEdit *m_logText;
     QPushButton *m_rawDumpBtn, *m_rawSendBtn;
     QLineEdit *m_rawCmdEdit;
