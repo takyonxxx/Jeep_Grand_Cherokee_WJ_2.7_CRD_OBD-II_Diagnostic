@@ -132,12 +132,10 @@ void MainWindow::setupUI()
     );
     m_tabs->tabBar()->setExpanding(true);
 #endif
-    m_tabs->addTab(createConnectionTab(), "Baglanti");
-    m_tabs->addTab(createDTCTab(),        "Ariza");
-    m_tabs->addTab(createLiveDataTab(),   "Canli Veri");
+    m_tabs->addTab(createConnectionTab(), "Connect");
+    m_tabs->addTab(createDTCTab(),        "Faults");
+    m_tabs->addTab(createLiveDataTab(),   "Live Data");
     m_tabs->addTab(createIOTab(),         "I/O");
-    m_tabs->addTab(createABSTab(),        "ABS");
-    m_tabs->addTab(createAirbagTab(),     "Airbag");
     m_tabs->addTab(createLogTab(),        "Log");
 
     mainLayout->addWidget(m_tabs);
@@ -229,7 +227,7 @@ void MainWindow::updateDashboardFromLiveData(const QMap<uint8_t, double> &v)
     // Limp mode: max gear <= 2 ise limp
     if(v.contains(0x03)){
         bool l = v[0x03] <= 2 && v.value(0x14, 0) > 100;
-        m_dashLimpVal->setText(l?"AKTIF!":"Normal");
+        m_dashLimpVal->setText(l?"ACTIVE!":"Normal");
         setGaugeColor(m_dashLimpVal, l?"#ff4444":"#00ff88");
     }
     // Trans temp
@@ -264,7 +262,7 @@ QWidget* MainWindow::createConnectionTab()
     // Uyumluluk bilgisi
     QLabel *compatInfo = new QLabel(
         "Jeep Grand Cherokee 2002-2005 WJ/WG 2.7 CRD Only\n"
-        "Motor ECU: K-Line (ATSP5) | TCM/ABS/Airbag/Diger: J1850 VPW (ATSP2)\n"
+        "Engine ECU: K-Line (ATSP5) | TCM/ABS/Airbag/Other: J1850 VPW (ATSP2)\n"
         "Orijinal ELM327 onerisi: ATFI, ATWM, ATSH destegi gerekli");
     compatInfo->setStyleSheet("background:#1a2a1a;padding:4px;border-radius:4px;"
                               "color:#88cc88;font-family:monospace;font-size:9px;");
@@ -272,10 +270,10 @@ QWidget* MainWindow::createConnectionTab()
     layout->addWidget(compatInfo);
 
 
-    QGroupBox *connBox = new QGroupBox("ELM327 Baglanti");
+    QGroupBox *connBox = new QGroupBox("ELM327 Connection");
     QGridLayout *connGrid = new QGridLayout(connBox);
 
-    // WiFi satiri
+    // WiFi row
     connGrid->addWidget(new QLabel("WiFi:"), 0, 0);
     m_hostEdit = new QLineEdit("192.168.0.10");
     connGrid->addWidget(m_hostEdit, 0, 1);
@@ -284,38 +282,38 @@ QWidget* MainWindow::createConnectionTab()
     m_portSpin->setValue(35000);
     m_portSpin->setMaximumWidth(80);
     connGrid->addWidget(m_portSpin, 0, 2);
-    m_connectBtn = new QPushButton("WiFi Baglan");
+    m_connectBtn = new QPushButton("WiFi Connect");
     m_connectBtn->setMinimumHeight(34);
     connGrid->addWidget(m_connectBtn, 0, 3);
 
-    // Bluetooth satiri
+    // Bluetooth row
     connGrid->addWidget(new QLabel("BT:"), 1, 0);
     m_btCombo = new QComboBox();
-    m_btCombo->setPlaceholderText("Bluetooth cihaz sec...");
+    m_btCombo->setPlaceholderText("Select Bluetooth device...");
     m_btCombo->setStyleSheet("QComboBox{background:#1a1a2e;color:#88ccff;border:1px solid #3a3a6a;"
                              "border-radius:3px;padding:2px 4px;}");
     connGrid->addWidget(m_btCombo, 1, 1, 1, 2);
-    m_btScanBtn = new QPushButton("Tara");
+    m_btScanBtn = new QPushButton("Scan");
     m_btScanBtn->setMinimumHeight(34);
     m_btScanBtn->setStyleSheet("QPushButton{background:#1a2a4a;color:#88ccff;border:1px solid #3a5a8a;"
                                "border-radius:3px;font-weight:bold;}");
     connGrid->addWidget(m_btScanBtn, 1, 3);
 
     // BT Baglan + Disconnect
-    m_btConnectBtn = new QPushButton("BT Baglan");
+    m_btConnectBtn = new QPushButton("BT Connect");
     m_btConnectBtn->setMinimumHeight(34);
     m_btConnectBtn->setStyleSheet("QPushButton{background:#1a3a5a;color:#88ccff;border:1px solid #3a6a9a;"
                                   "border-radius:3px;font-weight:bold;}");
     m_btConnectBtn->setEnabled(false);
     connGrid->addWidget(m_btConnectBtn, 2, 0, 1, 2);
 
-    m_disconnectBtn = new QPushButton("Baglantiyi Kes");
+    m_disconnectBtn = new QPushButton("Disconnect");
     m_disconnectBtn->setMinimumHeight(34);
     m_disconnectBtn->setEnabled(false);
     connGrid->addWidget(m_disconnectBtn, 2, 2, 1, 2);
 
     // Durum
-    m_connStatusLabel = new QLabel("Durum: Bagli Degil");
+    m_connStatusLabel = new QLabel("Status: Disconnected");
     m_connStatusLabel->setStyleSheet("color: red; font-weight: bold;");
     connGrid->addWidget(m_connStatusLabel, 3, 0, 1, 4);
 
@@ -325,7 +323,7 @@ QWidget* MainWindow::createConnectionTab()
     QGroupBox *elmBox = new QGroupBox("ELM327 Bilgileri");
     QGridLayout *elmGrid = new QGridLayout(elmBox);
 
-    m_elmVersionLabel = new QLabel("Versiyon: ---");
+    m_elmVersionLabel = new QLabel("Version: ---");
 
     elmGrid->addWidget(m_elmVersionLabel, 0, 0);
 
@@ -333,11 +331,11 @@ QWidget* MainWindow::createConnectionTab()
 
     // TCM Oturum
     // === TCM Diagnostik Oturum ===
-    QGroupBox *tcmBox = new QGroupBox("TCM - NAG1 722.6 Sanziman");
+    QGroupBox *tcmBox = new QGroupBox("TCM - NAG1 722.6 Transmission");
     tcmBox->setStyleSheet("QGroupBox{font-weight:bold;color:#88ccff;}");
     QVBoxLayout *tcmLayout = new QVBoxLayout(tcmBox);
 
-    m_startSessionBtn = new QPushButton("TCM Oturumu Baslat");
+    m_startSessionBtn = new QPushButton("Start TCM Session");
     m_startSessionBtn->setEnabled(false);
     m_startSessionBtn->setMinimumHeight(34);
     m_startSessionBtn->setStyleSheet(
@@ -346,8 +344,8 @@ QWidget* MainWindow::createConnectionTab()
     tcmLayout->addWidget(m_startSessionBtn);
 
     QLabel *tcmProto = new QLabel(
-        "Protokol: J1850 VPW (ATSP2)\n"
-        "Adres: 0x28 (TCM - NAG1 722.6)\n"
+        "Protocol: J1850 VPW (ATSP2)\n"
+        "Address: 0x28 (TCM - NAG1 722.6)\n"
         "Header: ATSH2428xx  |  SID 0x22 ReadDataByPID");
     tcmProto->setStyleSheet("background:#1a2a3a;padding:4px;border-radius:4px;"
                             "color:#88ff88;font-family:monospace;font-size:9px;");
@@ -356,11 +354,11 @@ QWidget* MainWindow::createConnectionTab()
     layout->addWidget(tcmBox);
 
     // === ECU Diagnostik Oturum ===
-    QGroupBox *ecuBox = new QGroupBox("ECU - Motor (OM612 2.7 CRD)");
+    QGroupBox *ecuBox = new QGroupBox("ECU - Engine (OM612 2.7 CRD)");
     ecuBox->setStyleSheet("QGroupBox{font-weight:bold;color:#ffcc44;}");
     QVBoxLayout *ecuLayout = new QVBoxLayout(ecuBox);
 
-    m_startEcuBtn = new QPushButton("ECU Oturumu Baslat");
+    m_startEcuBtn = new QPushButton("Start ECU Session");
     m_startEcuBtn->setEnabled(false);
     m_startEcuBtn->setMinimumHeight(34);
     m_startEcuBtn->setStyleSheet(
@@ -369,8 +367,8 @@ QWidget* MainWindow::createConnectionTab()
     ecuLayout->addWidget(m_startEcuBtn);
 
     QLabel *ecuProto = new QLabel(
-        "Protokol: K-Line ISO 14230-4 (ATSP5)\n"
-        "Adres: 0x15 (Motor ECU - Bosch EDC15C2)\n"
+        "Protocol: K-Line ISO 14230-4 (ATSP5)\n"
+        "Address: 0x15 (Engine ECU - Bosch EDC15C2)\n"
         "Header: ATSH8115F1  |  ATWM8115F13E");
     ecuProto->setStyleSheet("background:#2a2a1a;padding:4px;border-radius:4px;"
                             "color:#ffdd88;font-family:monospace;font-size:9px;");
@@ -379,7 +377,7 @@ QWidget* MainWindow::createConnectionTab()
     layout->addWidget(ecuBox);
 
     // === Aktif Header Gostergesi ===
-    m_activeHeaderLabel = new QLabel("Aktif Header: ---  (Baglanti bekleniyor)");
+    m_activeHeaderLabel = new QLabel("Active Header: ---  (Waiting for connection)");
     m_activeHeaderLabel->setStyleSheet("background:#2a2a3a;padding:4px;border-radius:4px;"
                                        "color:#aaaaaa;font-family:monospace;font-weight:bold;");
     m_activeHeaderLabel->setAlignment(Qt::AlignCenter);
@@ -393,7 +391,7 @@ QWidget* MainWindow::createConnectionTab()
     // Bluetooth butonlari
     connect(m_btScanBtn, &QPushButton::clicked, this, [this]() {
         m_btCombo->clear();
-        m_btScanBtn->setText("Taraniyor...");
+        m_btScanBtn->setText("Scanning...");
         m_btScanBtn->setEnabled(false);
         m_elm->scanBluetooth();
     });
@@ -412,10 +410,10 @@ QWidget* MainWindow::createConnectionTab()
         m_btCombo->addItem(name + " [" + addr + "]", addr);
     });
     connect(m_elm, &ELM327Connection::bluetoothScanFinished, this, [this]() {
-        m_btScanBtn->setText("Tara");
+        m_btScanBtn->setText("Scan");
         m_btScanBtn->setEnabled(true);
         if (m_btCombo->count() == 0)
-            statusBar()->showMessage("BT cihaz bulunamadi");
+            statusBar()->showMessage("No BT device found");
     });
 #endif
 
@@ -423,21 +421,21 @@ QWidget* MainWindow::createConnectionTab()
         if (m_tcmSessionActive) {
             // Toggle off
             m_tcmSessionActive = false;
-            m_startSessionBtn->setText("TCM Oturumu Baslat");
+            m_startSessionBtn->setText("Start TCM Session");
             m_startSessionBtn->setStyleSheet(
                 "QPushButton{background:#1a3a5a;color:white;border:1px solid #3a6a9a;border-radius:4px;}"
                 "QPushButton:hover{background:#2a4a6a;}");
-            statusBar()->showMessage("TCM oturumu kapatildi");
+            statusBar()->showMessage("TCM session closed");
             updateActiveHeaderLabel();
             return;
         }
         // Start session
         m_startSessionBtn->setEnabled(false);
-        statusBar()->showMessage("TCM oturumu baslatiliyor...");
+        statusBar()->showMessage("Starting TCM session...");
         m_tcm->startSession([this](bool success) {
             if (success) {
                 m_tcmSessionActive = true;
-                m_startSessionBtn->setText("TCM Aktif");
+                m_startSessionBtn->setText("TCM Active");
                 m_startSessionBtn->setStyleSheet(
                     "QPushButton{background:#2a5a2a;color:#88ff88;border:1px solid #4a8a4a;border-radius:4px;font-weight:bold;}"
                     "QPushButton:hover{background:#3a6a3a;}");
@@ -447,10 +445,10 @@ QWidget* MainWindow::createConnectionTab()
                 m_clearDtcBtn->setEnabled(true);
                 m_startLiveBtn->setEnabled(true);
                 m_readIOBtn->setEnabled(true);
-                statusBar()->showMessage("TCM diagnostik oturumu aktif");
+                statusBar()->showMessage("TCM diagnostic session active");
             } else {
                 m_startSessionBtn->setEnabled(true);
-                statusBar()->showMessage("TCM oturumu baslatilamadi!");
+                statusBar()->showMessage("TCM session failed!");
             }
             updateActiveHeaderLabel();
         });
@@ -459,17 +457,17 @@ QWidget* MainWindow::createConnectionTab()
     connect(m_startEcuBtn, &QPushButton::clicked, this, [this]() {
         m_ecuSessionActive = !m_ecuSessionActive;
         if (m_ecuSessionActive) {
-            m_startEcuBtn->setText("ECU Aktif");
+            m_startEcuBtn->setText("ECU Active");
             m_startEcuBtn->setStyleSheet(
                 "QPushButton{background:#2a5a2a;color:#88ff88;border:1px solid #4a8a4a;border-radius:4px;font-weight:bold;}"
                 "QPushButton:hover{background:#3a6a3a;}");
-            statusBar()->showMessage("ECU oturumu aktif - Motor verileri okunacak");
+            statusBar()->showMessage("ECU session active - Engine data ready");
         } else {
-            m_startEcuBtn->setText("ECU Oturumu Baslat");
+            m_startEcuBtn->setText("Start ECU Session");
             m_startEcuBtn->setStyleSheet(
                 "QPushButton{background:#3a3a1a;color:white;border:1px solid #6a6a3a;border-radius:4px;}"
                 "QPushButton:hover{background:#4a4a2a;}");
-            statusBar()->showMessage("ECU oturumu kapatildi");
+            statusBar()->showMessage("ECU session closed");
         }
         updateActiveHeaderLabel();
     });
@@ -485,11 +483,11 @@ QWidget* MainWindow::createDTCTab()
 
     // === ECU / TCM kaynak secici ===
     QHBoxLayout *sourceLayout = new QHBoxLayout();
-    QLabel *srcLabel = new QLabel("Kaynak:");
+    QLabel *srcLabel = new QLabel("Source:");
     srcLabel->setStyleSheet("font-weight:bold;");
     sourceLayout->addWidget(srcLabel);
 
-    m_dtcTcmBtn = new QPushButton("TCM (Sanziman)");
+    m_dtcTcmBtn = new QPushButton("TCM (Trans)");
     m_dtcTcmBtn->setCheckable(true);
     m_dtcTcmBtn->setChecked(true);
     m_dtcTcmBtn->setMinimumHeight(34);
@@ -497,7 +495,7 @@ QWidget* MainWindow::createDTCTab()
         "QPushButton{background:#1a3a5a;color:white;border:1px solid #3a6a9a;border-radius:4px;padding:4px 12px;}"
         "QPushButton:checked{background:#2a5a2a;color:#88ff88;border:1px solid #4a8a4a;font-weight:bold;}");
 
-    m_dtcEcuBtn = new QPushButton("ECU (Motor)");
+    m_dtcEcuBtn = new QPushButton("ECU (Engine)");
     m_dtcEcuBtn->setCheckable(true);
     m_dtcEcuBtn->setChecked(false);
     m_dtcEcuBtn->setMinimumHeight(34);
@@ -505,35 +503,51 @@ QWidget* MainWindow::createDTCTab()
         "QPushButton{background:#3a3a1a;color:white;border:1px solid #6a6a3a;border-radius:4px;padding:4px 12px;}"
         "QPushButton:checked{background:#2a5a2a;color:#88ff88;border:1px solid #4a8a4a;font-weight:bold;}");
 
+    m_dtcAbsBtn = new QPushButton("ABS");
+    m_dtcAbsBtn->setCheckable(true);
+    m_dtcAbsBtn->setChecked(false);
+    m_dtcAbsBtn->setMinimumHeight(34);
+    m_dtcAbsBtn->setStyleSheet(
+        "QPushButton{background:#1a2a3a;color:white;border:1px solid #3a5a7a;border-radius:4px;padding:4px 12px;}"
+        "QPushButton:checked{background:#2a5a2a;color:#88ff88;border:1px solid #4a8a4a;font-weight:bold;}");
+
+    m_dtcAirbagBtn = new QPushButton("Airbag");
+    m_dtcAirbagBtn->setCheckable(true);
+    m_dtcAirbagBtn->setChecked(false);
+    m_dtcAirbagBtn->setMinimumHeight(34);
+    m_dtcAirbagBtn->setStyleSheet(
+        "QPushButton{background:#3a2a1a;color:white;border:1px solid #6a4a2a;border-radius:4px;padding:4px 12px;}"
+        "QPushButton:checked{background:#2a5a2a;color:#88ff88;border:1px solid #4a8a4a;font-weight:bold;}");
+
     sourceLayout->addWidget(m_dtcTcmBtn);
     sourceLayout->addWidget(m_dtcEcuBtn);
+    sourceLayout->addWidget(m_dtcAbsBtn);
+    sourceLayout->addWidget(m_dtcAirbagBtn);
     sourceLayout->addStretch();
     layout->addLayout(sourceLayout);
 
     // Toggle logic: radio-button style
-    connect(m_dtcTcmBtn, &QPushButton::clicked, this, [this]() {
-        m_dtcSourceECU = false;
-        m_dtcTcmBtn->setChecked(true);
-        m_dtcEcuBtn->setChecked(false);
+    auto selectDtcSource = [this](int src) {
+        m_dtcSourceIdx = src;
+        m_dtcTcmBtn->setChecked(src == 0);
+        m_dtcEcuBtn->setChecked(src == 1);
+        m_dtcAbsBtn->setChecked(src == 2);
+        m_dtcAirbagBtn->setChecked(src == 3);
         m_dtcTable->setRowCount(0);
-        m_dtcCountLabel->setText("Kaynak: TCM (Sanziman) - 0 hata kodu");
-        statusBar()->showMessage("DTC kaynak: TCM (Sanziman)");
-    });
-    connect(m_dtcEcuBtn, &QPushButton::clicked, this, [this]() {
-        m_dtcSourceECU = true;
-        m_dtcEcuBtn->setChecked(true);
-        m_dtcTcmBtn->setChecked(false);
-        m_dtcTable->setRowCount(0);
-        m_dtcCountLabel->setText("Kaynak: ECU (Motor) - 0 hata kodu");
-        statusBar()->showMessage("DTC kaynak: ECU (Motor)");
-    });
+        static const char* names[] = {"TCM","ECU","ABS","Airbag"};
+        m_dtcCountLabel->setText(QString("Source: %1 - 0 fault codes").arg(names[src]));
+    };
+    connect(m_dtcTcmBtn, &QPushButton::clicked, this, [=]() { selectDtcSource(0); });
+    connect(m_dtcEcuBtn, &QPushButton::clicked, this, [=]() { selectDtcSource(1); });
+    connect(m_dtcAbsBtn, &QPushButton::clicked, this, [=]() { selectDtcSource(2); });
+    connect(m_dtcAirbagBtn, &QPushButton::clicked, this, [=]() { selectDtcSource(3); });
 
     // === Butonlar ===
     QHBoxLayout *btnLayout = new QHBoxLayout();
 
-    m_readDtcBtn  = new QPushButton("Ariza Kodlarini Oku");
-    m_clearDtcBtn = new QPushButton("Ariza Kodlarini Sil");
-    m_dtcCountLabel = new QLabel("Kaynak: TCM - 0 hata kodu");
+    m_readDtcBtn  = new QPushButton("Read Fault Codes");
+    m_clearDtcBtn = new QPushButton("Clear Fault Codes");
+    m_dtcCountLabel = new QLabel("Source: TCM - 0 fault codes");
 
     m_readDtcBtn->setMinimumHeight(34);
     m_clearDtcBtn->setMinimumHeight(34);
@@ -548,9 +562,9 @@ QWidget* MainWindow::createDTCTab()
     layout->addLayout(btnLayout);
 
     // DTC tablosu - 6 sutun (kaynak eklendi)
-    m_dtcTable = new QTableWidget(0, 6);
+    m_dtcTable = new QTableWidget(0, 5);
     m_dtcTable->setHorizontalHeaderLabels({
-        "Kaynak", "Kod", "Aciklama", "Durum", "Aktif", "Tekrar"
+        "Source", "Code", "Description", "State", "Status"
     });
     m_dtcTable->horizontalHeader()->setStretchLastSection(true);
     m_dtcTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
@@ -563,8 +577,8 @@ QWidget* MainWindow::createDTCTab()
 
     // P2602 notu
     QLabel *p2602Note = new QLabel(
-        "NOT: P2602 (Selenoid Voltaji) genellikle zayif aku veya "
-        "sanziman 13-pin soket kontagi nedeniyle olusur.");
+        "NOTE: P2602 (Solenoid Voltage) is usually caused by weak battery or "
+        "transmission 13-pin connector contact issue.");
     p2602Note->setWordWrap(true);
     p2602Note->setStyleSheet("background:#3a3a20;padding:4px;border-radius:4px;color:#ffcc44;");
     layout->addWidget(p2602Note);
@@ -582,9 +596,9 @@ QWidget* MainWindow::createLiveDataTab()
 
     QHBoxLayout *btnLayout = new QHBoxLayout();
 
-    m_startLiveBtn = new QPushButton("Baslat");
-    m_stopLiveBtn  = new QPushButton("Durdur");
-    m_logBtn       = new QPushButton("CSV Kopyala");
+    m_startLiveBtn = new QPushButton("Start");
+    m_stopLiveBtn  = new QPushButton("Stop");
+    m_logBtn       = new QPushButton("Copy CSV");
 
     m_startLiveBtn->setMinimumHeight(34);
     m_stopLiveBtn->setMinimumHeight(34);
@@ -671,18 +685,18 @@ QWidget* MainWindow::createLiveDataTab()
     connect(m_logBtn, &QPushButton::clicked, this, [this]() {
         if (m_liveData->isLogging()) {
             m_liveData->stopLogging();
-            m_logBtn->setText("CSV Kopyala");
-            // Log bittikten sonra son dosyayi clipboard'a kopyala
+            m_logBtn->setText("Copy CSV");
+            // Copy last log to clipboard
             if (!m_lastLogPath.isEmpty()) {
                 QFile f(m_lastLogPath);
                 if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
                     QGuiApplication::clipboard()->setText(QString::fromUtf8(f.readAll()));
                     f.close();
-                    statusBar()->showMessage("CSV kopyalandi - yapistirabilirsiniz");
+                    statusBar()->showMessage("CSV copied to clipboard");
                 }
             }
         } else {
-            // Gecici dosyaya kaydet (sonra clipboard'a kopyalanacak)
+            // Save to temp file (will be copied to clipboard later)
             QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
             if (dir.isEmpty())
                 dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -690,7 +704,7 @@ QWidget* MainWindow::createLiveDataTab()
             m_lastLogPath = dir + "/wjdiag_"
                 + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") + ".csv";
             m_liveData->startLogging(m_lastLogPath);
-            m_logBtn->setText("Durdur+Kopyala");
+            m_logBtn->setText("Stop+Copy");
             statusBar()->showMessage("CSV kaydediliyor...");
         }
     });
@@ -710,7 +724,7 @@ QWidget* MainWindow::createIOTab()
 
     m_ioTable = new QTableWidget(0, 4);
     m_ioTable->setHorizontalHeaderLabels({
-        "I/O", "Açıklama", "Durum", "Detay"
+        "I/O", "Açıklama", "State", "Detay"
     });
     m_ioTable->horizontalHeader()->setStretchLastSection(true);
     m_ioTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -747,179 +761,6 @@ QWidget* MainWindow::createIOTab()
     return w;
 }
 
-QWidget* MainWindow::createABSTab()
-{
-    QWidget *w = new QWidget();
-    QVBoxLayout *layout = new QVBoxLayout(w);
-
-    // ABS Bilgi
-    QLabel *absInfo = new QLabel("ABS / ESP Modulu (J1850 VPW - Adres: 0x40)");
-    absInfo->setStyleSheet("color:#88ccff;font-weight:bold;padding:4px;");
-    layout->addWidget(absInfo);
-
-    // DTC Butonlari
-    QHBoxLayout *btnLayout = new QHBoxLayout();
-    m_absReadDtcBtn = new QPushButton("ABS DTC Oku");
-    m_absReadDtcBtn->setMinimumHeight(34);
-    m_absClearDtcBtn = new QPushButton("ABS DTC Sil");
-    m_absClearDtcBtn->setMinimumHeight(34);
-    m_absLiveBtn = new QPushButton("ABS Canli Veri");
-    m_absLiveBtn->setMinimumHeight(34);
-    btnLayout->addWidget(m_absReadDtcBtn);
-    btnLayout->addWidget(m_absClearDtcBtn);
-    btnLayout->addWidget(m_absLiveBtn);
-    layout->addLayout(btnLayout);
-
-    // DTC Tablosu
-    m_absDtcTable = new QTableWidget(0, 4);
-    m_absDtcTable->setHorizontalHeaderLabels({"Kod", "Aciklama", "Durum", "Status"});
-    m_absDtcTable->horizontalHeader()->setStretchLastSection(true);
-    m_absDtcTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_absDtcTable->setAlternatingRowColors(true);
-    m_absDtcTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    layout->addWidget(m_absDtcTable);
-
-    // Canli veri label'lari
-    QGroupBox *liveGroup = new QGroupBox("Tekerlek Hizlari");
-    QGridLayout *lg = new QGridLayout(liveGroup);
-    m_absLFLabel = new QLabel("Sol On: ---");
-    m_absRFLabel = new QLabel("Sag On: ---");
-    m_absLRLabel = new QLabel("Sol Arka: ---");
-    m_absRRLabel = new QLabel("Sag Arka: ---");
-    m_absSpeedLabel = new QLabel("Arac Hizi: ---");
-    for (auto *l : {m_absLFLabel, m_absRFLabel, m_absLRLabel, m_absRRLabel, m_absSpeedLabel})
-        l->setStyleSheet("color:#00ff88;font-size:12px;font-family:monospace;");
-    lg->addWidget(m_absLFLabel, 0, 0);  lg->addWidget(m_absRFLabel, 0, 1);
-    lg->addWidget(m_absLRLabel, 1, 0);  lg->addWidget(m_absRRLabel, 1, 1);
-    lg->addWidget(m_absSpeedLabel, 2, 0, 1, 2);
-    layout->addWidget(liveGroup);
-
-    m_absDtcCountLabel = new QLabel("0 hata kodu");
-    layout->addWidget(m_absDtcCountLabel);
-
-    // Sinyaller
-    connect(m_absReadDtcBtn, &QPushButton::clicked, this, [this]() {
-        m_absReadDtcBtn->setEnabled(false);
-        m_tcm->readDTCs(WJDiagnostics::Module::ABS, [this](const QList<WJDiagnostics::DTCEntry> &dtcs) {
-            m_absDtcTable->setRowCount(0);
-            for (const auto &d : dtcs) {
-                int row = m_absDtcTable->rowCount();
-                m_absDtcTable->insertRow(row);
-                m_absDtcTable->setItem(row, 0, new QTableWidgetItem(d.code));
-                m_absDtcTable->setItem(row, 1, new QTableWidgetItem(d.description));
-                m_absDtcTable->setItem(row, 2, new QTableWidgetItem(d.isActive ? "Aktif" : "Kayitli"));
-                m_absDtcTable->setItem(row, 3, new QTableWidgetItem(
-                    QString("0x%1").arg(d.status, 2, 16, QChar('0')).toUpper()));
-                if (d.isActive) {
-                    for (int c=0;c<4;c++) {
-                        m_absDtcTable->item(row,c)->setBackground(QColor(80,20,20));
-                        m_absDtcTable->item(row,c)->setForeground(QColor(255,100,100));
-                    }
-                }
-            }
-            m_absDtcCountLabel->setText(QString("%1 hata kodu").arg(dtcs.size()));
-            m_absReadDtcBtn->setEnabled(true);
-        });
-    });
-
-    connect(m_absClearDtcBtn, &QPushButton::clicked, this, [this]() {
-        m_tcm->clearDTCs(WJDiagnostics::Module::ABS, [this](bool ok) {
-            if (ok) { m_absDtcTable->setRowCount(0); m_absDtcCountLabel->setText("DTC silindi"); }
-        });
-    });
-
-    connect(m_absLiveBtn, &QPushButton::clicked, this, [this]() {
-        m_tcm->readABSLiveData([this](const WJDiagnostics::ABSStatus &abs) {
-            m_absLFLabel->setText(QString("Sol On: %1 km/h").arg(abs.wheelLF));
-            m_absRFLabel->setText(QString("Sag On: %1 km/h").arg(abs.wheelRF));
-            m_absLRLabel->setText(QString("Sol Arka: %1 km/h").arg(abs.wheelLR));
-            m_absRRLabel->setText(QString("Sag Arka: %1 km/h").arg(abs.wheelRR));
-            m_absSpeedLabel->setText(QString("Arac Hizi: %1 km/h").arg(abs.vehicleSpeed));
-        });
-    });
-
-    return w;
-}
-
-QWidget* MainWindow::createAirbagTab()
-{
-    QWidget *w = new QWidget();
-    QVBoxLayout *layout = new QVBoxLayout(w);
-
-    QLabel *airbagInfo = new QLabel("Airbag / ORC Modulu (J1850 VPW - Adres: 0x60)");
-    airbagInfo->setStyleSheet("color:#ff8844;font-weight:bold;padding:4px;");
-    layout->addWidget(airbagInfo);
-
-    QHBoxLayout *btnLayout = new QHBoxLayout();
-    m_airbagReadDtcBtn = new QPushButton("Airbag DTC Oku");
-    m_airbagReadDtcBtn->setMinimumHeight(34);
-    m_airbagClearDtcBtn = new QPushButton("Airbag DTC Sil");
-    m_airbagClearDtcBtn->setMinimumHeight(34);
-    m_airbagClearDtcBtn->setStyleSheet("QPushButton{background:#5a2020;color:#ff8888;border:1px solid #8a4040;border-radius:4px;}"
-                                        "QPushButton:hover{background:#6a3030;}");
-    btnLayout->addWidget(m_airbagReadDtcBtn);
-    btnLayout->addWidget(m_airbagClearDtcBtn);
-    layout->addLayout(btnLayout);
-
-    m_airbagDtcTable = new QTableWidget(0, 4);
-    m_airbagDtcTable->setHorizontalHeaderLabels({"Kod", "Aciklama", "Durum", "Status"});
-    m_airbagDtcTable->horizontalHeader()->setStretchLastSection(true);
-    m_airbagDtcTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_airbagDtcTable->setAlternatingRowColors(true);
-    m_airbagDtcTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    layout->addWidget(m_airbagDtcTable);
-
-    m_airbagDtcCountLabel = new QLabel("0 hata kodu");
-    layout->addWidget(m_airbagDtcCountLabel);
-
-    QLabel *warning = new QLabel(
-        "DIKKAT: Airbag DTC silme islemi sadece arizalar giderildikten sonra yapilmalidir.\n"
-        "Aktif airbag arizasi durumunda arac guvenli degildir!");
-    warning->setWordWrap(true);
-    warning->setStyleSheet("background:#4a2020;padding:4px;border-radius:4px;"
-                           "color:#ff6666;font-weight:bold;");
-    layout->addWidget(warning);
-
-    // Sinyaller
-    connect(m_airbagReadDtcBtn, &QPushButton::clicked, this, [this]() {
-        m_airbagReadDtcBtn->setEnabled(false);
-        m_tcm->readDTCs(WJDiagnostics::Module::Airbag, [this](const QList<WJDiagnostics::DTCEntry> &dtcs) {
-            m_airbagDtcTable->setRowCount(0);
-            for (const auto &d : dtcs) {
-                int row = m_airbagDtcTable->rowCount();
-                m_airbagDtcTable->insertRow(row);
-                m_airbagDtcTable->setItem(row, 0, new QTableWidgetItem(d.code));
-                m_airbagDtcTable->setItem(row, 1, new QTableWidgetItem(d.description));
-                m_airbagDtcTable->setItem(row, 2, new QTableWidgetItem(d.isActive ? "Aktif" : "Kayitli"));
-                m_airbagDtcTable->setItem(row, 3, new QTableWidgetItem(
-                    QString("0x%1").arg(d.status, 2, 16, QChar('0')).toUpper()));
-                if (d.isActive) {
-                    for (int c=0;c<4;c++) {
-                        m_airbagDtcTable->item(row,c)->setBackground(QColor(80,20,20));
-                        m_airbagDtcTable->item(row,c)->setForeground(QColor(255,100,100));
-                    }
-                }
-            }
-            m_airbagDtcCountLabel->setText(QString("%1 hata kodu").arg(dtcs.size()));
-            m_airbagReadDtcBtn->setEnabled(true);
-        });
-    });
-
-    connect(m_airbagClearDtcBtn, &QPushButton::clicked, this, [this]() {
-        auto reply = QMessageBox::warning(this, "Airbag DTC Sil",
-            "Airbag hata kodlarini silmek istediginizden emin misiniz?\n\n"
-            "Bu islemi sadece ariza giderildikten sonra yapin!",
-            QMessageBox::Yes | QMessageBox::No);
-        if (reply == QMessageBox::Yes) {
-            m_tcm->clearDTCs(WJDiagnostics::Module::Airbag, [this](bool ok) {
-                if (ok) { m_airbagDtcTable->setRowCount(0); m_airbagDtcCountLabel->setText("DTC silindi"); }
-            });
-        }
-    });
-
-    return w;
-}
-
 QWidget* MainWindow::createLogTab()
 {
     QWidget *w = new QWidget();
@@ -942,16 +783,16 @@ QWidget* MainWindow::createLogTab()
     connect(clearLogBtn, &QPushButton::clicked, m_logText, &QTextEdit::clear);
     logGrid->addWidget(clearLogBtn, 0, 0);
 
-    QPushButton *saveLogBtn = new QPushButton("Log Kopyala");
+    QPushButton *saveLogBtn = new QPushButton("Copy Log");
     saveLogBtn->setStyleSheet("background:#2a3a2a; color:#88ff88; font-weight:bold; padding:4px 6px;");
     connect(saveLogBtn, &QPushButton::clicked, this, [this]() {
         QString text = m_logText->toPlainText();
         if (text.isEmpty()) {
-            statusBar()->showMessage("Log bos - kopyalanacak veri yok");
+            statusBar()->showMessage("Log empty - nothing to copy");
             return;
         }
         QGuiApplication::clipboard()->setText(text);
-        statusBar()->showMessage(QString("Log kopyalandi (%1 satir) - WhatsApp/Notes'a yapistirabilirsiniz")
+        statusBar()->showMessage(QString("Log copied (%1 lines) - paste to WhatsApp/Notes")
             .arg(text.count('\n') + 1));
     });
     logGrid->addWidget(saveLogBtn, 0, 1);
@@ -997,7 +838,7 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
 {
     switch (state) {
     case ELM327Connection::ConnectionState::Disconnected:
-        m_connStatusLabel->setText("Durum: Bagli Degil");
+        m_connStatusLabel->setText("Status: Disconnected");
         m_connStatusLabel->setStyleSheet("color: red; font-weight: bold;");
         m_connectBtn->setEnabled(true);
         m_disconnectBtn->setEnabled(false);
@@ -1007,7 +848,7 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
         m_startLiveBtn->setEnabled(false);
         m_readIOBtn->setEnabled(false);
         if (m_batteryTimer) m_batteryTimer->stop();
-        statusBar()->showMessage("Baglanti kesildi");
+        statusBar()->showMessage("Disconnected");
         break;
 
     case ELM327Connection::ConnectionState::Connecting:
@@ -1023,22 +864,22 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
         break;
 
     case ELM327Connection::ConnectionState::Ready:
-        m_connStatusLabel->setText("Durum: Hazir");
+        m_connStatusLabel->setText("Status: Ready");
         m_connStatusLabel->setStyleSheet("color: lime; font-weight: bold;");
         m_connectBtn->setEnabled(false);
         m_disconnectBtn->setEnabled(true);
         m_startSessionBtn->setEnabled(true);
-        m_elmVersionLabel->setText("Versiyon: " + m_elm->elmVersion());
+        m_elmVersionLabel->setText("Version: " + m_elm->elmVersion());
 
-        statusBar()->showMessage("ELM327 hazir - Diagnostik oturum baslatabilirsiniz");
+        statusBar()->showMessage("ELM327 ready - Start a diagnostic session");
         break;
 
     case ELM327Connection::ConnectionState::Error:
-        m_connStatusLabel->setText("Durum: HATA!");
+        m_connStatusLabel->setText("Status: ERROR!");
         m_connStatusLabel->setStyleSheet("color: red; font-weight: bold;");
         m_connectBtn->setEnabled(true);
         m_disconnectBtn->setEnabled(true);
-        statusBar()->showMessage("Bağlantı hatası!");
+        statusBar()->showMessage("Connection error!");
         break;
 
     default:
@@ -1049,56 +890,78 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
 void MainWindow::onReadDTCs()
 {
     m_readDtcBtn->setEnabled(false);
-    QString src = m_dtcSourceECU ? "ECU (Motor)" : "TCM (Sanziman)";
-    statusBar()->showMessage("Ariza kodlari okunuyor: " + src + "...");
+    static const char* names[] = {"TCM","ECU","ABS","Airbag"};
+    QString src = names[m_dtcSourceIdx];
+    statusBar()->showMessage("Reading fault codes: " + src + "...");
 
-    auto mod = m_dtcSourceECU ? WJDiagnostics::Module::MotorECU : WJDiagnostics::Module::TCM;
+    WJDiagnostics::Module mod;
+    switch (m_dtcSourceIdx) {
+    case 1:  mod = WJDiagnostics::Module::MotorECU; break;
+    case 2:  mod = WJDiagnostics::Module::ABS; break;
+    case 3:  mod = WJDiagnostics::Module::Airbag; break;
+    default: mod = WJDiagnostics::Module::TCM; break;
+    }
+
     m_tcm->readDTCs(mod, [this, src](const QList<WJDiagnostics::DTCEntry> &dtcs) {
         m_dtcTable->setRowCount(0);
         for (const auto &d : dtcs) {
             int row = m_dtcTable->rowCount();
             m_dtcTable->insertRow(row);
-            m_dtcTable->setItem(row, 0, new QTableWidgetItem(d.code));
-            m_dtcTable->setItem(row, 1, new QTableWidgetItem(d.description));
-            m_dtcTable->setItem(row, 2, new QTableWidgetItem(d.isActive ? "Aktif" : "Kayitli"));
-            m_dtcTable->setItem(row, 3, new QTableWidgetItem(
+            m_dtcTable->setItem(row, 0, new QTableWidgetItem(src));
+            m_dtcTable->setItem(row, 1, new QTableWidgetItem(d.code));
+            m_dtcTable->setItem(row, 2, new QTableWidgetItem(d.description));
+            m_dtcTable->setItem(row, 3, new QTableWidgetItem(d.isActive ? "Active" : "Stored"));
+            m_dtcTable->setItem(row, 4, new QTableWidgetItem(
                 QString("0x%1").arg(d.status, 2, 16, QChar('0')).toUpper()));
 
             if (d.isActive) {
-                for (int col = 0; col < 4; ++col) {
+                for (int col = 0; col < 5; ++col) {
                     m_dtcTable->item(row, col)->setBackground(QColor(80, 20, 20));
                     m_dtcTable->item(row, col)->setForeground(QColor(255, 100, 100));
                 }
             }
         }
         m_readDtcBtn->setEnabled(true);
-        m_dtcCountLabel->setText(QString("Kaynak: %1 - %2 hata kodu").arg(src).arg(dtcs.size()));
-        statusBar()->showMessage(QString("%1 ariza kodu okundu (%2)").arg(dtcs.size()).arg(src));
+        m_dtcCountLabel->setText(QString("Source: %1 - %2 fault codes").arg(src).arg(dtcs.size()));
+        statusBar()->showMessage(QString("%1 fault codes read (%2)").arg(dtcs.size()).arg(src));
     });
 }
 
 void MainWindow::onClearDTCs()
 {
-    QString src = m_dtcSourceECU ? "ECU (Motor)" : "TCM (Sanziman)";
+    static const char* names[] = {"TCM","ECU","ABS","Airbag"};
+    QString src = names[m_dtcSourceIdx];
+
+    QString warning = (m_dtcSourceIdx == 3)
+        ? QString("Are you sure you want to clear %1 fault codes?\n\n"
+                  "WARNING: Only clear Airbag DTCs after faults have been repaired!").arg(src)
+        : QString("Are you sure you want to clear %1 fault codes?\n\n"
+                  "NOTE: Active faults will reappear if the problem persists.").arg(src);
+
     QMessageBox::StandardButton reply = QMessageBox::question(
-        this, "Ariza Kodlarini Sil",
-        QString("%1 ariza kodlarini silmek istediginizden emin misiniz?\n\n"
-        "NOT: Aktif arizalar silinse bile sorun devam ediyorsa tekrar olusacaktir.").arg(src),
+        this, "Clear Fault Codes", warning,
         QMessageBox::Yes | QMessageBox::No);
 
     if (reply == QMessageBox::Yes) {
         m_clearDtcBtn->setEnabled(false);
-        statusBar()->showMessage(src + " ariza kodlari siliniyor...");
+        statusBar()->showMessage("Clearing " + src + " fault codes...");
 
-        auto mod = m_dtcSourceECU ? WJDiagnostics::Module::MotorECU : WJDiagnostics::Module::TCM;
+        WJDiagnostics::Module mod;
+        switch (m_dtcSourceIdx) {
+        case 1:  mod = WJDiagnostics::Module::MotorECU; break;
+        case 2:  mod = WJDiagnostics::Module::ABS; break;
+        case 3:  mod = WJDiagnostics::Module::Airbag; break;
+        default: mod = WJDiagnostics::Module::TCM; break;
+        }
+
         m_tcm->clearDTCs(mod, [this, src](bool success) {
             m_clearDtcBtn->setEnabled(true);
             if (success) {
                 m_dtcTable->setRowCount(0);
-                m_dtcCountLabel->setText(QString("Kaynak: %1 - 0 hata kodu").arg(src));
-                statusBar()->showMessage(src + " ariza kodlari silindi");
+                m_dtcCountLabel->setText(QString("Source: %1 - 0 fault codes").arg(src));
+                statusBar()->showMessage(src + " fault codes cleared");
             } else {
-                statusBar()->showMessage(src + " ariza kodlari silinemedi!");
+                statusBar()->showMessage(src + " fault codes could not be cleared!");
             }
         });
     }
@@ -1135,7 +998,7 @@ void MainWindow::onStopLiveData()
     m_liveData->stopPolling();
     m_startLiveBtn->setEnabled(true);
     m_stopLiveBtn->setEnabled(false);
-    statusBar()->showMessage("Canlı veri durduruldu");
+    statusBar()->showMessage("Live data stopped");
 }
 
 void MainWindow::onLiveDataUpdated(const QMap<uint8_t, double> &values)
@@ -1252,7 +1115,7 @@ void MainWindow::updateStatusLabels(const TCMDiagnostics::TCMStatus &st)
     m_dashSpeedVal->setText(QString::number(st.vehicleSpeed,'f',0));
     m_dashSolVoltVal->setText(QString::number(st.solenoidSupply,'f',1));
     m_dashCoolantVal->setText(QString::number(st.transTemp,'f',0));      // Trans temp
-    m_dashLimpVal->setText(st.limpMode ? "AKTIF!" : "Normal");
+    m_dashLimpVal->setText(st.limpMode ? "ACTIVE!" : "Normal");
     // Motor su sicakligi: coolantTemp alaninda ECU'dan gelir
     if (st.coolantTemp > 0) {
         m_dashMotCoolVal->setText(QString::number(st.coolantTemp,'f',0));
@@ -1283,7 +1146,7 @@ void MainWindow::updateActiveHeaderLabel()
         style = "background:#3a3a1a;padding:4px;border-radius:4px;"
                 "color:#ffcc44;font-family:monospace;font-weight:bold;";
     } else {
-        text = "Aktif Header: ---  (Oturum baslatilmadi)";
+        text = "Active Header: ---  (No session started)";
         style = "background:#2a2a3a;padding:4px;border-radius:4px;"
                 "color:#aaaaaa;font-family:monospace;font-weight:bold;";
     }
@@ -1311,7 +1174,7 @@ QString MainWindow::gearToString(TCMDiagnostics::Gear gear)
 void MainWindow::onRawBusDump()
 {
     m_rawDumpBtn->setEnabled(false);
-    m_rawDumpBtn->setText("Okunuyor...");
+    m_rawDumpBtn->setText("Reading...");
 
     auto logHex = [this](const QString &prefix, const QString &cmd, const QByteArray &resp) {
         QString hex;
@@ -1334,7 +1197,7 @@ void MainWindow::onRawBusDump()
     // Phase 4: Airbag (J1850 VPW 0x60) - SID 0x28 ReadMemory
     QList<uint8_t> airbagPIDs = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05};
 
-    m_logText->append("<font color='white'>========== HAM BUS DUMP BASLADI ==========</font>");
+    m_logText->append("<font color='white'>========== RAW BUS DUMP STARTED ==========</font>");
     m_logText->append("<font color='#ffcc00'>--- Motor ECU (0x15) K-Line ---</font>");
 
     // Phase 1: Motor ECU via K-Line
@@ -1368,9 +1231,9 @@ void MainWindow::onRawBusDump()
                                     logHex("#ffaa44", cmd, data);
                                 },
                                 [this]() {
-                                    m_logText->append("<font color='white'>========== HAM BUS DUMP TAMAMLANDI ==========</font>");
+                                    m_logText->append("<font color='white'>========== RAW BUS DUMP COMPLETED ==========</font>");
                                     m_rawDumpBtn->setEnabled(true);
-                                    m_rawDumpBtn->setText("Ham Veri Oku");
+                                    m_rawDumpBtn->setText("Raw Data Read");
                                 });
                         });
                 });

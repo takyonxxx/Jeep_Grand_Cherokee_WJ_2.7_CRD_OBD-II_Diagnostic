@@ -45,8 +45,6 @@ private:
     QWidget* createDTCTab();
     QWidget* createLiveDataTab();
     QWidget* createIOTab();
-    QWidget* createABSTab();
-    QWidget* createAirbagTab();
     QWidget* createLogTab();
     void updateDashboardFromLiveData(const QMap<uint8_t,double>&);
     void updateStatusLabels(const TCMDiagnostics::TCMStatus&);
@@ -69,8 +67,8 @@ private:
     QTimer *m_batteryTimer = nullptr;  // ATRV periyodik okuma
     QString m_lastLogPath;
     QTableWidget *m_dtcTable; QPushButton *m_readDtcBtn,*m_clearDtcBtn; QLabel *m_dtcCountLabel;
-    QPushButton *m_dtcTcmBtn,*m_dtcEcuBtn;
-    bool m_dtcSourceECU = false; // false=TCM, true=ECU
+    QPushButton *m_dtcTcmBtn=nullptr,*m_dtcEcuBtn=nullptr,*m_dtcAbsBtn=nullptr,*m_dtcAirbagBtn=nullptr;
+    int m_dtcSourceIdx = 0; // 0=TCM, 1=ECU, 2=ABS, 3=Airbag
     QTableWidget *m_liveTable; QPushButton *m_startLiveBtn,*m_stopLiveBtn,*m_logBtn;
     QComboBox *m_modeCombo;
     QLabel *m_dashGearVal,*m_dashGearUnit;
