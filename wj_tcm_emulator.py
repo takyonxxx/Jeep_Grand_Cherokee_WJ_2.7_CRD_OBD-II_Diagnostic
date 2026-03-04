@@ -175,6 +175,7 @@ class KWP2000Responder:
             0x27: self._security_access,
             0x30: self._io_control,
             0x3E: self._tester_present,
+            0x81: self._start_communication,
         }.get(service_id)
 
         if handler:
@@ -203,6 +204,13 @@ class KWP2000Responder:
 
     def _tester_present(self, data: bytes) -> bytes:
         return bytes([0x7E, data[0] if data else 0x01])
+
+    def _start_communication(self, data: bytes) -> bytes:
+        """StartCommunication (SID 0x81) - KWP2000 K-Line session baslat."""
+        log.info("StartCommunication (0x81) alindi")
+        # Positive response: 0xC1 + KeyByte1 + KeyByte2
+        # KeyBytes: 0x8F 0xEF (typical Bosch EDC15 response)
+        return bytes([0xC1, 0x8F, 0xEF])
 
     def _read_dtc(self, data: bytes) -> bytes:
         """ReadDTCByStatus (SID 0x18)."""
@@ -552,8 +560,12 @@ class ELM327Emulator:
 
         # ATFI - Fast init (genuine ELM327 feature)
         if at == "FI":
-            log.info("Fast init (ATFI) - genuine ELM emulated")
-            return "OK"
+            if self.protocol == 5 or self.protocol == 3:
+                log.info("Fast init (ATFI) - K-Line bus init OK")
+                return "BUS INIT: OK"
+            else:
+                log.info("Fast init (ATFI) - wrong protocol %d", self.protocol)
+                return "BUS INIT: ...ERROR"
 
         # ATWM - Wakeup message (genuine ELM327 feature)
         if at.startswith("WM"):

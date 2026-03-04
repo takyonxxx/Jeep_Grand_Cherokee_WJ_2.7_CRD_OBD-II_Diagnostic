@@ -1,29 +1,56 @@
-﻿#include "elm327connection.h"
+#include "elm327connection.h"
 #include <QDebug>
 #include <QRegularExpression>
 
 ELM327Connection::ELM327Connection(QObject *parent)
     : QObject(parent)
 {
-    m_socket = new QTcpSocket(this);
+    m_tcpSocket = new QTcpSocket(this);
     m_timeoutTimer = new QTimer(this);
     m_processTimer = new QTimer(this);
 
     m_timeoutTimer->setSingleShot(true);
     m_processTimer->setInterval(50);
 
-    connect(m_socket, &QTcpSocket::connected,
-            this, &ELM327Connection::onSocketConnected);
-    connect(m_socket, &QTcpSocket::disconnected,
-            this, &ELM327Connection::onSocketDisconnected);
-    connect(m_socket, &QTcpSocket::errorOccurred,
-            this, &ELM327Connection::onSocketError);
-    connect(m_socket, &QTcpSocket::readyRead,
-            this, &ELM327Connection::onDataReady);
     connect(m_timeoutTimer, &QTimer::timeout,
             this, &ELM327Connection::onCommandTimeout);
     connect(m_processTimer, &QTimer::timeout,
             this, &ELM327Connection::processNextCommand);
+
+#if HAS_BLUETOOTH
+    m_btSocket = new QBluetoothSocket(QBluetoothServiceInfo::RfcommProtocol, this);
+    m_btAgent = new QBluetoothDeviceDiscoveryAgent(this);
+    m_btAgent->setLowEnergyDiscoveryTimeout(8000);
+
+    connect(m_btAgent, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered,
+            this, [this](const QBluetoothDeviceInfo &info) {
+        QString name = info.name();
+        QString addr = info.address().toString();
+        // ELM327 / OBD cihazlarini filtrele
+        if (name.contains("OBD", Qt::CaseInsensitive) ||
+            name.contains("ELM", Qt::CaseInsensitive) ||
+            name.contains("vLink", Qt::CaseInsensitive) ||
+            name.contains("IOS-V", Qt::CaseInsensitive) ||
+            name.contains("OBDII", Qt::CaseInsensitive)) {
+            emit logMessage(QString("BT cihaz bulundu: %1 [%2]").arg(name, addr));
+            emit bluetoothDeviceFound(name, addr);
+        }
+    });
+    connect(m_btAgent, &QBluetoothDeviceDiscoveryAgent::finished,
+            this, [this]() {
+        emit logMessage("BT tarama tamamlandi");
+        emit bluetoothScanFinished();
+        if (m_state == ConnectionState::Scanning)
+            setState(ConnectionState::Disconnected);
+    });
+    connect(m_btAgent, &QBluetoothDeviceDiscoveryAgent::errorOccurred,
+            this, [this](QBluetoothDeviceDiscoveryAgent::Error err) {
+        Q_UNUSED(err)
+        emit logMessage("BT tarama hatasi: " + m_btAgent->errorString());
+        if (m_state == ConnectionState::Scanning)
+            setState(ConnectionState::Disconnected);
+    });
+#endif
 }
 
 ELM327Connection::~ELM327Connection()
@@ -31,16 +58,73 @@ ELM327Connection::~ELM327Connection()
     disconnect();
 }
 
+// === WiFi (TCP) Baglanti ===
+
 void ELM327Connection::connectToDevice(const QString &host, quint16 port)
 {
-    if (m_state != ConnectionState::Disconnected) {
+    if (m_state != ConnectionState::Disconnected)
         disconnect();
-    }
+
+    m_transport = Transport::WiFi;
+    m_io = m_tcpSocket;
+    connectSignals();
 
     setState(ConnectionState::Connecting);
-    emit logMessage(QString("ELM327'ye bağlanılıyor: %1:%2").arg(host).arg(port));
-    m_socket->connectToHost(host, port);
+    emit logMessage(QString("WiFi ELM327: %1:%2").arg(host).arg(port));
+    m_tcpSocket->connectToHost(host, port);
 }
+
+// === Bluetooth (RFCOMM/SPP) Baglanti ===
+
+void ELM327Connection::scanBluetooth()
+{
+#if HAS_BLUETOOTH
+    if (m_btAgent->isActive())
+        m_btAgent->stop();
+    setState(ConnectionState::Scanning);
+    emit logMessage("BT tarama baslatildi...");
+    m_btAgent->start(QBluetoothDeviceDiscoveryAgent::ClassicMethod);
+#else
+    emit logMessage("HATA: Bluetooth destegi bu platformda mevcut degil");
+#endif
+}
+
+void ELM327Connection::stopScan()
+{
+#if HAS_BLUETOOTH
+    if (m_btAgent->isActive())
+        m_btAgent->stop();
+    if (m_state == ConnectionState::Scanning)
+        setState(ConnectionState::Disconnected);
+#endif
+}
+
+void ELM327Connection::connectBluetooth(const QString &address)
+{
+#if HAS_BLUETOOTH
+    if (m_state != ConnectionState::Disconnected && m_state != ConnectionState::Scanning)
+        disconnect();
+
+    stopScan();
+
+    m_transport = Transport::Bluetooth;
+    m_btAddress = address;
+    m_io = m_btSocket;
+    connectSignals();
+
+    setState(ConnectionState::Connecting);
+    emit logMessage(QString("BT ELM327: %1").arg(address));
+
+    // SPP UUID = 00001101-0000-1000-8000-00805F9B34FB
+    static const QBluetoothUuid sppUuid(QStringLiteral("00001101-0000-1000-8000-00805F9B34FB"));
+    m_btSocket->connectToService(QBluetoothAddress(address), sppUuid);
+#else
+    Q_UNUSED(address)
+    emit logMessage("HATA: Bluetooth destegi bu platformda mevcut degil");
+#endif
+}
+
+// === Ortak: Disconnect ===
 
 void ELM327Connection::disconnect()
 {
@@ -50,9 +134,16 @@ void ELM327Connection::disconnect()
     m_commandPending = false;
     m_responseBuffer.clear();
 
-    if (m_socket->state() != QAbstractSocket::UnconnectedState) {
-        m_socket->disconnectFromHost();
+    if (m_transport == Transport::WiFi) {
+        if (m_tcpSocket->state() != QAbstractSocket::UnconnectedState)
+            m_tcpSocket->disconnectFromHost();
     }
+#if HAS_BLUETOOTH
+    else if (m_transport == Transport::Bluetooth) {
+        if (m_btSocket->state() != QBluetoothSocket::SocketState::UnconnectedState)
+            m_btSocket->close();
+    }
+#endif
     setState(ConnectionState::Disconnected);
 }
 
@@ -61,20 +152,81 @@ bool ELM327Connection::isConnected() const
     return m_state == ConnectionState::Ready || m_state == ConnectionState::Busy;
 }
 
+// === Signal Baglama (IO cihazina gore) ===
+
+void ELM327Connection::connectSignals()
+{
+    // Onceki sinyalleri temizle
+    if (m_tcpSocket) {
+        QObject::disconnect(m_tcpSocket, nullptr, this, nullptr);
+    }
+#if HAS_BLUETOOTH
+    if (m_btSocket) {
+        QObject::disconnect(m_btSocket, nullptr, this, nullptr);
+    }
+#endif
+
+    // Timeout ve processTimer sinyalleri zaten constructor'da bagli
+
+    if (m_transport == Transport::WiFi) {
+        connect(m_tcpSocket, &QTcpSocket::connected,
+                this, &ELM327Connection::onSocketConnected);
+        connect(m_tcpSocket, &QTcpSocket::disconnected,
+                this, &ELM327Connection::onSocketDisconnected);
+        connect(m_tcpSocket, &QTcpSocket::errorOccurred,
+                this, [this](QAbstractSocket::SocketError) {
+            setState(ConnectionState::Error);
+            emit errorOccurred("WiFi hata: " + m_tcpSocket->errorString());
+        });
+        connect(m_tcpSocket, &QTcpSocket::readyRead,
+                this, &ELM327Connection::onDataReady);
+    }
+#if HAS_BLUETOOTH
+    else if (m_transport == Transport::Bluetooth) {
+        connect(m_btSocket, &QBluetoothSocket::connected,
+                this, &ELM327Connection::onSocketConnected);
+        connect(m_btSocket, &QBluetoothSocket::disconnected,
+                this, &ELM327Connection::onSocketDisconnected);
+        connect(m_btSocket, &QBluetoothSocket::errorOccurred,
+                this, [this](QBluetoothSocket::SocketError) {
+            setState(ConnectionState::Error);
+            emit errorOccurred("BT hata: " + m_btSocket->errorString());
+        });
+        connect(m_btSocket, &QBluetoothSocket::readyRead,
+                this, &ELM327Connection::onDataReady);
+    }
+#endif
+}
+
+// === Ortak IO Yazma ===
+
+void ELM327Connection::writeToDevice(const QByteArray &data)
+{
+    if (m_io && m_io->isOpen()) {
+        m_io->write(data);
+        // QTcpSocket'te flush() var, QBluetoothSocket'te yok
+        if (m_transport == Transport::WiFi && m_tcpSocket)
+            m_tcpSocket->flush();
+    }
+}
+
+// === Protokol ===
+
 void ELM327Connection::setProtocol(Protocol proto)
 {
     m_protocol = proto;
     if (isConnected()) {
         sendCommand(QString("ATSP%1").arg(static_cast<int>(proto)),
                     [this, proto](const QString &resp) {
-            if (resp.contains("OK")) {
-                emit logMessage(QString("Protokol ayarlandı: %1").arg(static_cast<int>(proto)));
-            } else {
-                emit errorOccurred("Protokol ayarlanamadı: " + resp);
-            }
+            if (resp.contains("OK"))
+                emit logMessage(QString("Protokol: %1").arg(static_cast<int>(proto)));
+            else
+                emit errorOccurred("Protokol hata: " + resp);
         });
     }
 }
+
+// === Komut Gonderme ===
 
 void ELM327Connection::sendCommand(const QString &cmd,
                                     std::function<void(const QString&)> callback,
@@ -87,18 +239,15 @@ void ELM327Connection::sendCommand(const QString &cmd,
 
     m_commandQueue.enqueue(atCmd);
 
-    if (!m_commandPending) {
+    if (!m_commandPending)
         processNextCommand();
-    }
 }
 
 void ELM327Connection::sendOBDCommand(const QByteArray &hexCmd,
                                        std::function<void(const QByteArray&)> callback,
                                        int timeoutMs)
 {
-    // ELM327'ye hex string olarak gönder
     QString cmdStr = QString::fromLatin1(hexCmd).trimmed();
-
     sendCommand(cmdStr, [this, callback](const QString &resp) {
         if (callback) {
             QByteArray parsed = parseHexResponse(resp);
@@ -107,37 +256,33 @@ void ELM327Connection::sendOBDCommand(const QByteArray &hexCmd,
     }, timeoutMs);
 }
 
-// --- Private Slots ---
+// === Slots ===
 
 void ELM327Connection::onSocketConnected()
 {
-    emit logMessage("TCP bağlantısı kuruldu, ELM327 başlatılıyor...");
+    QString type = (m_transport == Transport::WiFi) ? "WiFi TCP" : "Bluetooth SPP";
+    emit logMessage(QString("%1 baglanti kuruldu, ELM327 baslatiliyor...").arg(type));
     setState(ConnectionState::Initializing);
     initializeELM();
 }
 
 void ELM327Connection::onSocketDisconnected()
 {
-    emit logMessage("Bağlantı kesildi");
+    emit logMessage("Baglanti kesildi");
     setState(ConnectionState::Disconnected);
     emit disconnected();
 }
 
-void ELM327Connection::onSocketError(QAbstractSocket::SocketError error)
-{
-    Q_UNUSED(error)
-    setState(ConnectionState::Error);
-    emit errorOccurred("Soket hatası: " + m_socket->errorString());
-}
-
 void ELM327Connection::onDataReady()
 {
-    QByteArray data = m_socket->readAll();
-    m_responseBuffer += QString::fromLatin1(data);
+    QByteArray data;
+    if (m_io)
+        data = m_io->readAll();
 
+    m_responseBuffer += QString::fromLatin1(data);
     emit rawDataReceived(data);
 
-    // ELM327 yanıtı '>' prompt ile biter
+    // ELM327 yaniti '>' prompt ile biter
     if (m_responseBuffer.contains('>')) {
         m_timeoutTimer->stop();
 
@@ -146,34 +291,29 @@ void ELM327Connection::onDataReady()
         response = response.trimmed();
         m_responseBuffer.clear();
 
-        emit logMessage(QString("← %1").arg(response));
+        emit logMessage(QString::fromUtf8("\xe2\x86\x90 %1").arg(response));
 
-        if (m_commandPending && m_currentCommand.callback) {
+        if (m_commandPending && m_currentCommand.callback)
             m_currentCommand.callback(response);
-        }
 
         m_commandPending = false;
-
-        // Kuyrukta bir sonraki komutu işle
         QTimer::singleShot(30, this, &ELM327Connection::processNextCommand);
     }
 }
 
 void ELM327Connection::onCommandTimeout()
 {
-    emit logMessage("Komut zaman aşımı!");
+    emit logMessage("Komut zaman asimi!");
 
-    if (m_commandPending && m_currentCommand.callback) {
+    if (m_commandPending && m_currentCommand.callback)
         m_currentCommand.callback("TIMEOUT");
-    }
 
     m_commandPending = false;
     m_responseBuffer.clear();
 
-    // Timeout sonrası buffer temizle
-    if (m_socket->bytesAvailable() > 0) {
-        m_socket->readAll();
-    }
+    // Timeout sonrasi buffer temizle
+    if (m_io && m_io->bytesAvailable() > 0)
+        m_io->readAll();
 
     processNextCommand();
 }
@@ -187,15 +327,13 @@ void ELM327Connection::processNextCommand()
     m_responseBuffer.clear();
 
     QString cmdWithCR = m_currentCommand.command + "\r";
-    emit logMessage(QString("→ %1").arg(m_currentCommand.command));
+    emit logMessage(QString::fromUtf8("\xe2\x86\x92 %1").arg(m_currentCommand.command));
 
-    m_socket->write(cmdWithCR.toLatin1());
-    m_socket->flush();
-
+    writeToDevice(cmdWithCR.toLatin1());
     m_timeoutTimer->start(m_currentCommand.timeoutMs);
 }
 
-// --- Private Methods ---
+// === Init ===
 
 void ELM327Connection::setState(ConnectionState state)
 {
@@ -207,38 +345,30 @@ void ELM327Connection::setState(ConnectionState state)
 
 void ELM327Connection::initializeELM()
 {
-    m_genuineELM = true;
-
     // === APK uyumlu init sirasi ===
 
     // 1) Reset
     sendCommand("ATZ", [this](const QString &resp) {
         m_elmVersion = resp;
         emit logMessage("ELM327 Version: " + resp);
-        if (resp.contains("OBDII") || resp.contains("vLinker") ||
-            resp.toLower().contains("clone")) {
-            m_genuineELM = false;
-            emit logMessage("WARNING: Non-standard ELM327 detected");
-        }
     }, 5000);
 
-    // 2) Echo on (APK ATE1 kullaniyor)
+    // 2) Echo on (APK ATE1)
     sendCommand("ATE1", nullptr);
 
-    // 3) Headers on (J1850 header'lari gormek icin)
+    // 3) Headers on
     sendCommand("ATH1", nullptr);
 
-    // 4) IFR kapatma (J1850 VPW icin onemli - APK ATIFR0 kullaniyor)
+    // 4) IFR kapatma (J1850 VPW icin)
     sendCommand("ATIFR0", [this](const QString &resp) {
-        if (resp.contains("?")) {
-            emit logMessage("ATIFR0 desteklenmiyor (clone ELM327)");
-        }
+        if (resp.contains("?"))
+            emit logMessage("ATIFR0 desteklenmiyor (sorun degil)");
     });
 
     // 5) Adaptive timing auto2
     sendCommand("ATAT2", nullptr);
 
-    // 6) Timeout 400ms (0x64 * 4ms)
+    // 6) Timeout 400ms
     sendCommand("ATST64", nullptr);
 
     // 7) Battery voltage
@@ -247,8 +377,7 @@ void ELM327Connection::initializeELM()
         emit logMessage("Battery voltage: " + resp);
     });
 
-    // 8) Protokol: J1850 VPW (ATSP2) - TCM/ABS/Airbag icin
-    // APK oncelikle bunu kurar, K-Line'a modul bazinda gecer
+    // 8) Default: J1850 VPW (ATSP2)
     sendCommand("ATSP2", [this](const QString &resp) {
         if (resp.contains("OK")) {
             emit logMessage("Protocol: SAE J1850 VPW (ATSP2)");
@@ -261,20 +390,17 @@ void ELM327Connection::initializeELM()
         Q_UNUSED(resp)
         setState(ConnectionState::Ready);
         emit connected();
-        if (m_genuineELM) {
-            emit logMessage("ELM327 ready - J1850 VPW default");
-        } else {
-            emit logMessage("ELM327 ready - WARNING: clone/fake detected");
-            emit fakeELMDetected("ATIFR0 not supported");
-        }
+        QString type = (m_transport == Transport::WiFi) ? "WiFi" : "Bluetooth";
+        emit logMessage(QString("ELM327 hazir [%1]").arg(type));
     });
 }
+
+// === Parse ===
 
 QByteArray ELM327Connection::parseHexResponse(const QString &response)
 {
     QByteArray result;
 
-    // "NO DATA", "ERROR", "UNABLE TO CONNECT" gibi hata yanıtlarını kontrol et
     if (response.contains("NO DATA") ||
         response.contains("ERROR") ||
         response.contains("UNABLE") ||
@@ -283,19 +409,14 @@ QByteArray ELM327Connection::parseHexResponse(const QString &response)
         return result;
     }
 
-    // Yanıttan hex baytları çıkar
-    // Header'ları atla (ilk 3 byte genellikle header: format, target, source)
-    // Yanıt formatı: "83 F1 10 XX YY ZZ ..." şeklinde olabilir
     static QRegularExpression hexRegex("[0-9A-Fa-f]{2}");
-
     QRegularExpressionMatchIterator it = hexRegex.globalMatch(response);
     while (it.hasNext()) {
         QRegularExpressionMatch match = it.next();
         bool ok;
         uint8_t byte = match.captured().toUInt(&ok, 16);
-        if (ok) {
+        if (ok)
             result.append(static_cast<char>(byte));
-        }
     }
 
     return result;

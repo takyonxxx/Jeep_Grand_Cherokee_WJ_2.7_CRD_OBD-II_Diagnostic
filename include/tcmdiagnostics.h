@@ -24,21 +24,25 @@ public:
     };
     Q_ENUM(Gear)
 
-    // --- Module Addresses ---
+    // --- Module Addresses (Jeep WJ 2.7 CRD) ---
     enum class Module : uint8_t {
-        MotorECU     = 0x15,
-        EPC          = 0x20,
-        TCM          = 0x28,
-        TransferCase = 0x2A,
-        ABS          = 0x40,
-        Airbag       = 0x60,
-        SKIM         = 0x62,
-        ATC          = 0x68,
-        BCM          = 0x80,
-        Compass      = 0x87,
-        Cluster      = 0x90,
-        Radio        = 0x98,
-        Overhead     = 0xA0,
+        // K-Line (ISO 14230-4 KWP2000)
+        MotorECU     = 0x15,   // Bosch EDC15C2 OM612
+        KLineTCM     = 0x20,   // NAG1 722.6 K-Line erişim
+        // J1850 VPW
+        TCM          = 0x28,   // NAG1 722.6 Şanzıman
+        EVIC         = 0x2A,   // Overhead Console / Pusula
+        ABS          = 0x40,   // ABS / ESP
+        Airbag       = 0x60,   // Airbag (ORC/AOSIM)
+        SKIM         = 0x62,   // Immobilizer
+        ATC          = 0x68,   // Klima (HVAC)
+        BCM          = 0x80,   // Body Computer
+        Radio        = 0x87,   // Radyo / Ses
+        Cluster      = 0x90,   // Gösterge Paneli
+        MemSeat      = 0x98,   // Hafızalı Koltuk/Ayna
+        Liftgate     = 0xA0,   // Power Liftgate
+        HandsFree    = 0xA1,   // HandsFree / Uconnect
+        ParkAssist   = 0xC0,   // Park Sensörü
     };
     Q_ENUM(Module)
 
@@ -204,7 +208,7 @@ private:
     ELM327Connection *m_elm;
     KWP2000Handler *m_kwp;
     Module m_activeModule = Module::MotorECU;
-    BusType m_activeBus = BusType::KLine;
+    BusType m_activeBus = BusType::J1850;  // init: ATSP2 ile J1850 basliyor
 
     ECUStatus m_lastECU;
     TCMStatus m_lastTCM;

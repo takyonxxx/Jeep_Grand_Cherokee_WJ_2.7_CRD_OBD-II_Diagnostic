@@ -1,8 +1,8 @@
 QT += core network widgets
+QT += bluetooth
 CONFIG += c++17
 TARGET = JeepWJDiag
 TEMPLATE = app
-
 INCLUDEPATH += include
 
 HEADERS += \
@@ -20,9 +20,20 @@ SOURCES += \
     src/mainwindow.cpp \
     src/livedata.cpp
 
-# --- Android ---
+ios {
+    QMAKE_INFO_PLIST = ios/Info.plist
+}
+
+macx {
+    QMAKE_INFO_PLIST = macos/Info.plist
+}
+
 android {
     ANDROID_PACKAGE_SOURCE_DIR = $$PWD/android
     ANDROID_MIN_SDK_VERSION = 24
     ANDROID_TARGET_SDK_VERSION = 34
 }
+
+DISTFILES += \
+    ios/Info.plist \
+    macos/Info.plist

@@ -60,6 +60,8 @@ private:
     QTabWidget *m_tabs;
     QLineEdit *m_hostEdit; QSpinBox *m_portSpin;
     QPushButton *m_connectBtn,*m_disconnectBtn,*m_startSessionBtn,*m_startEcuBtn;
+    QPushButton *m_btScanBtn,*m_btConnectBtn;
+    QComboBox *m_btCombo;
     QLabel *m_activeHeaderLabel;
     bool m_tcmSessionActive = false;
     bool m_ecuSessionActive = false;

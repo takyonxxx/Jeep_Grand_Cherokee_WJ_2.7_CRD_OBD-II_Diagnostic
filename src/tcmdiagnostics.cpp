@@ -4,7 +4,7 @@
 
 // ============================================================
 // WJ 2.7 CRD Multi-Protocol Diagnostics
-// APK verified: K-Line 0x15=Motor, 0x20=EPC | J1850 0x28=TCM
+// WJ CRD verified: K-Line 0x15=Motor, 0x20=KLineTCM | J1850 0x28=TCM
 // ============================================================
 
 WJDiagnostics::WJDiagnostics(ELM327Connection *elm, QObject *parent)
@@ -22,33 +22,40 @@ QList<WJDiagnostics::ModuleInfo> WJDiagnostics::allModules()
 {
     return {
         // K-Line modules (ISO 14230-4 KWP fast init)
+        // Init sirasi: ATZ -> ATWM -> ATSH -> ATSP5 -> ATFI -> 81 -> 27
         {Module::MotorECU, "Motor ECU (Bosch EDC15C2 OM612)", "Motor",
          BusType::KLine, "ATSH8115F1", "ATWM8115F13E", "ATSP5"},
-        {Module::EPC, "CRD Cruise Control / EPC", "EPC",
+        {Module::KLineTCM, "NAG1 722.6 Sanziman (K-Line)", "KL-TCM",
          BusType::KLine, "ATSH8120F1", "ATWM8120F13E", "ATSP5"},
-        // J1850 VPW modules (SAE J1850 VPW) - APK dogrulanmis
+
+        // J1850 VPW modules - dogrulanmis header'lar
+        // Her modul icin ilk header fonksiyonel (session/reset), okuma icin 22 header
         {Module::TCM, "NAG1 722.6 Sanziman (EGS52)", "TCM",
          BusType::J1850, "ATSH242810", "", "ATSP2"},
-        {Module::TransferCase, "NV247 Transfer Case (4WD)", "T-Case",
-         BusType::J1850, "ATSH242A10", "", "ATSP2"},
+        {Module::EVIC, "Overhead Console / Pusula", "EVIC",
+         BusType::J1850, "ATSH242A22", "", "ATSP2"},
         {Module::ABS, "ABS / ESP Frenleme", "ABS",
-         BusType::J1850, "ATSH244011", "", "ATSP2"},
-        {Module::Airbag, "Airbag (ORC)", "Airbag",
-         BusType::J1850, "ATSH246011", "", "ATSP2"},
+         BusType::J1850, "ATSH244022", "", "ATSP2"},
+        {Module::Airbag, "Airbag (ORC/AOSIM)", "Airbag",
+         BusType::J1850, "ATSH246022", "", "ATSP2"},
         {Module::SKIM, "SKIM Immobilizer", "SKIM",
-         BusType::J1850, "ATSH246211", "", "ATSP2"},
-        {Module::ATC, "Klima Kontrol (ATC)", "Klima",
-         BusType::J1850, "ATSH246811", "", "ATSP2"},
+         BusType::J1850, "ATSH246222", "", "ATSP2"},
+        {Module::ATC, "Klima Kontrol (ATC/HVAC)", "Klima",
+         BusType::J1850, "ATSH246822", "", "ATSP2"},
         {Module::BCM, "Govde Kontrol (BCM)", "BCM",
-         BusType::J1850, "ATSH248011", "", "ATSP2"},
-        {Module::Compass, "Pusula / Mini-Trip", "Pusula",
-         BusType::J1850, "ATSH248711", "", "ATSP2"},
-        {Module::Cluster, "Gosterge Paneli", "Gosterge",
-         BusType::J1850, "ATSH249011", "", "ATSP2"},
+         BusType::J1850, "ATSH248022", "", "ATSP2"},
         {Module::Radio, "Radyo / Ses Sistemi", "Radyo",
-         BusType::J1850, "ATSH249811", "", "ATSP2"},
-        {Module::Overhead, "Tavan Konsolu", "Tavan",
-         BusType::J1850, "ATSH24A011", "", "ATSP2"},
+         BusType::J1850, "ATSH248722", "", "ATSP2"},
+        {Module::Cluster, "Gosterge Paneli", "Gosterge",
+         BusType::J1850, "ATSH249022", "", "ATSP2"},
+        {Module::MemSeat, "Hafizali Koltuk / Ayna", "Koltuk",
+         BusType::J1850, "ATSH249822", "", "ATSP2"},
+        {Module::Liftgate, "Power Liftgate", "Liftgate",
+         BusType::J1850, "ATSH24A022", "", "ATSP2"},
+        {Module::HandsFree, "HandsFree / Uconnect", "HFM",
+         BusType::J1850, "ATSH24A122", "", "ATSP2"},
+        {Module::ParkAssist, "Park Sensoru", "Park",
+         BusType::J1850, "ATSH24C022", "", "ATSP2"},
     };
 }
 
@@ -68,52 +75,140 @@ QString WJDiagnostics::moduleName(Module mod)
 
 void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
 {
+    const Module targetMod = mod;
     auto info = moduleInfo(mod);
     BusType newBus = info.bus;
 
     emit logMessage(QString("Modul: %1 [%2]")
         .arg(info.name, info.bus == BusType::KLine ? "K-Line" : "J1850"));
 
-    auto setHeaders = [this, info, mod, done]() {
-        m_elm->sendCommand(info.atshHeader, [this, info, mod, done](const QString&) {
-            if (!info.atwmWakeup.isEmpty()) {
-                m_elm->sendCommand(info.atwmWakeup, [this, info, mod, done](const QString&) {
-                    m_activeModule = mod;
-                    m_activeBus = info.bus;
-                    emit logMessage(QString("Aktif: %1 | %2 | %3")
-                        .arg(info.shortName, info.atshHeader, info.atwmWakeup));
-                    if (done) done(true);
-                });
-            } else {
-                m_activeModule = mod;
-                m_activeBus = info.bus;
-                emit logMessage(QString("Aktif: %1 | %2").arg(info.shortName, info.atshHeader));
-                if (done) done(true);
-            }
-        });
-    };
-
     if (newBus != m_activeBus) {
-        QString proto = info.atspProtocol;
-        emit logMessage(QString("Protokol: %1").arg(proto));
-        m_elm->sendCommand(proto, [this, newBus, setHeaders](const QString&) {
-            if (newBus == BusType::KLine) {
-                m_elm->sendCommand("ATFI", [this, setHeaders](const QString &fi) {
-                    if (fi.contains("?") || fi.contains("ERROR")) {
-                        emit logMessage("ATFI basarisiz, ATSP3 fallback");
-                        m_elm->sendCommand("ATSP3", [setHeaders](const QString&) {
-                            setHeaders();
-                        });
-                    } else {
-                        setHeaders();
-                    }
+        if (newBus == BusType::KLine) {
+            // === Jeep WJ 2.7 CRD K-Line init sirasi ===
+            // ATZ -> ATWM -> ATSH -> ATSP5 -> ATFI -> 81 -> 27
+            // ATWM ve ATSH, ATSP5'ten ONCE gonderilir
+            emit logMessage("K-Line gecisi: ATZ ile tam reset yapiliyor...");
+            m_elm->sendCommand("ATZ", [this, info, done, targetMod](const QString &atzResp) {
+                if (atzResp.contains("TIMEOUT")) {
+                    emit logMessage("ATZ timeout - ELM327 yanit vermiyor!");
+                    if (done) done(false);
+                    return;
+                }
+                emit logMessage("ATZ OK, K-Line init basliyor...");
+
+                // ATE1 + ATH1
+                m_elm->sendCommand("ATE1", [this, info, done, targetMod](const QString&) {
+                m_elm->sendCommand("ATH1", [this, info, done, targetMod](const QString&) {
+
+                // ATWM - wakeup message (ATSP5'ten ONCE)
+                auto afterWakeup = [this, info, done, targetMod]() {
+                    // ATSH - header set (ATSP5'ten ONCE)
+                    m_elm->sendCommand(info.atshHeader, [this, info, done, targetMod](const QString&) {
+
+                    // ATSP5 - K-Line protokol sec
+                    m_elm->sendCommand(info.atspProtocol, [this, info, done, targetMod](const QString &sp5) {
+                        if (sp5.contains("TIMEOUT") || sp5.contains("ERROR")) {
+                            emit logMessage("ATSP5 basarisiz - J1850'ye geri donuluyor");
+                            m_elm->sendCommand("ATSP2", [this, done, targetMod](const QString&) {
+                                m_activeBus = BusType::J1850;
+                                if (done) done(false);
+                            });
+                            return;
+                        }
+
+                    // ATFI - Fast Init (bus init)
+                    m_elm->sendCommand("ATFI", [this, info, done, targetMod](const QString &fi) {
+                        if (fi.contains("BUS INIT") || fi.contains("OK")) {
+                            emit logMessage("ATFI OK - K-Line bus init basarili!");
+                            m_activeModule = targetMod;
+                            m_activeBus = BusType::KLine;
+
+                            // 81 - StartCommunication (KWP SID)
+                            m_elm->sendCommand("81", [this, info, done, targetMod](const QString &sc) {
+                                emit logMessage("StartComm(81): " + sc);
+
+                                // SecurityAccess (27 01 -> seed, 27 02 CD46 -> key)
+                                m_elm->sendCommand("27 01", [this, done, targetMod](const QString &seed) {
+                                    emit logMessage("Security seed: " + seed);
+                                    if (seed.contains("67 01")) {
+                                        m_elm->sendCommand("27 02 CD 46", [this, done, targetMod](const QString &key) {
+                                            emit logMessage("Security key: " + key);
+                                            emit logMessage("K-Line session aktif (ECU hazir)");
+                                            if (done) done(true);
+                                        });
+                                    } else {
+                                        emit logMessage("Security atlaniyor, devam ediliyor");
+                                        if (done) done(true);
+                                    }
+                                });
+                            });
+                        } else if (fi.contains("TIMEOUT") || fi.contains("?") || fi.contains("ERROR")) {
+                            emit logMessage("ATFI basarisiz: " + fi);
+                            // Kurtarma: ATZ -> ATSP2
+                            m_elm->sendCommand("ATZ", [this, done, targetMod](const QString&) {
+                                QTimer::singleShot(500, this, [this, done, targetMod]() {
+                                    m_elm->sendCommand("ATE1", [this, done, targetMod](const QString&) {
+                                    m_elm->sendCommand("ATH1", [this, done, targetMod](const QString&) {
+                                    m_elm->sendCommand("ATSP2", [this, done, targetMod](const QString&) {
+                                        m_activeBus = BusType::J1850;
+                                        emit logMessage("ATFI basarisiz - J1850'ye geri donuldu");
+                                        if (done) done(false);
+                                    });
+                                    });
+                                    });
+                                });
+                            });
+                        } else {
+                            emit logMessage("ATFI yanit: " + fi + " (devam ediliyor)");
+                            m_activeModule = targetMod;
+                            m_activeBus = BusType::KLine;
+                            if (done) done(true);
+                        }
+                    }, 5000); // ATFI timeout 5s
+                    });
+                    });
+                };
+
+                if (!info.atwmWakeup.isEmpty()) {
+                    m_elm->sendCommand(info.atwmWakeup, [afterWakeup](const QString&) {
+                        afterWakeup();
+                    });
+                } else {
+                    afterWakeup();
+                }
+
                 });
-            } else {
-                setHeaders();
-            }
-        });
+                });
+            }, 7500); // ATZ timeout
+        } else {
+            // J1850'ye gecis - ATZ ile temiz baslat + ATIFR0
+            emit logMessage("J1850 gecisi: ATZ ile reset...");
+            m_elm->sendCommand("ATZ", [this, info, done, targetMod](const QString&) {
+                m_elm->sendCommand("ATE1", [this, info, done, targetMod](const QString&) {
+                m_elm->sendCommand("ATH1", [this, info, done, targetMod](const QString&) {
+                m_elm->sendCommand("ATIFR0", [this, info, done, targetMod](const QString&) {
+                m_elm->sendCommand("ATSP2", [this, info, done, targetMod](const QString&) {
+                    m_activeBus = BusType::J1850;
+                    emit logMessage("J1850 VPW aktif");
+                    // Header set
+                    m_elm->sendCommand(info.atshHeader, [this, info, done, targetMod](const QString&) {
+                        m_activeModule = targetMod;
+                        emit logMessage(QString("Aktif: %1 | %2").arg(info.shortName, info.atshHeader));
+                        if (done) done(true);
+                    });
+                });
+                });
+                });
+                });
+            }, 7500);
+        }
     } else {
-        setHeaders();
+        // Ayni bus - sadece header degistir
+        m_elm->sendCommand(info.atshHeader, [this, info, done, targetMod](const QString&) {
+            m_activeModule = targetMod;
+            emit logMessage(QString("Aktif: %1 | %2").arg(info.shortName, info.atshHeader));
+            if (done) done(true);
+        });
     }
 }
 
@@ -329,7 +424,7 @@ void WJDiagnostics::readABSLiveData(std::function<void(const ABSStatus&)> cb)
             auto step = std::make_shared<int>(0);
             auto doNext = std::make_shared<std::function<void()>>();
 
-            // APK live data params: LF/RF/LR/RR Wheel Speed, Vehicle Speed
+            // WJ CRD live data params: LF/RF/LR/RR Wheel Speed, Vehicle Speed
             struct PIDRead { QString cmd; QString name; };
             auto pids = std::make_shared<QList<PIDRead>>(QList<PIDRead>{
                 {"2201", "LF Wheel Speed"},
@@ -407,7 +502,15 @@ void WJDiagnostics::rawBusDump(Module mod, const QList<uint8_t> &ids,
         }
     };
 
-    switchToModule(mod, [readNext](bool ok) { if (ok) (*readNext)(); });
+    switchToModule(mod, [this, readNext, done, mod](bool ok) {
+        if (ok) {
+            (*readNext)();
+        } else {
+            emit logMessage(QString("rawBusDump: %1 modulune gecis basarisiz")
+                .arg(moduleInfo(mod).shortName));
+            if (done) done();
+        }
+    });
 }
 
 void WJDiagnostics::rawSendCommand(const QString &cmd, std::function<void(const QString&)> cb)
@@ -540,7 +643,7 @@ QList<WJDiagnostics::DTCEntry> WJDiagnostics::decodeKWPDTCs(const QByteArray &da
     Q_UNUSED(data) Q_UNUSED(src) return {};
 }
 
-// --- DTC Descriptions (APK'dan) ---
+// --- DTC Descriptions (analizden) ---
 
 QString WJDiagnostics::dtcDescription(const QString &code, Module src)
 {
@@ -569,7 +672,7 @@ QString WJDiagnostics::dtcDescription(const QString &code, Module src)
         {"P0780","Shift Error"}, {"P0894","Transmission Slipping"},
     };
 
-    // ABS DTCs (APK dogrulanmis - Chrysler C-codes + standard)
+    // ABS DTCs (dogrulanmis - Chrysler C-codes + standard)
     static const QMap<QString, QString> absDtcs = {
         {"C0031","Left Front Sensor Circuit Failure"},
         {"C0032","Left Front Wheel Speed Signal Failure"},
@@ -592,7 +695,7 @@ QString WJDiagnostics::dtcDescription(const QString &code, Module src)
         {"C1015","No BCM Park Brake Messages Received"},
     };
 
-    // Airbag/ORC DTCs (APK dogrulanmis - B-codes)
+    // Airbag/ORC DTCs (dogrulanmis - B-codes)
     static const QMap<QString, QString> airbagDtcs = {
         {"B1000","Airbag Lamp Driver Failure"},
         {"B1001","Airbag Lamp Open"},
@@ -639,7 +742,7 @@ QString WJDiagnostics::dtcDescription(const QString &code, Module src)
     };
 
     // Lookup by source module first, then generic
-    if (src == Module::MotorECU || src == Module::EPC) {
+    if (src == Module::MotorECU || src == Module::KLineTCM) {
         if (ecuDtcs.contains(code)) return ecuDtcs[code];
     }
     if (src == Module::TCM) {
@@ -668,7 +771,7 @@ QString WJDiagnostics::dtcDescription(const QString &code, Module src)
 // Compat Methods (eski mainwindow/livedata API uyumu icin)
 // ============================================================
 
-// startSession(callback) - compat: APK referansina gore J1850 VPW TCM (0x28)
+// startSession(callback) - compat: referansna gore J1850 VPW TCM (0x28)
 void WJDiagnostics::startSession(std::function<void(bool)> cb)
 {
     emit logMessage("TCM oturumu baslatiliyor (J1850 VPW 0x28)...");
@@ -730,14 +833,14 @@ void WJDiagnostics::clearDTCs(std::function<void(bool)> cb)
     clearDTCs(m_activeModule, cb);
 }
 
-// readAllLiveData - J1850 VPW uzerinden TCM PID'lerden oku (APK referansi)
+// readAllLiveData - J1850 VPW uzerinden TCM PID'lerden oku (referans)
 void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
 {
     auto tcm = std::make_shared<TCMStatus>();
     auto step = std::make_shared<int>(0);
     auto doNext = std::make_shared<std::function<void()>>();
 
-    // APK'dan cikarilan J1850 TCM PID'ler - TUMU
+    // analizden cikarilan J1850 TCM PID'ler - TUMU
     // Header ATSH242822 ile okunur, komut: "22 XX", yanit: "62 XX <data>"
     QList<uint8_t> pids = {
         0x01, // Actual Gear (1B)
@@ -960,7 +1063,7 @@ void WJDiagnostics::readTCMInfo(std::function<void(const QMap<QString,QString>&)
     (*r)["Module"] = "NAG1 722.6 TCM";
     (*r)["Bus"] = "J1850 VPW";
 
-    // APK ATSH2428A0 kullaniyor (SID 0xA0 = ReadIdentification)
+    // ATSH2428A0 kullaniyor (SID 0xA0 = ReadIdentification)
     m_elm->sendCommand("ATSH2428A0", [this, r, cb](const QString&) {
         // A0 01 = Part Number
         m_elm->sendCommand("A0 01", [this, r, cb](const QString &resp1) {
@@ -993,10 +1096,10 @@ void WJDiagnostics::readTCMInfo(std::function<void(const QMap<QString,QString>&)
     });
 }
 
-// initLiveDataParams - TCM J1850 VPW PID listesi (APK referansi)
+// initLiveDataParams - TCM J1850 VPW PID listesi (referans)
 void WJDiagnostics::initLiveDataParams()
 {
-    // APK referansindan: J1850 VPW, ATSH242822, "22 XX" komutu
+    // referansndan: J1850 VPW, ATSH242822, "22 XX" komutu
     m_liveParams = {
         {0x01, "Actual Gear",                 "",      0,   7,   1.0,    0, 1, false},
         {0x02, "Selected Gear",               "",      0,   7,   1.0,    0, 1, false},

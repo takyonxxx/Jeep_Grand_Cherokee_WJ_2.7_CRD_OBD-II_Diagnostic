@@ -4,29 +4,45 @@
 #include <QTcpSocket>
 #include <QTimer>
 #include <QQueue>
+#include <QIODevice>
 #include <functional>
 
+// Bluetooth: iOS ve Android icin
+#if __has_include(<QBluetoothSocket>)
+#include <QBluetoothSocket>
+#include <QBluetoothDeviceDiscoveryAgent>
+#include <QBluetoothDeviceInfo>
+#define HAS_BLUETOOTH 1
+#else
+#define HAS_BLUETOOTH 0
+#endif
+
 /**
- * ELM327 WiFi Connection Handler
- * 
- * Jeep WJ 2.7 CRD iletişim protokolleri:
- *   - ECM/TCM: K-Line (ISO 9141-2) → ELM327 ATSP 3
- *   - Diğer modüller: J1850 VPW (PCI Bus) → ELM327 ATSP 2
- * 
- * WiFi ELM327 varsayılan: 192.168.0.10:35000 (bazıları :35000 yerine :23 kullanır)
+ * ELM327 Connection Handler - WiFi (TCP) + Bluetooth (SPP/RFCOMM)
+ *
+ * Baglanti tipleri:
+ *   WiFi:      TCP 192.168.0.10:35000 (klon ELM327'ler)
+ *   Bluetooth: RFCOMM/SPP (orijinal ELM327, OBDLink, vLinker vs.)
+ *
+ * Jeep WJ 2.7 CRD protokolleri:
+ *   J1850 VPW (ATSP2) - TCM/ABS/Airbag
+ *   K-Line ISO 14230-4 (ATSP5) - Motor ECU (sadece orijinal ELM327)
  */
 class ELM327Connection : public QObject
 {
     Q_OBJECT
 
 public:
+    enum class Transport { WiFi, Bluetooth };
+    Q_ENUM(Transport)
+
     enum class Protocol {
         Auto       = 0,
-        J1850_PWM  = 1,  // SAE J1850 PWM (41.6 kbaud) - Ford
-        J1850_VPW  = 2,  // SAE J1850 VPW (10.4 kbaud) - GM/Chrysler PCI Bus
-        ISO_9141   = 3,  // ISO 9141-2 (K-Line) - WJ ECM/TCM
-        KWP_5BAUD  = 4,  // ISO 14230-4 KWP 5-baud init
-        KWP_FAST   = 5,  // ISO 14230-4 KWP fast init
+        J1850_PWM  = 1,
+        J1850_VPW  = 2,
+        ISO_9141   = 3,
+        KWP_5BAUD  = 4,
+        KWP_FAST   = 5,
         CAN_11_500 = 6,
         CAN_29_500 = 7,
         CAN_11_250 = 8,
@@ -36,6 +52,7 @@ public:
 
     enum class ConnectionState {
         Disconnected,
+        Scanning,       // BT cihaz tarama
         Connecting,
         Initializing,
         Ready,
@@ -53,30 +70,32 @@ public:
     explicit ELM327Connection(QObject *parent = nullptr);
     ~ELM327Connection();
 
-    // Bağlantı
+    // WiFi baglanti
     void connectToDevice(const QString &host, quint16 port = 35000);
+
+    // Bluetooth baglanti
+    void connectBluetooth(const QString &address = QString());
+    void scanBluetooth();
+    void stopScan();
+
     void disconnect();
     bool isConnected() const;
     ConnectionState state() const { return m_state; }
+    Transport transport() const { return m_transport; }
 
-    // Protokol ayarı
     void setProtocol(Protocol proto);
     Protocol currentProtocol() const { return m_protocol; }
 
-    // ELM327 komut gönderme
     void sendCommand(const QString &cmd,
                      std::function<void(const QString&)> callback = nullptr,
                      int timeoutMs = 3000);
 
-    // Ham OBD komutu gönderme (hex string)
     void sendOBDCommand(const QByteArray &hexCmd,
                         std::function<void(const QByteArray&)> callback = nullptr,
                         int timeoutMs = 5000);
 
-    // ELM327 bilgileri
     QString elmVersion() const { return m_elmVersion; }
     QString elmVoltage() const { return m_elmVoltage; }
-    bool isGenuineELM() const { return m_genuineELM; }
 
 signals:
     void connected();
@@ -85,12 +104,15 @@ signals:
     void errorOccurred(const QString &error);
     void rawDataReceived(const QByteArray &data);
     void logMessage(const QString &msg);
-    void fakeELMDetected(const QString &reason);
+
+#if HAS_BLUETOOTH
+    void bluetoothDeviceFound(const QString &name, const QString &address);
+    void bluetoothScanFinished();
+#endif
 
 private slots:
     void onSocketConnected();
     void onSocketDisconnected();
-    void onSocketError(QAbstractSocket::SocketError error);
     void onDataReady();
     void onCommandTimeout();
     void processNextCommand();
@@ -101,7 +123,21 @@ private:
     void parseResponse(const QString &response);
     QByteArray parseHexResponse(const QString &response);
 
-    QTcpSocket *m_socket = nullptr;
+    void writeToDevice(const QByteArray &data);
+    void connectSignals();
+
+    // Ortak IO cihazi (TCP veya BT)
+    QIODevice *m_io = nullptr;         // aktif IO (m_tcpSocket veya m_btSocket)
+    QTcpSocket *m_tcpSocket = nullptr;
+
+#if HAS_BLUETOOTH
+    QBluetoothSocket *m_btSocket = nullptr;
+    QBluetoothDeviceDiscoveryAgent *m_btAgent = nullptr;
+    QString m_btAddress;               // hedef BT adresi
+#endif
+
+    Transport m_transport = Transport::WiFi;
+
     QTimer *m_timeoutTimer = nullptr;
     QTimer *m_processTimer = nullptr;
 
@@ -115,5 +151,4 @@ private:
 
     QString m_elmVersion;
     QString m_elmVoltage;
-    bool m_genuineELM = true;
 };

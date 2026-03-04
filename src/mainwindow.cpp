@@ -39,14 +39,6 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onConnectionStateChanged);
     connect(m_elm, &ELM327Connection::logMessage,
             this, &MainWindow::onLogMessage);
-    connect(m_elm, &ELM327Connection::fakeELMDetected,
-            this, [this](const QString &reason) {
-        m_connStatusLabel->setText("Durum: Bagli (SAHTE ELM!)");
-        m_connStatusLabel->setStyleSheet("color: #ff6600; font-weight: bold;");
-        statusBar()->showMessage("UYARI: Sahte ELM327 - " + reason);
-        onLogMessage("UYARI: Sahte/Klon ELM327! " + reason);
-        onLogMessage("Jeep WJ 2.7 CRD icin orijinal ELM327 gerekli (ATFI, ATWM destegi)");
-    });
     connect(m_tcm, &TCMDiagnostics::logMessage,
             this, &MainWindow::onLogMessage);
     connect(m_tcm->kwp(), &KWP2000Handler::logMessage,
@@ -280,32 +272,52 @@ QWidget* MainWindow::createConnectionTab()
     layout->addWidget(compatInfo);
 
 
-    QGroupBox *connBox = new QGroupBox("WiFi ELM327 Bağlantısı");
+    QGroupBox *connBox = new QGroupBox("ELM327 Baglanti");
     QGridLayout *connGrid = new QGridLayout(connBox);
 
-    connGrid->addWidget(new QLabel("IP Adresi:"), 0, 0);
+    // WiFi satiri
+    connGrid->addWidget(new QLabel("WiFi:"), 0, 0);
     m_hostEdit = new QLineEdit("192.168.0.10");
     connGrid->addWidget(m_hostEdit, 0, 1);
-
-    connGrid->addWidget(new QLabel("Port:"), 0, 2);
     m_portSpin = new QSpinBox();
     m_portSpin->setRange(1, 65535);
     m_portSpin->setValue(35000);
-    connGrid->addWidget(m_portSpin, 0, 3);
-
-    m_connectBtn = new QPushButton("Bağlan");
-    m_disconnectBtn = new QPushButton("Bağlantıyı Kes");
+    m_portSpin->setMaximumWidth(80);
+    connGrid->addWidget(m_portSpin, 0, 2);
+    m_connectBtn = new QPushButton("WiFi Baglan");
     m_connectBtn->setMinimumHeight(34);
+    connGrid->addWidget(m_connectBtn, 0, 3);
+
+    // Bluetooth satiri
+    connGrid->addWidget(new QLabel("BT:"), 1, 0);
+    m_btCombo = new QComboBox();
+    m_btCombo->setPlaceholderText("Bluetooth cihaz sec...");
+    m_btCombo->setStyleSheet("QComboBox{background:#1a1a2e;color:#88ccff;border:1px solid #3a3a6a;"
+                             "border-radius:3px;padding:2px 4px;}");
+    connGrid->addWidget(m_btCombo, 1, 1, 1, 2);
+    m_btScanBtn = new QPushButton("Tara");
+    m_btScanBtn->setMinimumHeight(34);
+    m_btScanBtn->setStyleSheet("QPushButton{background:#1a2a4a;color:#88ccff;border:1px solid #3a5a8a;"
+                               "border-radius:3px;font-weight:bold;}");
+    connGrid->addWidget(m_btScanBtn, 1, 3);
+
+    // BT Baglan + Disconnect
+    m_btConnectBtn = new QPushButton("BT Baglan");
+    m_btConnectBtn->setMinimumHeight(34);
+    m_btConnectBtn->setStyleSheet("QPushButton{background:#1a3a5a;color:#88ccff;border:1px solid #3a6a9a;"
+                                  "border-radius:3px;font-weight:bold;}");
+    m_btConnectBtn->setEnabled(false);
+    connGrid->addWidget(m_btConnectBtn, 2, 0, 1, 2);
+
+    m_disconnectBtn = new QPushButton("Baglantiyi Kes");
     m_disconnectBtn->setMinimumHeight(34);
     m_disconnectBtn->setEnabled(false);
+    connGrid->addWidget(m_disconnectBtn, 2, 2, 1, 2);
 
-
-    connGrid->addWidget(m_connectBtn, 1, 0, 1, 2);
-    connGrid->addWidget(m_disconnectBtn, 1, 2, 1, 2);
-
-    m_connStatusLabel = new QLabel("Durum: Bağlı Değil");
+    // Durum
+    m_connStatusLabel = new QLabel("Durum: Bagli Degil");
     m_connStatusLabel->setStyleSheet("color: red; font-weight: bold;");
-    connGrid->addWidget(m_connStatusLabel, 2, 0, 1, 4);
+    connGrid->addWidget(m_connStatusLabel, 3, 0, 1, 4);
 
     layout->addWidget(connBox);
 
@@ -377,6 +389,36 @@ QWidget* MainWindow::createConnectionTab()
 
     connect(m_connectBtn, &QPushButton::clicked, this, &MainWindow::onConnect);
     connect(m_disconnectBtn, &QPushButton::clicked, this, &MainWindow::onDisconnect);
+
+    // Bluetooth butonlari
+    connect(m_btScanBtn, &QPushButton::clicked, this, [this]() {
+        m_btCombo->clear();
+        m_btScanBtn->setText("Taraniyor...");
+        m_btScanBtn->setEnabled(false);
+        m_elm->scanBluetooth();
+    });
+    connect(m_btConnectBtn, &QPushButton::clicked, this, [this]() {
+        if (m_btCombo->currentIndex() >= 0) {
+            QString addr = m_btCombo->currentData().toString();
+            m_elm->connectBluetooth(addr);
+        }
+    });
+    connect(m_btCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
+        m_btConnectBtn->setEnabled(idx >= 0);
+    });
+#if HAS_BLUETOOTH
+    connect(m_elm, &ELM327Connection::bluetoothDeviceFound, this,
+            [this](const QString &name, const QString &addr) {
+        m_btCombo->addItem(name + " [" + addr + "]", addr);
+    });
+    connect(m_elm, &ELM327Connection::bluetoothScanFinished, this, [this]() {
+        m_btScanBtn->setText("Tara");
+        m_btScanBtn->setEnabled(true);
+        if (m_btCombo->count() == 0)
+            statusBar()->showMessage("BT cihaz bulunamadi");
+    });
+#endif
+
     connect(m_startSessionBtn, &QPushButton::clicked, this, [this]() {
         if (m_tcmSessionActive) {
             // Toggle off
@@ -988,27 +1030,6 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
         m_startSessionBtn->setEnabled(true);
         m_elmVersionLabel->setText("Versiyon: " + m_elm->elmVersion());
 
-        // Aku voltaji periyodik okuma (5 saniyede bir ATRV)
-        if (!m_batteryTimer) {
-            m_batteryTimer = new QTimer(this);
-            connect(m_batteryTimer, &QTimer::timeout, this, [this]() {
-                if (m_elm->isConnected()) {
-                    m_elm->sendCommand("ATRV", [this](const QString &resp) {
-                        if (!resp.contains("ERROR") && !resp.contains("?")) {
-                            QString volts = resp.trimmed().remove("V").trimmed();
-                            bool ok;
-                            double v = volts.toDouble(&ok);
-                            if (ok) {
-                                m_dashBatVoltVal->setText(QString::number(v, 'f', 1));
-                                setGaugeColor(m_dashBatVoltVal,
-                                    v < 11.5 ? "#ff4444" : v < 12.5 ? "#ffaa00" : "#00ff88");
-                            }
-                        }
-                    });
-                }
-            });
-        }
-        m_batteryTimer->start(5000);
         statusBar()->showMessage("ELM327 hazir - Diagnostik oturum baslatabilirsiniz");
         break;
 
@@ -1304,33 +1325,54 @@ void MainWindow::onRawBusDump()
             m_logText->append(QString("<font color='#88ff88'>       RX [%1 byte]: %2</font>").arg(resp.size()).arg(hex.trimmed()));
     };
 
-    // Phase 1: Motor ECU (K-Line 0x15)
-    QList<uint8_t> ecuIDs = {0x12, 0x20, 0x22, 0x26, 0x28};
-    // Phase 2: TCM (J1850 VPW 0x28)
+    // Phase 1: Motor ECU (K-Line 0x15) - Bosch EDC15C2 bloklari
+    QList<uint8_t> ecuIDs = {0x12, 0x28, 0x62, 0xB0, 0xB1, 0xB2};
+    // Phase 2: TCM (J1850 VPW 0x28) - SID 0x22 ReadDataByID
     QList<uint8_t> tcmPIDs = {0x01, 0x02, 0x10, 0x11, 0x14, 0x15, 0x16, 0x17, 0x20};
+    // Phase 3: ABS (J1850 VPW 0x40) - SID 0x20 ReadDataByAddress
+    QList<uint8_t> absPIDs = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09};
+    // Phase 4: Airbag (J1850 VPW 0x60) - SID 0x28 ReadMemory
+    QList<uint8_t> airbagPIDs = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05};
 
     m_logText->append("<font color='white'>========== HAM BUS DUMP BASLADI ==========</font>");
-    m_logText->append("<font color='#ffcc00'>--- Motor ECU (0x15) K-Line ATSH8115F1 ---</font>");
+    m_logText->append("<font color='#ffcc00'>--- Motor ECU (0x15) K-Line ---</font>");
 
-    // Phase 1: Read ECU blocks via K-Line
+    // Phase 1: Motor ECU via K-Line
     m_tcm->rawBusDump(WJDiagnostics::Module::MotorECU, ecuIDs,
         [this, logHex](uint8_t lid, const QByteArray &data) {
             QString cmd = QString("21 %1").arg(lid, 2, 16, QChar('0')).toUpper();
             logHex("#ffcc00", cmd, data);
         },
-        [this, logHex, tcmPIDs]() {
-            // Phase 2: Switch to J1850 VPW and read TCM PIDs
-            m_logText->append("<font color='#00cccc'>--- TCM (0x28) J1850 VPW ATSH242822 ---</font>");
-
+        [this, logHex, tcmPIDs, absPIDs, airbagPIDs]() {
+            // Phase 2: TCM via J1850
+            m_logText->append("<font color='#00cccc'>--- TCM (0x28) J1850 VPW ATSH242810 ---</font>");
             m_tcm->rawBusDump(WJDiagnostics::Module::TCM, tcmPIDs,
                 [this, logHex](uint8_t pid, const QByteArray &data) {
                     QString cmd = QString("22 %1").arg(pid, 2, 16, QChar('0')).toUpper();
                     logHex("#00cccc", cmd, data);
                 },
-                [this]() {
-                    m_logText->append("<font color='white'>========== HAM BUS DUMP TAMAMLANDI ==========</font>");
-                    m_rawDumpBtn->setEnabled(true);
-                    m_rawDumpBtn->setText("Ham Veri Oku (ECU+TCM)");
+                [this, logHex, absPIDs, airbagPIDs]() {
+                    // Phase 3: ABS via J1850
+                    m_logText->append("<font color='#ff88ff'>--- ABS (0x40) J1850 VPW ATSH244022 ---</font>");
+                    m_tcm->rawBusDump(WJDiagnostics::Module::ABS, absPIDs,
+                        [this, logHex](uint8_t pid, const QByteArray &data) {
+                            QString cmd = QString("20 %1").arg(pid, 2, 16, QChar('0')).toUpper();
+                            logHex("#ff88ff", cmd, data);
+                        },
+                        [this, logHex, airbagPIDs]() {
+                            // Phase 4: Airbag via J1850
+                            m_logText->append("<font color='#ffaa44'>--- Airbag (0x60) J1850 VPW ATSH246022 ---</font>");
+                            m_tcm->rawBusDump(WJDiagnostics::Module::Airbag, airbagPIDs,
+                                [this, logHex](uint8_t pid, const QByteArray &data) {
+                                    QString cmd = QString("28 %1").arg(pid, 2, 16, QChar('0')).toUpper();
+                                    logHex("#ffaa44", cmd, data);
+                                },
+                                [this]() {
+                                    m_logText->append("<font color='white'>========== HAM BUS DUMP TAMAMLANDI ==========</font>");
+                                    m_rawDumpBtn->setEnabled(true);
+                                    m_rawDumpBtn->setText("Ham Veri Oku");
+                                });
+                        });
                 });
         });
 }
