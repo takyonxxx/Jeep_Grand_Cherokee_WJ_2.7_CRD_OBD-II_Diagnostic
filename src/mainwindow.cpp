@@ -1157,7 +1157,7 @@ QString MainWindow::gearToString(TCMDiagnostics::Gear gear)
 void MainWindow::onRawBusDump()
 {
     m_rawDumpBtn->setEnabled(false);
-    m_rawDumpBtn->setText("Reading...");
+    m_rawDumpBtn->setText("Testing...");
 
     auto logHex = [this](const QString &prefix, const QString &cmd, const QByteArray &resp) {
         QString hex;
@@ -1171,56 +1171,226 @@ void MainWindow::onRawBusDump()
             m_logText->append(QString("<font color='#60b8a0'>       RX [%1 byte]: %2</font>").arg(resp.size()).arg(hex.trimmed()));
     };
 
-    // Phase 1: Motor ECU (K-Line 0x15) - Bosch EDC15C2 bloklari
-    QList<uint8_t> ecuIDs = {0x12, 0x28, 0x62, 0xB0, 0xB1, 0xB2};
-    // Phase 2: TCM (J1850 VPW 0x28) - SID 0x22 ReadDataByID
-    QList<uint8_t> tcmPIDs = {0x01, 0x02, 0x10, 0x11, 0x14, 0x15, 0x16, 0x17, 0x20};
-    // Phase 3: ABS (J1850 VPW 0x40) - SID 0x20 ReadDataByAddress
-    QList<uint8_t> absPIDs = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09};
-    // Phase 4: Airbag (J1850 VPW 0x60) - SID 0x28 ReadMemory
-    QList<uint8_t> airbagPIDs = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05};
+    auto logRaw = [this](const QString &color, const QString &msg) {
+        QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
+        m_logText->append(QString("<font color='%1'>[%2] %3</font>").arg(color, ts, msg));
+    };
 
-    m_logText->append("<font color='white'>========== RAW BUS DUMP STARTED ==========</font>");
-    m_logText->append("<font color='#d09840'>--- Engine ECU (0x15) K-Line ---</font>");
+    m_logText->append("<font color='white'>========== DIAGNOSTIC TEST STARTED ==========</font>");
 
-    // Phase 1: Motor ECU via K-Line
+    // ============================================================
+    // PHASE 1: Engine ECU K-Line (quick - 4 working blocks only)
+    // ============================================================
+    m_logText->append("<font color='#d09840'>--- Phase 1: Engine ECU (0x15) K-Line ---</font>");
+    QList<uint8_t> ecuIDs = {0x12, 0x28, 0x20, 0x22};
+
     m_tcm->rawBusDump(WJDiagnostics::Module::MotorECU, ecuIDs,
         [this, logHex](uint8_t lid, const QByteArray &data) {
             QString cmd = QString("21 %1").arg(lid, 2, 16, QChar('0')).toUpper();
             logHex("#ffcc00", cmd, data);
         },
-        [this, logHex, tcmPIDs, absPIDs, airbagPIDs]() {
-            // Phase 2: TCM via J1850
-            m_logText->append("<font color='#00b8a8'>--- TCM (0x28) J1850 VPW ATSH242822 ---</font>");
-            m_tcm->rawBusDump(WJDiagnostics::Module::TCM, tcmPIDs,
-                [this, logHex](uint8_t pid, const QByteArray &data) {
-                    QString cmd = QString("22 %1").arg(pid, 2, 16, QChar('0')).toUpper();
-                    logHex("#00cccc", cmd, data);
-                },
-                [this, logHex, absPIDs, airbagPIDs]() {
-                    // Phase 3: ABS via J1850
-                    m_logText->append("<font color='#a080c0'>--- ABS (0x40) J1850 VPW ATSH244022 ---</font>");
-                    m_tcm->rawBusDump(WJDiagnostics::Module::ABS, absPIDs,
-                        [this, logHex](uint8_t pid, const QByteArray &data) {
-                            QString cmd = QString("20 %1").arg(pid, 2, 16, QChar('0')).toUpper();
-                            logHex("#ff88ff", cmd, data);
-                        },
-                        [this, logHex, airbagPIDs]() {
-                            // Phase 4: Airbag via J1850
-                            m_logText->append("<font color='#c08840'>--- Airbag (0x60) J1850 VPW ATSH246022 ---</font>");
-                            m_tcm->rawBusDump(WJDiagnostics::Module::Airbag, airbagPIDs,
-                                [this, logHex](uint8_t pid, const QByteArray &data) {
-                                    QString cmd = QString("28 %1").arg(pid, 2, 16, QChar('0')).toUpper();
-                                    logHex("#ffaa44", cmd, data);
-                                },
-                                [this]() {
-                                    m_logText->append("<font color='white'>========== RAW BUS DUMP COMPLETED ==========</font>");
-                                    m_rawDumpBtn->setEnabled(true);
-                                    m_rawDumpBtn->setText("Raw Data Read");
+        [this, logHex, logRaw]() {
+
+        // ============================================================
+        // PHASE 2: TCM DiagSession Test (THE CRITICAL TEST)
+        // ============================================================
+        m_logText->append("<font color='#00ffcc'>--- Phase 2: TCM DiagSession Test ---</font>");
+        logRaw("#00ffcc", "Step 2a: ATZ full reset");
+
+        m_elm->sendCommand("ATZ", [this, logRaw, logHex](const QString &r1) {
+            logRaw("#60b8a0", "ATZ: " + r1);
+            QTimer::singleShot(500, this, [this, logRaw, logHex]() {
+
+            m_elm->sendCommand("ATE1", [this, logRaw, logHex](const QString&) {
+            m_elm->sendCommand("ATH1", [this, logRaw, logHex](const QString&) {
+            m_elm->sendCommand("ATIFR0", [this, logRaw, logHex](const QString&) {
+            m_elm->sendCommand("ATSP2", [this, logRaw, logHex](const QString &r2) {
+                logRaw("#60b8a0", "ATSP2: " + r2);
+
+                // Step 2b: DiagSession - ATSH242810 + "02 00 00"
+                logRaw("#00ffcc", "Step 2b: TCM DiagSession (ATSH242810 + 02 00 00)");
+                m_elm->sendCommand("ATSH242810", [this, logRaw, logHex](const QString &r3) {
+                    logRaw("#60b8a0", "ATSH242810: " + r3);
+                    QTimer::singleShot(100, this, [this, logRaw, logHex]() {
+
+                    m_elm->sendCommand("02 00 00", [this, logRaw, logHex](const QString &sessResp) {
+                        logRaw("#ffff00", "DiagSession resp: " + sessResp);
+
+                        // Step 2c: Switch to data read header
+                        QTimer::singleShot(100, this, [this, logRaw, logHex, sessResp]() {
+                        logRaw("#00ffcc", "Step 2c: Switch to ATSH242822 (data read)");
+                        m_elm->sendCommand("ATSH242822", [this, logRaw, logHex](const QString &r4) {
+                            logRaw("#60b8a0", "ATSH242822: " + r4);
+
+                            // Step 2d: Read ALL APK TCM PIDs
+                            logRaw("#00ffcc", "Step 2d: TCM PID scan (all 33 APK PIDs)");
+                            QList<uint8_t> tcmAllPIDs = {
+                                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0D,
+                                0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+                                0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+                                0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+                                0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D,
+                                0x30,
+                                0x50, 0x51, 0x52, 0x53, 0x54
+                            };
+
+                            // Manual PID-by-PID send (not via rawBusDump, to keep headers)
+                            auto pidIdx = std::make_shared<int>(0);
+                            auto pidList = std::make_shared<QList<uint8_t>>(tcmAllPIDs);
+                            auto tcmOK = std::make_shared<int>(0);
+                            auto tcmFail = std::make_shared<int>(0);
+                            auto readPID = std::make_shared<std::function<void()>>();
+
+                            *readPID = [this, pidIdx, pidList, readPID, logRaw, logHex,
+                                        tcmOK, tcmFail]() {
+                                if (*pidIdx >= pidList->size()) {
+                                    logRaw("#00ffcc", QString("TCM result: %1 OK, %2 NO DATA, %3 total")
+                                        .arg(*tcmOK).arg(*tcmFail).arg(pidList->size()));
+                                    // Continue to Phase 3
+                                    phase3_ABS(logHex, logRaw);
+                                    return;
+                                }
+                                uint8_t pid = pidList->at(*pidIdx);
+                                QString cmd = QString("2E %1 00").arg(pid, 2, 16, QChar('0')).toUpper();
+                                m_elm->sendCommand(cmd, [this, pidIdx, readPID, pid, cmd,
+                                                         logRaw, tcmOK, tcmFail](const QString &resp) {
+                                    QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
+                                    if (resp.contains("NO DATA") || resp.contains("ERROR") || resp.contains("?")) {
+                                        m_logText->append(QString("<font color='#805050'>[%1] TX: %2  RX: %3</font>")
+                                            .arg(ts, cmd, resp.trimmed()));
+                                        (*tcmFail)++;
+                                    } else {
+                                        m_logText->append(QString("<font color='#00ff88'>[%1] TX: %2  RX: %3</font>")
+                                            .arg(ts, cmd, resp.trimmed()));
+                                        (*tcmOK)++;
+                                    }
+                                    (*pidIdx)++;
+                                    QTimer::singleShot(200, *readPID);
                                 });
+                            };
+                            (*readPID)();
                         });
+                        });
+                    });
+                    });
                 });
+            });
+            });
+            });
+            });
+            });
         });
+
+        });  // Phase 1 done callback
+}
+
+// Phase 3: ABS (separate function to keep onRawBusDump readable)
+void MainWindow::phase3_ABS(
+    std::function<void(const QString&, const QString&, const QByteArray&)> logHex,
+    std::function<void(const QString&, const QString&)> logRaw)
+{
+    // ============================================================
+    // PHASE 3: ABS J1850 (known working - quick verify)
+    // ============================================================
+    m_logText->append("<font color='#a080c0'>--- Phase 3: ABS (0x40) J1850 verify ---</font>");
+    QList<uint8_t> absPIDs = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+
+    m_tcm->rawBusDump(WJDiagnostics::Module::ABS, absPIDs,
+        [this, logHex](uint8_t pid, const QByteArray &data) {
+            QString cmd = QString("20 %1").arg(pid, 2, 16, QChar('0')).toUpper();
+            logHex("#ff88ff", cmd, data);
+        },
+        [this, logHex, logRaw]() {
+
+        // ============================================================
+        // PHASE 4: Airbag J1850 (quick check)
+        // ============================================================
+        m_logText->append("<font color='#c08840'>--- Phase 4: Airbag (0x60) J1850 ---</font>");
+        QList<uint8_t> airbagPIDs = {0x00, 0x01, 0x02, 0x03};
+
+        m_tcm->rawBusDump(WJDiagnostics::Module::Airbag, airbagPIDs,
+            [this, logHex](uint8_t pid, const QByteArray &data) {
+                QString cmd = QString("28 %1").arg(pid, 2, 16, QChar('0')).toUpper();
+                logHex("#ffaa44", cmd, data);
+            },
+            [this, logRaw]() {
+
+            // ============================================================
+            // PHASE 5: TCM DiagSession retry with subFunc=0x89
+            // ============================================================
+            m_logText->append("<font color='#ff6600'>--- Phase 5: TCM alt session test (0x89) ---</font>");
+            logRaw("#ff6600", "Testing ATSH242810 + 89 00 00 (Chrysler style)");
+
+            m_elm->sendCommand("ATZ", [this, logRaw](const QString&) {
+                QTimer::singleShot(500, this, [this, logRaw]() {
+                m_elm->sendCommand("ATE1", [this, logRaw](const QString&) {
+                m_elm->sendCommand("ATH1", [this, logRaw](const QString&) {
+                m_elm->sendCommand("ATIFR0", [this, logRaw](const QString&) {
+                m_elm->sendCommand("ATSP2", [this, logRaw](const QString&) {
+
+                    m_elm->sendCommand("ATSH242810", [this, logRaw](const QString&) {
+                        QTimer::singleShot(100, this, [this, logRaw]() {
+                        m_elm->sendCommand("89 00 00", [this, logRaw](const QString &r89) {
+                            logRaw("#ffff00", "Session 0x89 resp: " + r89);
+
+                            QTimer::singleShot(100, this, [this, logRaw, r89]() {
+                            m_elm->sendCommand("ATSH242822", [this, logRaw](const QString&) {
+                                // Quick test: read PID 0x10 (turbine RPM)
+                                m_elm->sendCommand("2E 10 00", [this, logRaw](const QString &rPid) {
+                                    logRaw("#ffff00", "PID 0x10 after 0x89: " + rPid);
+
+                                    // ============================================================
+                                    // PHASE 6: TCM no-session baseline
+                                    // ============================================================
+                                    m_logText->append("<font color='#ff3333'>--- Phase 6: TCM no-session baseline ---</font>");
+                                    logRaw("#ff3333", "ATZ reset, ATSP2, ATSH242822 directly (no DiagSession)");
+
+                                    m_elm->sendCommand("ATZ", [this, logRaw](const QString&) {
+                                        QTimer::singleShot(500, this, [this, logRaw]() {
+                                        m_elm->sendCommand("ATE1", [this, logRaw](const QString&) {
+                                        m_elm->sendCommand("ATH1", [this, logRaw](const QString&) {
+                                        m_elm->sendCommand("ATIFR0", [this, logRaw](const QString&) {
+                                        m_elm->sendCommand("ATSP2", [this, logRaw](const QString&) {
+                                        m_elm->sendCommand("ATSH242822", [this, logRaw](const QString&) {
+
+                                            m_elm->sendCommand("2E 10 00", [this, logRaw](const QString &rNoSess) {
+                                                logRaw("#ffff00", "PID 0x10 NO session: " + rNoSess);
+
+                                                // ============================================================
+                                                // PHASE 7: Battery voltage
+                                                // ============================================================
+                                                m_elm->sendCommand("ATRV", [this, logRaw](const QString &rv) {
+                                                    logRaw("#60b8a0", "Battery: " + rv);
+
+                                                    m_logText->append("<font color='white'>========== DIAGNOSTIC TEST COMPLETED ==========</font>");
+                                                    m_rawDumpBtn->setEnabled(true);
+                                                    m_rawDumpBtn->setText("Raw Data Read");
+
+                                                    // Restore J1850 bus state
+                                                    m_tcm->setActiveBus(WJDiagnostics::BusType::J1850);
+                                                });
+                                            });
+                                        });
+                                        });
+                                        });
+                                        });
+                                        });
+                                        });
+                                    });
+                                });
+                            });
+                            });
+                        });
+                        });
+                    });
+                });
+                });
+                });
+                });
+                });
+            });
+        });
+    });
 }
 
 void MainWindow::onRawSendCustom()

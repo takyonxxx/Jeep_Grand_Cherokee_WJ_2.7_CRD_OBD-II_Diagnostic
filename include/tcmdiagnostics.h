@@ -158,6 +158,7 @@ public:
     void switchToModule(Module mod, std::function<void(bool)> done=nullptr);
     Module activeModule() const { return m_activeModule; }
     BusType activeBus() const { return m_activeBus; }
+    void setActiveBus(BusType bus) { m_activeBus = bus; }
 
     // --- Session ---
     void startSession(Module mod, std::function<void(bool)> cb=nullptr);

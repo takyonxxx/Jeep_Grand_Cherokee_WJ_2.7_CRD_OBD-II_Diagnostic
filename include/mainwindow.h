@@ -12,6 +12,7 @@
 #include <QProgressBar>
 #include <QComboBox>
 #include <QFrame>
+#include <functional>
 #include "elm327connection.h"
 #include "kwp2000handler.h"
 #include "tcmdiagnostics.h"
@@ -43,6 +44,9 @@ private slots:
 #endif
 private:
     void setupUI();
+    void phase3_ABS(
+        std::function<void(const QString&, const QString&, const QByteArray&)> logHex,
+        std::function<void(const QString&, const QString&)> logRaw);
     QWidget* createDashboardPanel();
     QFrame* createGaugeCard(const QString&,const QString&,const QString&,QLabel**,QLabel**);
     QWidget* createConnectionTab();
