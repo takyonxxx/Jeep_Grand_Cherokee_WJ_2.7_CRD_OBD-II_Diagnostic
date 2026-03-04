@@ -30,19 +30,19 @@ public:
         MotorECU     = 0x15,   // Bosch EDC15C2 OM612
         KLineTCM     = 0x20,   // NAG1 722.6 K-Line erişim
         // J1850 VPW
-        TCM          = 0x28,   // NAG1 722.6 Şanzıman
-        EVIC         = 0x2A,   // Overhead Console / Pusula
+        TCM          = 0x28,   // NAG1 722.6 Transmission
+        EVIC         = 0x2A,   // Overhead Console / EVIC
         ABS          = 0x40,   // ABS / ESP
         Airbag       = 0x60,   // Airbag (ORC/AOSIM)
         SKIM         = 0x62,   // Immobilizer
         ATC          = 0x68,   // Klima (HVAC)
         BCM          = 0x80,   // Body Computer
         Radio        = 0x87,   // Radyo / Ses
-        Cluster      = 0x90,   // Gösterge Paneli
-        MemSeat      = 0x98,   // Hafızalı Koltuk/Ayna
+        Cluster      = 0x90,   // Instrument Cluster
+        MemSeat      = 0x98,   // Memory Seat/Mirror
         Liftgate     = 0xA0,   // Power Liftgate
         HandsFree    = 0xA1,   // HandsFree / Uconnect
-        ParkAssist   = 0xC0,   // Park Sensörü
+        ParkAssist   = 0xC0,   // Park Assist
     };
     Q_ENUM(Module)
 
@@ -52,6 +52,7 @@ public:
     struct ModuleInfo {
         Module id; QString name; QString shortName;
         BusType bus; QString atshHeader; QString atwmWakeup; QString atspProtocol;
+        QString atraFilter; // ATRA receive filter (e.g. "ATRA40" for ABS)
     };
 
     struct DTCEntry {

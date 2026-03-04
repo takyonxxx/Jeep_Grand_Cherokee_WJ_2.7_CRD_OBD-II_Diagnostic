@@ -20,25 +20,47 @@ ELM327Connection::ELM327Connection(QObject *parent)
 #if HAS_BLUETOOTH
     m_btSocket = new QBluetoothSocket(QBluetoothServiceInfo::RfcommProtocol, this);
     m_btAgent = new QBluetoothDeviceDiscoveryAgent(this);
-    m_btAgent->setLowEnergyDiscoveryTimeout(8000);
+    m_btAgent->setLowEnergyDiscoveryTimeout(10000);
 
     connect(m_btAgent, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered,
             this, [this](const QBluetoothDeviceInfo &info) {
-        QString name = info.name();
+        QString name = info.name().trimmed();
         QString addr = info.address().toString();
-        // ELM327 / OBD cihazlarini filtrele
-        if (name.contains("OBD", Qt::CaseInsensitive) ||
-            name.contains("ELM", Qt::CaseInsensitive) ||
-            name.contains("vLink", Qt::CaseInsensitive) ||
-            name.contains("IOS-V", Qt::CaseInsensitive) ||
-            name.contains("OBDII", Qt::CaseInsensitive)) {
-            emit logMessage(QString("BT device found: %1 [%2]").arg(name, addr));
+        bool isBLE = (info.coreConfigurations() & QBluetoothDeviceInfo::LowEnergyCoreConfiguration);
+        QString type = isBLE ? "BLE" : "Classic";
+
+        // Log ALL discovered devices via qDebug for desktop debugging
+        qDebug() << "[BT SCAN]" << type << "|" << name << "|" << addr
+                 << "| RSSI:" << info.rssi()
+                 << "| Services:" << info.serviceUuids().size();
+
+        if (name.isEmpty())
+            return;
+
+        // Relaxed filter: OBD, ELM, vLink, IOS-V, OBDII, V-LINK, Veepeak, Carista, LELink
+        bool match = name.contains("OBD", Qt::CaseInsensitive) ||
+                     name.contains("ELM", Qt::CaseInsensitive) ||
+                     name.contains("vLink", Qt::CaseInsensitive) ||
+                     name.contains("V-LINK", Qt::CaseInsensitive) ||
+                     name.contains("IOS-V", Qt::CaseInsensitive) ||
+                     name.contains("Veepeak", Qt::CaseInsensitive) ||
+                     name.contains("Carista", Qt::CaseInsensitive) ||
+                     name.contains("LELink", Qt::CaseInsensitive) ||
+                     name.contains("iCar", Qt::CaseInsensitive) ||
+                     name.contains("Viecar", Qt::CaseInsensitive) ||
+                     name.contains("Konnwei", Qt::CaseInsensitive);
+
+        if (match) {
+            emit logMessage(QString("BT device found: %1 [%2] (%3)").arg(name, addr, type));
             emit bluetoothDeviceFound(name, addr);
+        } else {
+            // Log non-matching devices too (to app log)
+            emit logMessage(QString("BT device skipped: %1 [%2] (%3)").arg(name, addr, type));
         }
     });
     connect(m_btAgent, &QBluetoothDeviceDiscoveryAgent::finished,
             this, [this]() {
-        emit logMessage("BT tarama tamamlandi");
+        emit logMessage("BT scan finished");
         emit bluetoothScanFinished();
         if (m_state == ConnectionState::Scanning)
             setState(ConnectionState::Disconnected);
@@ -46,7 +68,7 @@ ELM327Connection::ELM327Connection(QObject *parent)
     connect(m_btAgent, &QBluetoothDeviceDiscoveryAgent::errorOccurred,
             this, [this](QBluetoothDeviceDiscoveryAgent::Error err) {
         Q_UNUSED(err)
-        emit logMessage("BT tarama hatasi: " + m_btAgent->errorString());
+        emit logMessage("BT scan error: " + m_btAgent->errorString());
         if (m_state == ConnectionState::Scanning)
             setState(ConnectionState::Disconnected);
     });
@@ -82,8 +104,10 @@ void ELM327Connection::scanBluetooth()
     if (m_btAgent->isActive())
         m_btAgent->stop();
     setState(ConnectionState::Scanning);
-    emit logMessage("BT scan started...");
-    m_btAgent->start(QBluetoothDeviceDiscoveryAgent::ClassicMethod);
+    emit logMessage("BT scan started (Classic + BLE)...");
+    qDebug() << "[BT SCAN] Starting discovery - Classic + LowEnergy";
+    m_btAgent->start(QBluetoothDeviceDiscoveryAgent::ClassicMethod |
+                     QBluetoothDeviceDiscoveryAgent::LowEnergyMethod);
 #else
     emit logMessage("ERROR: Bluetooth not available on this platform");
 #endif
@@ -378,41 +402,24 @@ void ELM327Connection::initializeELM()
         emit logMessage("ELM327 Version: " + resp);
     }, 5000);
 
-    // 2) Echo on (APK ATE1)
+    // 2) Echo on (APK: ATE1)
     sendCommand("ATE1", nullptr);
 
-    // 3) Headers on
+    // 3) Headers on (APK: ATH1)
     sendCommand("ATH1", nullptr);
 
-    // 4) IFR kapatma (J1850 VPW icin)
+    // 4) Disable IFR for J1850 VPW (APK: ATIFR0)
     sendCommand("ATIFR0", [this](const QString &resp) {
         if (resp.contains("?"))
-            emit logMessage("ATIFR0 desteklenmiyor (sorun degil)");
+            emit logMessage("ATIFR0 not supported (not critical)");
     });
 
-    // 5) Adaptive timing auto2
-    sendCommand("ATAT2", nullptr);
-
-    // 6) Timeout 400ms
-    sendCommand("ATST64", nullptr);
-
-    // 7) Battery voltage
-    sendCommand("ATRV", [this](const QString &resp) {
-        m_elmVoltage = resp;
-        emit logMessage("Battery voltage: " + resp);
-    });
-
-    // 8) Default: J1850 VPW (ATSP2)
+    // 5) Default: J1850 VPW (APK: ATSP2)
     sendCommand("ATSP2", [this](const QString &resp) {
         if (resp.contains("OK")) {
             emit logMessage("Protocol: SAE J1850 VPW (ATSP2)");
             m_protocol = Protocol::J1850_VPW;
         }
-    });
-
-    // 9) Ready
-    sendCommand("ATI", [this](const QString &resp) {
-        Q_UNUSED(resp)
         setState(ConnectionState::Ready);
         emit connected();
         QString type = (m_transport == Transport::WiFi) ? "WiFi" : "Bluetooth";

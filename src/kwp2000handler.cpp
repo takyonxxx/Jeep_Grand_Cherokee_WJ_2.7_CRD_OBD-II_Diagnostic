@@ -298,8 +298,8 @@ QString KWP2000Handler::nrcToString(uint8_t nrc)
 {
     switch (nrc) {
     case 0x10: return "Genel Red (General Reject)";
-    case 0x11: return "Servis Desteklenmiyor";
-    case 0x12: return "Alt Fonksiyon Desteklenmiyor";
+    case 0x11: return "Service Not Supported";
+    case 0x12: return "Sub-Function Not Supported";
     case 0x21: return "Busy - Retry";
     case 0x22: return "Conditions Not Correct";
     case 0x24: return "Request Sequence Error";

@@ -22,40 +22,39 @@ QList<WJDiagnostics::ModuleInfo> WJDiagnostics::allModules()
 {
     return {
         // K-Line modules (ISO 14230-4 KWP fast init)
-        // Init sirasi: ATZ -> ATWM -> ATSH -> ATSP5 -> ATFI -> 81 -> 27
+        // Init: ATZ -> ATWM -> ATSH -> ATSP5 -> ATFI -> 81 -> 27
         {Module::MotorECU, "Engine ECU (Bosch EDC15C2 OM612)", "Engine",
-         BusType::KLine, "ATSH8115F1", "ATWM8115F13E", "ATSP5"},
+         BusType::KLine, "ATSH8115F1", "ATWM8115F13E", "ATSP5", ""},
         {Module::KLineTCM, "NAG1 722.6 Transmission (K-Line)", "KL-TCM",
-         BusType::KLine, "ATSH8120F1", "ATWM8120F13E", "ATSP5"},
+         BusType::KLine, "ATSH8120F1", "ATWM8120F13E", "ATSP5", ""},
 
-        // J1850 VPW modules - dogrulanmis header'lar
-        // Her modul icin ilk header fonksiyonel (session/reset), okuma icin 22 header
+        // J1850 VPW modules - verified headers from APK
         {Module::TCM, "NAG1 722.6 Transmission (EGS52)", "TCM",
-         BusType::J1850, "ATSH242810", "", "ATSP2"},
-        {Module::EVIC, "Overhead Console / Pusula", "EVIC",
-         BusType::J1850, "ATSH242A22", "", "ATSP2"},
+         BusType::J1850, "ATSH242810", "", "ATSP2", ""},
+        {Module::EVIC, "Overhead Console (EVIC)", "EVIC",
+         BusType::J1850, "ATSH242A22", "", "ATSP2", ""},
         {Module::ABS, "ABS / ESP Braking", "ABS",
-         BusType::J1850, "ATSH244022", "", "ATSP2"},
+         BusType::J1850, "ATSH244022", "", "ATSP2", "ATRA40"},
         {Module::Airbag, "Airbag (ORC/AOSIM)", "Airbag",
-         BusType::J1850, "ATSH246022", "", "ATSP2"},
+         BusType::J1850, "ATSH246022", "", "ATSP2", "ATRA60"},
         {Module::SKIM, "SKIM Immobilizer", "SKIM",
-         BusType::J1850, "ATSH246222", "", "ATSP2"},
-        {Module::ATC, "Klima Kontrol (ATC/HVAC)", "Klima",
-         BusType::J1850, "ATSH246822", "", "ATSP2"},
-        {Module::BCM, "Govde Kontrol (BCM)", "BCM",
-         BusType::J1850, "ATSH248022", "", "ATSP2"},
-        {Module::Radio, "Radyo / Ses Sistemi", "Radyo",
-         BusType::J1850, "ATSH248722", "", "ATSP2"},
-        {Module::Cluster, "Gosterge Paneli", "Gosterge",
-         BusType::J1850, "ATSH249022", "", "ATSP2"},
-        {Module::MemSeat, "Hafizali Koltuk / Ayna", "Koltuk",
-         BusType::J1850, "ATSH249822", "", "ATSP2"},
+         BusType::J1850, "ATSH246222", "", "ATSP2", ""},
+        {Module::ATC, "Climate Control (HVAC)", "HVAC",
+         BusType::J1850, "ATSH246822", "", "ATSP2", ""},
+        {Module::BCM, "Body Computer (BCM)", "BCM",
+         BusType::J1850, "ATSH248022", "", "ATSP2", "ATRA80"},
+        {Module::Radio, "Radio / Audio", "Radio",
+         BusType::J1850, "ATSH248722", "", "ATSP2", ""},
+        {Module::Cluster, "Instrument Cluster", "Cluster",
+         BusType::J1850, "ATSH249022", "", "ATSP2", ""},
+        {Module::MemSeat, "Memory Seat / Mirror", "Seat",
+         BusType::J1850, "ATSH249822", "", "ATSP2", ""},
         {Module::Liftgate, "Power Liftgate", "Liftgate",
-         BusType::J1850, "ATSH24A022", "", "ATSP2"},
+         BusType::J1850, "ATSH24A022", "", "ATSP2", ""},
         {Module::HandsFree, "HandsFree / Uconnect", "HFM",
-         BusType::J1850, "ATSH24A122", "", "ATSP2"},
-        {Module::ParkAssist, "Park Sensoru", "Park",
-         BusType::J1850, "ATSH24C022", "", "ATSP2"},
+         BusType::J1850, "ATSH24A122", "", "ATSP2", ""},
+        {Module::ParkAssist, "Park Assist", "Park",
+         BusType::J1850, "ATSH24C022", "", "ATSP2", ""},
     };
 }
 
@@ -207,9 +206,18 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                     emit logMessage("J1850 VPW active");
                     // Header set
                     m_elm->sendCommand(info.atshHeader, [this, info, done, targetMod](const QString&) {
-                        m_activeModule = targetMod;
-                        emit logMessage(QString("Active: %1 | %2").arg(info.shortName, info.atshHeader));
-                        if (done) done(true);
+                        auto finalize = [this, info, done, targetMod]() {
+                            m_activeModule = targetMod;
+                            emit logMessage(QString("Active: %1 | %2").arg(info.shortName, info.atshHeader));
+                            if (done) done(true);
+                        };
+                        if (!info.atraFilter.isEmpty()) {
+                            m_elm->sendCommand(info.atraFilter, [finalize](const QString&) {
+                                finalize();
+                            });
+                        } else {
+                            finalize();
+                        }
                     });
                 });
                 });
@@ -218,11 +226,20 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
             }, 7500);
         }
     } else {
-        // Ayni bus - sadece header degistir
+        // Same bus - just change header
         m_elm->sendCommand(info.atshHeader, [this, info, done, targetMod](const QString&) {
-            m_activeModule = targetMod;
-            emit logMessage(QString("Active: %1 | %2").arg(info.shortName, info.atshHeader));
-            if (done) done(true);
+            auto finalize = [this, info, done, targetMod]() {
+                m_activeModule = targetMod;
+                emit logMessage(QString("Active: %1 | %2").arg(info.shortName, info.atshHeader));
+                if (done) done(true);
+            };
+            if (!info.atraFilter.isEmpty()) {
+                m_elm->sendCommand(info.atraFilter, [finalize](const QString&) {
+                    finalize();
+                });
+            } else {
+                finalize();
+            }
         });
     }
 }
@@ -294,7 +311,7 @@ void WJDiagnostics::clearDTCs(Module mod, std::function<void(bool)> cb)
         } else {
             m_elm->sendCommand("14 00 00", [this, mod, cb](const QString &resp) {
                 bool ok = !resp.contains("7F") && !resp.contains("ERROR");
-                emit logMessage(QString("%1 DTC sil: %2")
+                emit logMessage(QString("%1 DTC clear: %2")
                     .arg(moduleName(mod), ok ? "OK" : "FAIL"));
                 if (cb) cb(ok);
             });
@@ -391,12 +408,12 @@ void WJDiagnostics::readTCMLiveData(std::function<void(const TCMStatus&)> cb)
             // Chrysler J1850 PID pairs: cmd -> parse
             struct PIDRead { QString cmd; QString name; };
             auto pids = std::make_shared<QList<PIDRead>>(QList<PIDRead>{
-                {"2201", "Actual Gear"},
-                {"2202", "Selected Gear"},
-                {"2210", "Turbine RPM"},
-                {"2211", "Output RPM"},
-                {"2214", "Trans Temp"},
-                {"2220", "Vehicle Speed"},
+                {"2E 01 00", "Actual Gear"},
+                {"2E 02 00", "Selected Gear"},
+                {"2E 10 00", "Turbine RPM"},
+                {"2E 11 00", "Output RPM"},
+                {"2E 14 00", "Trans Temp"},
+                {"2E 20 00", "Vehicle Speed"},
             });
 
             *doNext = [this, tcm, step, doNext, pids, cb]() {
@@ -411,17 +428,17 @@ void WJDiagnostics::readTCMLiveData(std::function<void(const TCMStatus&)> cb)
                     QString c = resp; c.remove(' ').remove('\r').remove('\n');
                     if (!c.contains("NODATA") && !c.contains("7F") && c.size() >= 6) {
                         bool ok;
-                        if (p.cmd == "2201") {
+                        if (p.cmd == "2E 01 00") {
                             int v = c.mid(4,2).toInt(&ok,16); if(ok) tcm->actualGear = v;
-                        } else if (p.cmd == "2202") {
+                        } else if (p.cmd == "2E 02 00") {
                             int v = c.mid(4,2).toInt(&ok,16); if(ok) tcm->selectedGear = v;
-                        } else if (p.cmd == "2210") {
+                        } else if (p.cmd == "2E 10 00") {
                             int v = c.mid(4,4).toInt(&ok,16); if(ok) tcm->turbineRPM = v;
-                        } else if (p.cmd == "2211") {
+                        } else if (p.cmd == "2E 11 00") {
                             int v = c.mid(4,4).toInt(&ok,16); if(ok) tcm->outputRPM = v;
-                        } else if (p.cmd == "2214") {
+                        } else if (p.cmd == "2E 14 00") {
                             int v = c.mid(4,2).toInt(&ok,16); if(ok) tcm->transTemp = v - 40;
-                        } else if (p.cmd == "2220") {
+                        } else if (p.cmd == "2E 20 00") {
                             int v = c.mid(4,4).toInt(&ok,16); if(ok) tcm->vehicleSpeed = v;
                         }
                     }
@@ -450,11 +467,11 @@ void WJDiagnostics::readABSLiveData(std::function<void(const ABSStatus&)> cb)
             // WJ CRD live data params: LF/RF/LR/RR Wheel Speed, Vehicle Speed
             struct PIDRead { QString cmd; QString name; };
             auto pids = std::make_shared<QList<PIDRead>>(QList<PIDRead>{
-                {"2201", "LF Wheel Speed"},
-                {"2202", "RF Wheel Speed"},
-                {"2203", "LR Wheel Speed"},
-                {"2204", "RR Wheel Speed"},
-                {"2210", "Vehicle Speed"},
+                {"20 01 00", "LF Wheel Speed"},
+                {"20 02 00", "RF Wheel Speed"},
+                {"20 03 00", "LR Wheel Speed"},
+                {"20 04 00", "RR Wheel Speed"},
+                {"20 10 00", "Vehicle Speed"},
             });
 
             *doNext = [this, abs, step, doNext, pids, cb]() {
@@ -472,11 +489,11 @@ void WJDiagnostics::readABSLiveData(std::function<void(const ABSStatus&)> cb)
                         int v = c.mid(4, 4).toInt(&ok, 16);
                         if (!ok) v = c.mid(4, 2).toInt(&ok, 16);
                         if (ok) {
-                            if (p.cmd == "2201") abs->wheelLF = v;
-                            else if (p.cmd == "2202") abs->wheelRF = v;
-                            else if (p.cmd == "2203") abs->wheelLR = v;
-                            else if (p.cmd == "2204") abs->wheelRR = v;
-                            else if (p.cmd == "2210") abs->vehicleSpeed = v;
+                            if (p.cmd == "20 01 00") abs->wheelLF = v;
+                            else if (p.cmd == "20 02 00") abs->wheelRF = v;
+                            else if (p.cmd == "20 03 00") abs->wheelLR = v;
+                            else if (p.cmd == "20 04 00") abs->wheelRR = v;
+                            else if (p.cmd == "20 10 00") { abs->vehicleSpeed = v; }
                         }
                     }
                     (*step)++;
@@ -499,7 +516,7 @@ void WJDiagnostics::rawBusDump(Module mod, const QList<uint8_t> &ids,
     auto readNext = std::make_shared<std::function<void()>>();
     auto busType = moduleInfo(mod).bus;
 
-    *readNext = [this, idx, idList, readNext, perID, done, busType]() {
+    *readNext = [this, idx, idList, readNext, perID, done, busType, mod]() {
         if (*idx >= idList->size()) { if (done) done(); return; }
         uint8_t lid = idList->at(*idx);
 
@@ -510,7 +527,17 @@ void WJDiagnostics::rawBusDump(Module mod, const QList<uint8_t> &ids,
                 QTimer::singleShot(340, *readNext);
             });
         } else {
-            QString cmd = QString("22%1").arg(lid, 2, 16, QChar('0'));
+            // APK format: each module has its own SID prefix
+            // TCM(0x28)->2E, ABS(0x40)->20, Airbag(0x60)->28
+            uint8_t sidPrefix = 0x22; // default
+            uint8_t modAddr = static_cast<uint8_t>(mod);
+            if (modAddr == 0x28) sidPrefix = 0x2E;       // TCM
+            else if (modAddr == 0x40) sidPrefix = 0x20;   // ABS
+            else if (modAddr == 0x60) sidPrefix = 0x28;   // Airbag
+
+            QString cmd = QString("%1 %2 00")
+                .arg(sidPrefix, 2, 16, QChar('0'))
+                .arg(lid, 2, 16, QChar('0')).toUpper();
             m_elm->sendCommand(cmd, [idx, readNext, perID, lid](const QString &resp) {
                 QByteArray data;
                 // Skip invalid responses
@@ -845,20 +872,10 @@ void WJDiagnostics::startSession(std::function<void(bool)> cb)
     m_elm->sendCommand("ATSP2", [this, cb](const QString&) {
         QTimer::singleShot(340, this, [this, cb]() {
             m_elm->sendCommand("ATSH242810", [this, cb](const QString&) {
-                // J1850'de session baslat: SID 0x10 0x89 (DiagSession)
-                m_elm->sendCommand("10 89", [this, cb](const QString &resp) {
-                    bool ok = !resp.contains("ERROR") && !resp.contains("NO DATA") && !resp.contains("?");
-                    if (ok) {
-                        emit logMessage("TCM J1850 session active (ATSH242810)");
-                        initLiveDataParams();
-                    } else {
-                        // Bazi moduller session gerektirmez, yine de devam et
-                        emit logMessage("TCM J1850 session yaniti: " + resp + " (continuing)");
-                        initLiveDataParams();
-                        ok = true;
-                    }
-                    if (cb) cb(ok);
-                });
+                // J1850 TCM: no diagnostic session start needed (APK confirmed)
+                emit logMessage("TCM J1850 session active (ATSH242810)");
+                initLiveDataParams();
+                if (cb) cb(true);
             });
         });
     });
@@ -905,7 +922,7 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
     auto doNext = std::make_shared<std::function<void()>>();
 
     // analizden cikarilan J1850 TCM PID'ler - TUMU
-    // Header ATSH242822 ile okunur, komut: "22 XX", yanit: "62 XX <data>"
+    // Header ATSH242822, command: "2E PID 00", response: "62 PID <data>"
     QList<uint8_t> pids = {
         0x01, // Actual Gear (1B)
         0x02, // Selected Gear (1B)
@@ -963,7 +980,7 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
             return;
         }
         uint8_t pid = pids[*step];
-        QString cmd = QString("22 %1").arg(pid, 2, 16, QChar('0')).toUpper();
+        QString cmd = QString("2E %1 00").arg(pid, 2, 16, QChar('0')).toUpper();
 
         m_elm->sendCommand(cmd, [this, tcm, step, doNext, pid](const QString &resp) {
             // ELM327 J1850 yanit (ATE1 + ATH1 acik):
@@ -984,7 +1001,7 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
                     cleaned.contains("UNABLE") || cleaned.contains("?") ||
                     cleaned.contains("BUSBUSY") || cleaned.contains("STOPPED")) continue;
                 // Echo satirini atla (komutumuzla baslar: "22XX")
-                QString echoCheck = QString("22%1").arg(pid, 2, 16, QChar('0')).toUpper();
+                QString echoCheck = QString("2E%1").arg(pid, 2, 16, QChar('0')).toUpper();
                 if (cleaned.startsWith(echoCheck) && cleaned.length() <= echoCheck.length() + 2) continue;
 
                 // "62" byte'inin pozisyonunu bul
@@ -1062,7 +1079,7 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
 // readSingleParam - J1850 VPW tek PID oku
 void WJDiagnostics::readSingleParam(uint8_t localID, std::function<void(double)> cb)
 {
-    QString cmd = QString("22 %1").arg(localID, 2, 16, QChar('0')).toUpper();
+    QString cmd = QString("2E %1 00").arg(localID, 2, 16, QChar('0')).toUpper();
     m_elm->sendCommand(cmd, [this, localID, cb](const QString &resp) {
         double val = 0;
         QByteArray raw;
@@ -1075,7 +1092,7 @@ void WJDiagnostics::readSingleParam(uint8_t localID, std::function<void(double)>
                 cleaned.contains("ERROR") || cleaned.contains("BUSBUSY")) continue;
 
             // Echo satirini atla
-            QString echoCheck = QString("22%1").arg(localID, 2, 16, QChar('0')).toUpper();
+            QString echoCheck = QString("2E%1").arg(localID, 2, 16, QChar('0')).toUpper();
             if (cleaned.startsWith(echoCheck) && cleaned.length() <= echoCheck.length() + 2) continue;
 
             // "62 XX" pattern bul
