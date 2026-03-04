@@ -22,10 +22,14 @@ SOURCES += \
 
 ios {
     QMAKE_INFO_PLIST = ios/Info.plist
+    QMAKE_ASSET_CATALOGS = $$PWD/ios/Assets.xcassets
+    QMAKE_ASSET_CATALOGS_APP_ICON = "AppIcon"
 }
 
 macx {
     QMAKE_INFO_PLIST = macos/Info.plist
+    QMAKE_ASSET_CATALOGS = $$PWD/macos/Assets.xcassets
+    QMAKE_ASSET_CATALOGS_APP_ICON = "AppIcon"
 }
 
 android {

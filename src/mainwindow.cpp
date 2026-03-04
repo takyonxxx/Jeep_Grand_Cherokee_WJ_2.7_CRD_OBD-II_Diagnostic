@@ -183,7 +183,7 @@ QFrame* MainWindow::createGaugeCard(const QString &title, const QString &initVal
     tl->setAlignment(Qt::AlignCenter); lay->addWidget(tl);
     QLabel *vl = new QLabel(initValue);
     vl->setAlignment(Qt::AlignCenter);
-    vl->setStyleSheet("color:#00d4b4;font-size:20px;font-weight:bold;"
+    vl->setStyleSheet("color:#00d4b4;font-size:16px;font-weight:bold;"
         "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;");
     lay->addWidget(vl);
     QLabel *ul = new QLabel(unit);
