@@ -985,7 +985,7 @@ void WJDiagnostics::clearDTCs(std::function<void(bool)> cb)
     clearDTCs(m_activeModule, cb);
 }
 
-// readAllLiveData - J1850 VPW uzerinden TCM PID'lerden oku (referans)
+// readAllLiveData - K-Line TCM (0x20) ReadLocalData blocks
 // readAllLiveData - K-Line TCM (0x20) ReadLocalData blocks
 void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
 {
@@ -1117,40 +1117,26 @@ void WJDiagnostics::fillTCMCompat(TCMStatus &tcm)
         tcm.limpMode = true;
 }
 
-// readTCMInfo - J1850 VPW ile TCM modul bilgisi oku (ATSH2428A0)
+// readTCMInfo - K-Line KWP2000 ReadEcuIdentification (SID 0x1A)
 void WJDiagnostics::readTCMInfo(std::function<void(const QMap<QString,QString>&)> cb)
 {
     auto r = std::make_shared<QMap<QString,QString>>();
     (*r)["Module"] = "NAG1 722.6 TCM";
-    (*r)["Bus"] = "J1850 VPW";
+    (*r)["Bus"] = "K-Line (0x20)";
 
-    // ATSH2428A0 kullaniyor (SID 0xA0 = ReadIdentification)
-    m_elm->sendCommand("ATSH2428A0", [this, r, cb](const QString&) {
-        // A0 01 = Part Number
-        m_elm->sendCommand("A0 01", [this, r, cb](const QString &resp1) {
-            if (!resp1.contains("ERROR") && !resp1.contains("NO DATA"))
-                (*r)["PartNumber"] = resp1.trimmed();
-            else
-                (*r)["PartNumber"] = "N/A";
+    switchToModule(Module::KLineTCM, [this, r, cb](bool ok) {
+        if (!ok) { if (cb) cb(*r); return; }
 
-            // A0 02 = Software Version
-            m_elm->sendCommand("A0 02", [this, r, cb](const QString &resp2) {
-                if (!resp2.contains("ERROR") && !resp2.contains("NO DATA"))
-                    (*r)["SoftwareVersion"] = resp2.trimmed();
-                else
-                    (*r)["SoftwareVersion"] = "N/A";
+        // KWP2000 ReadEcuIdentification: 1A 86 (manufacturer), 1A 90 (VIN), 1A 91 (HW)
+        m_elm->sendCommand("1A 86", [this, r, cb](const QString &resp1) {
+            (*r)["Manufacturer"] = resp1.contains("NO DATA") ? "N/A" : resp1.trimmed();
 
-                // A0 03 = Hardware Version
-                m_elm->sendCommand("A0 03", [this, r, cb](const QString &resp3) {
-                    if (!resp3.contains("ERROR") && !resp3.contains("NO DATA"))
-                        (*r)["HardwareVersion"] = resp3.trimmed();
-                    else
-                        (*r)["HardwareVersion"] = "N/A";
+            m_elm->sendCommand("1A 90", [this, r, cb](const QString &resp2) {
+                (*r)["PartNumber"] = resp2.contains("NO DATA") ? "N/A" : resp2.trimmed();
 
-                    // Header'i geri cevir
-                    m_elm->sendCommand("ATSH242822", [r, cb](const QString&) {
-                        if (cb) cb(*r);
-                    });
+                m_elm->sendCommand("1A 91", [this, r, cb](const QString &resp3) {
+                    (*r)["HardwareVersion"] = resp3.contains("NO DATA") ? "N/A" : resp3.trimmed();
+                    if (cb) cb(*r);
                 });
             });
         });
