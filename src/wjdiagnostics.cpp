@@ -1,4 +1,4 @@
-﻿#include "tcmdiagnostics.h"
+﻿#include "wjdiagnostics.h"
 #include <QDebug>
 #include <QTimer>
 
@@ -248,7 +248,16 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
             }, 7500);
         }
     } else {
-        // Same bus - just change header
+        // Same bus - check if K-Line needs full reinit
+        if (newBus == BusType::KLine && m_activeModule != targetMod) {
+            // K-Line: each module needs its own ATWM+ATFI+81 sequence
+            // Cannot just change ATSH - must do full ATZ reinit
+            emit logMessage("K-Line module change: full reinit required");
+            m_activeBus = BusType::None; // Force different-bus path
+            switchToModule(mod, done);   // Recurse with bus mismatch
+            return;
+        }
+        // J1850 same bus - just change header
         m_elm->sendCommand(info.atshHeader, [this, info, done, targetMod](const QString&) {
             auto finalize = [this, info, done, targetMod]() {
                 m_activeModule = targetMod;
@@ -335,17 +344,34 @@ void WJDiagnostics::readDTCs(Module mod, std::function<void(const QList<DTCEntry
                 if (cb) cb(r);
             });
         } else {
-            // J1850 VPW DTC read: need functional header (SID 0x10/0x14/0x18)
+            // J1850 DTC read (APK verified):
+            // ABS: ATSH244022 → "24 00 00" (DTC as special PID via ReadDataByID)
+            // Airbag: ATSH246022 → "28 37 00" (DTC PID 0x37)
             uint8_t modAddr = static_cast<uint8_t>(mod);
-            QString funcHeader = QString("ATSH24%1%2")
-                .arg(modAddr, 2, 16, QChar('0'))
-                .arg("10").toUpper();
-            m_elm->sendCommand(funcHeader, [this, mod, cb](const QString&) {
-                m_elm->sendCommand("18 02 FF 00", [this, mod, cb](const QString &resp) {
-                    auto dtcs = decodeJ1850DTCs(resp, mod);
-                    emit dtcListReady(mod, dtcs);
-                    if (cb) cb(dtcs);
-                });
+            QString dtcCmd;
+            if (modAddr == 0x40) {
+                dtcCmd = "24 00 00";   // ABS DTC read
+            } else if (modAddr == 0x60) {
+                dtcCmd = "28 37 00";   // Airbag DTC read
+            } else {
+                emit logMessage(QString("%1: J1850 DTC read not supported")
+                    .arg(moduleInfo(mod).shortName));
+                if (cb) cb({});
+                return;
+            }
+
+            m_elm->sendCommand(dtcCmd, [this, mod, modAddr, cb](const QString &resp) {
+                QList<DTCEntry> dtcs;
+                if (!resp.contains("NO DATA") && !resp.contains("ERROR") && resp.contains("62")) {
+                    // Parse DTC bytes from response
+                    // Response format: header + 62/64/68 + DTC data bytes
+                    emit logMessage(QString("%1 DTC raw: %2")
+                        .arg(moduleInfo(mod).shortName, resp.trimmed()));
+                    // TODO: decode DTC bytes into P/C/B/U codes
+                    // For now log raw response for analysis
+                }
+                emit dtcListReady(mod, dtcs);
+                if (cb) cb(dtcs);
             });
         }
     });
@@ -359,16 +385,31 @@ void WJDiagnostics::clearDTCs(Module mod, std::function<void(bool)> cb)
         if (moduleInfo(mod).bus == BusType::KLine) {
             m_kwp->clearAllDTCs(cb);
         } else {
-            // J1850: switch to functional header for ClearDTC (SID 0x14)
+            // J1850 DTC clear (APK verified):
+            // ABS: ATSH244011 → "01 01 00" (ECUReset = clears DTCs)
+            // Airbag: ATSH246011 → "0D" (ECUReset with param)
             uint8_t modAddr = static_cast<uint8_t>(mod);
-            QString funcHeader = QString("ATSH24%1%2")
+            QString resetHeader = QString("ATSH24%1%2")
                 .arg(modAddr, 2, 16, QChar('0'))
-                .arg("14").toUpper();
-            m_elm->sendCommand(funcHeader, [this, mod, cb](const QString&) {
-                m_elm->sendCommand("14 00 00", [this, mod, cb](const QString &resp) {
-                    bool ok = !resp.contains("7F") && !resp.contains("ERROR");
-                    emit logMessage(QString("%1 DTC clear: %2")
-                        .arg(moduleName(mod), ok ? "OK" : "FAIL"));
+                .arg("11").toUpper();
+            QString resetCmd;
+            if (modAddr == 0x40) {
+                resetCmd = "01 01 00";  // ABS: hardReset
+            } else if (modAddr == 0x60) {
+                resetCmd = "0D";        // Airbag: reset param 0x0D
+            } else {
+                emit logMessage(QString("%1: J1850 DTC clear not supported")
+                    .arg(moduleInfo(mod).shortName));
+                if (cb) cb(false);
+                return;
+            }
+
+            m_elm->sendCommand(resetHeader, [this, mod, resetCmd, cb](const QString&) {
+                m_elm->sendCommand(resetCmd, [this, mod, cb](const QString &resp) {
+                    // ECUReset positive response: 0x51
+                    bool ok = resp.contains("51") && !resp.contains("7F");
+                    emit logMessage(QString("%1 DTC clear (ECUReset): %2")
+                        .arg(moduleInfo(mod).shortName, ok ? "OK" : resp.trimmed()));
                     if (cb) cb(ok);
                 });
             });
@@ -450,61 +491,39 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
 
 void WJDiagnostics::readTCMLiveData(std::function<void(const TCMStatus&)> cb)
 {
-    // J1850 VPW: ATSH242822 for ReadDataByPID
-    // PIDs need real vehicle verification
+    // K-Line TCM (0x20) ReadLocalData
     auto tcm = std::make_shared<TCMStatus>();
 
-    switchToModule(Module::TCM, [this, tcm, cb](bool ok) {
+    switchToModule(Module::KLineTCM, [this, tcm, cb](bool ok) {
         if (!ok) { if (cb) cb(*tcm); return; }
-        // Switch to data-read header
-        m_elm->sendCommand("ATSH242822", [this, tcm, cb](const QString&) {
-            // Read basic PIDs sequentially
-            auto step = std::make_shared<int>(0);
-            auto doNext = std::make_shared<std::function<void()>>();
 
-            // Chrysler J1850 PID pairs: cmd -> parse
-            struct PIDRead { QString cmd; QString name; };
-            auto pids = std::make_shared<QList<PIDRead>>(QList<PIDRead>{
-                {"2E 01 00", "Actual Gear"},
-                {"2E 02 00", "Selected Gear"},
-                {"2E 10 00", "Turbine RPM"},
-                {"2E 11 00", "Output RPM"},
-                {"2E 14 00", "Trans Temp"},
-                {"2E 20 00", "Vehicle Speed"},
-            });
+        // KWP2000 ReadLocalData blocks for NAG1 722.6
+        // Block numbers TBD - need real vehicle block scan first
+        auto step = std::make_shared<int>(0);
+        auto doNext = std::make_shared<std::function<void()>>();
+        QList<uint8_t> blocks = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
 
-            *doNext = [this, tcm, step, doNext, pids, cb]() {
-                if (*step >= pids->size()) {
-                    m_lastTCM = *tcm;
-                    emit tcmStatusUpdated(*tcm);
-                    if (cb) cb(*tcm);
-                    return;
+        *doNext = [this, tcm, step, doNext, blocks, cb]() {
+            if (*step >= blocks.size()) {
+                m_lastTCM = *tcm;
+                emit tcmStatusUpdated(*tcm);
+                if (cb) cb(*tcm);
+                return;
+            }
+            uint8_t blk = blocks[*step];
+            QString cmd = QString("21 %1").arg(blk, 2, 16, QChar('0')).toUpper();
+            m_elm->sendCommand(cmd, [this, tcm, step, doNext, blk](const QString &resp) {
+                // Parse KWP response: look for "61 xx" positive response
+                if (!resp.contains("NO DATA") && !resp.contains("7F") && !resp.contains("ERROR")) {
+                    emit logMessage(QString("TCM blk 0x%1: %2")
+                        .arg(blk, 2, 16, QChar('0')).arg(resp.trimmed()));
+                    // TODO: parse TCM block data after block discovery
                 }
-                auto &p = pids->at(*step);
-                m_elm->sendCommand(p.cmd, [this, tcm, step, doNext, p](const QString &resp) {
-                    QString c = resp; c.remove(' ').remove('\r').remove('\n');
-                    if (!c.contains("NODATA") && !c.contains("7F") && c.size() >= 6) {
-                        bool ok;
-                        if (p.cmd == "2E 01 00") {
-                            int v = c.mid(4,2).toInt(&ok,16); if(ok) tcm->actualGear = v;
-                        } else if (p.cmd == "2E 02 00") {
-                            int v = c.mid(4,2).toInt(&ok,16); if(ok) tcm->selectedGear = v;
-                        } else if (p.cmd == "2E 10 00") {
-                            int v = c.mid(4,4).toInt(&ok,16); if(ok) tcm->turbineRPM = v;
-                        } else if (p.cmd == "2E 11 00") {
-                            int v = c.mid(4,4).toInt(&ok,16); if(ok) tcm->outputRPM = v;
-                        } else if (p.cmd == "2E 14 00") {
-                            int v = c.mid(4,2).toInt(&ok,16); if(ok) tcm->transTemp = v - 40;
-                        } else if (p.cmd == "2E 20 00") {
-                            int v = c.mid(4,4).toInt(&ok,16); if(ok) tcm->vehicleSpeed = v;
-                        }
-                    }
-                    (*step)++;
-                    QTimer::singleShot(340, *doNext);
-                });
-            };
-            (*doNext)();
-        });
+                (*step)++;
+                QTimer::singleShot(340, *doNext);
+            });
+        };
+        (*doNext)();
     });
 }
 
@@ -919,36 +938,17 @@ QString WJDiagnostics::dtcDescription(const QString &code, Module src)
 // Compat Methods (eski mainwindow/livedata API uyumu icin)
 // ============================================================
 
-// startSession(callback) - compat: referansna gore J1850 VPW TCM (0x28)
+// startSession(callback) - compat: K-Line TCM (0x20) for 2.7 CRD
 void WJDiagnostics::startSession(std::function<void(bool)> cb)
 {
-    emit logMessage("Starting TCM session (J1850 VPW 0x28)...");
-    m_activeBus = BusType::J1850;
-    m_activeModule = Module::TCM;
+    emit logMessage("Starting TCM session (K-Line 0x20)...");
 
-    m_elm->sendCommand("ATSP2", [this, cb](const QString&) {
-        QTimer::singleShot(340, this, [this, cb]() {
-            // DiagSession: ATSH242810 → "02 00 00" → wait "50"
-            m_elm->sendCommand("ATSH242810", [this, cb](const QString&) {
-                QTimer::singleShot(100, this, [this, cb]() {
-                m_elm->sendCommand("02 00 00", [this, cb](const QString &resp) {
-                    if (resp.contains("50")) {
-                        emit logMessage("TCM DiagSession OK (50)");
-                    } else {
-                        emit logMessage("TCM DiagSession: " + resp);
-                    }
-                    // Switch to data read header
-                    QTimer::singleShot(100, this, [this, cb]() {
-                    m_elm->sendCommand("ATSH242822", [this, cb](const QString&) {
-                        emit logMessage("TCM J1850 session active (ATSH242822)");
-                        initLiveDataParams();
-                        if (cb) cb(true);
-                    });
-                    });
-                });
-                });
-            });
-        });
+    switchToModule(Module::KLineTCM, [this, cb](bool ok) {
+        if (ok) {
+            emit logMessage("K-Line TCM session active (ATSH8120F1)");
+            initLiveDataParams();
+        }
+        if (cb) cb(ok);
     });
 }
 
@@ -986,173 +986,66 @@ void WJDiagnostics::clearDTCs(std::function<void(bool)> cb)
 }
 
 // readAllLiveData - J1850 VPW uzerinden TCM PID'lerden oku (referans)
+// readAllLiveData - K-Line TCM (0x20) ReadLocalData blocks
 void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
 {
     auto tcm = std::make_shared<TCMStatus>();
     auto step = std::make_shared<int>(0);
     auto doNext = std::make_shared<std::function<void()>>();
 
-    // analizden cikarilan J1850 TCM PID'ler - TUMU
-    // Header ATSH242822, command: "2E PID 00", response: "62 PID <data>"
-    QList<uint8_t> pids = {
-        0x01, // Actual Gear (1B)
-        0x02, // Selected Gear (1B)
-        0x03, // Max Gear (1B)
-        0x04, // Shift Selector Position (1B)
-        0x10, // Turbine RPM (2B)
-        0x11, // Input RPM N2 (2B)
-        0x12, // Input RPM N3 (2B)
-        0x13, // Output RPM (2B)
-        0x14, // Transmission Temp (1B, +40 offset)
-        0x15, // TCC Pressure (1B, *0.1)
-        0x16, // Solenoid Supply (1B, *0.1V)
-        0x17, // TCC Clutch State (1B)
-        0x18, // Actual TCC Slip (2B, signed)
-        0x19, // Desired TCC Slip (2B, signed)
-        0x1A, // Act 1245 Solenoid (1B, *0.39%)
-        0x1B, // Set 1245 Solenoid (1B, *0.39%)
-        0x1C, // Act 2-3 Solenoid (1B, *0.39%)
-        0x1D, // Set 2-3 Solenoid (1B, *0.39%)
-        0x1E, // Act 3-4 Solenoid (1B, *0.39%)
-        0x1F, // Set 3-4 Solenoid (1B, *0.39%)
-        0x20, // Vehicle Speed (2B)
-        0x21, // Front Vehicle Speed (2B)
-        0x22, // Rear Vehicle Speed (2B)
-        0x23, // Shift PSI (2B)
-        0x24, // Modulation PSI (2B)
-        0x25, // Park Lockout Solenoid (1B)
-        0x26, // Park/Neutral Switch (1B)
-        0x27, // Brake Light Switch (1B)
-        0x28, // Primary Brake Switch (1B)
-        0x29, // Secondary Brake Switch (1B)
-        0x2A, // Kickdown Switch (1B)
-        0x2B, // Fuel QTY Torque (1B, *0.39%)
-        0x2C, // Swirl Solenoid (1B)
-        0x2D, // Wastegate Solenoid (1B, *0.39%)
-        0x30, // Calculated Gear (1B)
-        // APK extra PIDs
-        0x00, // Unknown/Status (1B)
-        0x05, // Unknown (1B)
-        0x06, // Unknown (1B)
-        0x07, // Unknown (1B)
-        0x08, // Unknown (1B)
-        0x09, // Unknown (1B)
-        0x0D, // Unknown (1B)
-        0x50, // Adaptation Value 1 (2B)
-        0x51, // Adaptation Value 2 (2B)
-        0x52, // Adaptation Value 3 (2B)
-        0x53, // Adaptation Value 4 (2B)
-        0x54, // Adaptation Value 5 (2B)
+    // K-Line TCM ReadLocalData blocks - will be refined after block scan
+    // For now try common Mercedes 722.6 EGS52 blocks
+    QList<uint8_t> blocks = {
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
     };
 
-    // Ensure J1850 bus and correct header via switchToModule
-    switchToModule(Module::TCM, [this, tcm, step, doNext, pids, cb](bool ok) {
+    // Switch to K-Line TCM
+    switchToModule(Module::KLineTCM, [this, tcm, step, doNext, blocks, cb](bool ok) {
         if (!ok) { if (cb) cb(*tcm); return; }
 
-    // ATSH242822 already set by switchToModule (TCM default header)
-    // Start reading PIDs
-
-    *doNext = [this, tcm, step, doNext, pids, cb]() {
-        if (*step >= pids.size()) {
-            // Read battery voltage via ATRV
+    *doNext = [this, tcm, step, doNext, blocks, cb]() {
+        if (*step >= blocks.size()) {
+            // Read battery voltage
             m_elm->sendCommand("ATRV", [this, tcm, cb](const QString &rv) {
                 QString v = rv.trimmed().remove('V').remove('v');
-                bool ok = false;
-                double volts = v.toDouble(&ok);
-                if (ok && volts > 0) tcm->batteryVoltage = volts;
-                fillTCMCompat(*tcm);
+                bool ok2 = false;
+                double volts = v.toDouble(&ok2);
+                if (ok2 && volts > 0) tcm->batteryVoltage = volts;
                 m_lastTCM = *tcm;
                 emit tcmStatusUpdated(*tcm);
                 if (cb) cb(*tcm);
             });
             return;
         }
-        uint8_t pid = pids[*step];
-        QString cmd = QString("2E %1 00").arg(pid, 2, 16, QChar('0')).toUpper();
+        uint8_t blk = blocks[*step];
+        // KWP2000 ReadLocalData: SID 0x21 + block number
+        QString cmd = QString("21 %1").arg(blk, 2, 16, QChar('0')).toUpper();
 
-        m_elm->sendCommand(cmd, [this, tcm, step, doNext, pid](const QString &resp) {
-            // ELM327 J1850 yanit (ATE1 + ATH1 acik):
-            // Satir 1 (echo): "22 01" (komut echo'su)
-            // Satir 2 (yanit): "28 10 62 01 03" (header + data)
-            // Satir 3: ">" (prompt - zaten kesilmis)
-            //
-            // Parse: echo satirini atla, yanit satirindan "62" bul
-            QByteArray raw;
-            QStringList lines = resp.split('\r', Qt::SkipEmptyParts);
-
-            // Son gecerli hex satirini bul (echo'dan sonraki = gercek yanit)
-            for (int li = lines.size() - 1; li >= 0; li--) {
-                QString cleaned = lines[li].trimmed().remove(' ');
-                if (cleaned.isEmpty()) continue;
-                // Hata yanitlari
-                if (cleaned.contains("NODATA") || cleaned.contains("ERROR") ||
-                    cleaned.contains("UNABLE") || cleaned.contains("?") ||
-                    cleaned.contains("BUSBUSY") || cleaned.contains("STOPPED")) continue;
-                // Echo satirini atla (komutumuzla baslar: "22XX")
-                QString echoCheck = QString("2E%1").arg(pid, 2, 16, QChar('0')).toUpper();
-                if (cleaned.startsWith(echoCheck) && cleaned.length() <= echoCheck.length() + 2) continue;
-
-                // "62" byte'inin pozisyonunu bul
-                int pos62 = cleaned.indexOf("62", 0, Qt::CaseInsensitive);
-                if (pos62 < 0 || pos62 % 2 != 0) continue;
-
-                // Dogrudan PID byte'ini da kontrol et: "62 XX" olmali
-                QString pidCheck = QString("62%1").arg(pid, 2, 16, QChar('0')).toUpper();
-                int posPid = cleaned.indexOf(pidCheck, 0, Qt::CaseInsensitive);
-                if (posPid < 0 || posPid % 2 != 0) continue;
-
-                // posPid'den itibaren parse et
-                QString dataHex = cleaned.mid(posPid);
-                for (int i = 0; i + 1 < dataHex.length(); i += 2)
-                    raw.append(static_cast<char>(dataHex.mid(i, 2).toUInt(nullptr, 16)));
-                break;
-            }
-
-            // raw[0]=0x62, raw[1]=PID, raw[2...]=data
-            if (raw.size() >= 3 && static_cast<uint8_t>(raw[0]) == 0x62
-                && static_cast<uint8_t>(raw[1]) == pid) {
-                uint8_t valByte = static_cast<uint8_t>(raw[2]);
-                uint16_t val16 = valByte;
-                if (raw.size() >= 4)
-                    val16 = (static_cast<uint8_t>(raw[2]) << 8) | static_cast<uint8_t>(raw[3]);
-                int16_t sval16 = static_cast<int16_t>(val16);
-
-                switch (pid) {
-                case 0x01: tcm->actualGear = valByte; break;
-                case 0x02: tcm->selectedGear = valByte; break;
-                case 0x03: tcm->maxGear = valByte; break;
-                case 0x04: /* selector position */ break;
-                case 0x10: tcm->turbineRPM = val16; break;
-                case 0x11: /* input RPM N2 */ break;
-                case 0x12: /* input RPM N3 */ break;
-                case 0x13: tcm->outputRPM = val16; break;
-                case 0x14: tcm->transTemp = valByte - 40; break;
-                case 0x15: tcm->tccPressure = valByte * 0.1; break;
-                case 0x16: tcm->solenoidSupply = valByte * 0.1; break;
-                case 0x17: /* TCC clutch state */ break;
-                case 0x18: tcm->actualTCCslip = sval16; break;
-                case 0x19: tcm->desTCCslip = sval16; break;
-                case 0x1A: /* act 1245 sol */ break;
-                case 0x1B: /* set 1245 sol */ break;
-                case 0x1C: /* act 2-3 sol */ break;
-                case 0x1D: /* set 2-3 sol */ break;
-                case 0x1E: /* act 3-4 sol */ break;
-                case 0x1F: /* set 3-4 sol */ break;
-                case 0x20: tcm->vehicleSpeed = val16; break;
-                case 0x21: /* front speed */ break;
-                case 0x22: /* rear speed */ break;
-                case 0x23: tcm->linePressure = val16 * 0.1; break;
-                case 0x24: /* modulation PSI */ break;
-                case 0x25: /* park lockout */ break;
-                case 0x26: /* park/neutral */ break;
-                case 0x27: /* brake light */ break;
-                case 0x28: /* primary brake */ break;
-                case 0x29: /* secondary brake */ break;
-                case 0x2A: /* kickdown */ break;
-                case 0x2B: /* fuel qty torque */ break;
-                case 0x2C: /* swirl solenoid */ break;
-                case 0x2D: /* wastegate sol */ break;
-                case 0x30: /* calculated gear */ break;
+        m_elm->sendCommand(cmd, [this, tcm, step, doNext, blk](const QString &resp) {
+            // KWP response: 83 F1 20 61 xx ... checksum
+            // Parse: find "61 xx" in response
+            if (!resp.contains("NO DATA") && !resp.contains("7F") && !resp.contains("ERROR")) {
+                // Extract data bytes after header
+                QByteArray raw;
+                QString cleaned = resp;
+                cleaned.remove(' ').remove('\r').remove('\n');
+                // Find "61" + block hex in cleaned string
+                QString blkHex = QString("61%1").arg(blk, 2, 16, QChar('0')).toUpper();
+                int pos = cleaned.indexOf(blkHex, 0, Qt::CaseInsensitive);
+                if (pos >= 0) {
+                    QString dataHex = cleaned.mid(pos);
+                    for (int i = 0; i + 1 < dataHex.length(); i += 2) {
+                        bool ok2;
+                        uint8_t b = dataHex.mid(i, 2).toUInt(&ok2, 16);
+                        if (ok2) raw.append(static_cast<char>(b));
+                    }
+                    // raw[0]=0x61, raw[1]=blk, raw[2...]=data
+                    if (raw.size() >= 3) {
+                        emit logMessage(QString("TCM blk 0x%1: %2 bytes")
+                            .arg(blk, 2, 16, QChar('0')).arg(raw.size() - 2));
+                        // TODO: parse TCM block data after block discovery
+                    }
                 }
             }
             (*step)++;
@@ -1160,58 +1053,50 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
         });
     };
     (*doNext)();
-
-    }); // switchToModule(TCM) callback end
+    });
 }
 
-// readSingleParam - J1850 VPW tek PID oku
+// readSingleParam - K-Line KWP2000 ReadLocalData tek blok oku
 void WJDiagnostics::readSingleParam(uint8_t localID, std::function<void(double)> cb)
 {
-    QString cmd = QString("2E %1 00").arg(localID, 2, 16, QChar('0')).toUpper();
+    QString cmd = QString("21 %1").arg(localID, 2, 16, QChar('0')).toUpper();
     m_elm->sendCommand(cmd, [this, localID, cb](const QString &resp) {
         double val = 0;
-        QByteArray raw;
 
-        // ATE1 + ATH1: echo satiri + header'li yanit
-        QStringList lines = resp.split('\r', Qt::SkipEmptyParts);
-        for (int li = lines.size() - 1; li >= 0; li--) {
-            QString cleaned = lines[li].trimmed().remove(' ');
-            if (cleaned.isEmpty() || cleaned.contains("NODATA") ||
-                cleaned.contains("ERROR") || cleaned.contains("BUSBUSY")) continue;
+        // KWP response: "83 F1 20 61 xx data... checksum"
+        // Parse: find "61 xx" positive response
+        if (!resp.contains("NO DATA") && !resp.contains("7F") && !resp.contains("ERROR")) {
+            QString cleaned = resp;
+            cleaned.remove(' ').remove('\r').remove('\n');
+            QString blkHex = QString("61%1").arg(localID, 2, 16, QChar('0')).toUpper();
+            int pos = cleaned.indexOf(blkHex, 0, Qt::CaseInsensitive);
+            if (pos >= 0) {
+                QByteArray raw;
+                QString dataHex = cleaned.mid(pos);
+                for (int i = 0; i + 1 < dataHex.length(); i += 2)
+                    raw.append(static_cast<char>(dataHex.mid(i, 2).toUInt(nullptr, 16)));
 
-            // Echo satirini atla
-            QString echoCheck = QString("2E%1").arg(localID, 2, 16, QChar('0')).toUpper();
-            if (cleaned.startsWith(echoCheck) && cleaned.length() <= echoCheck.length() + 2) continue;
+                // raw[0]=0x61, raw[1]=blk, raw[2...]=data
+                if (raw.size() >= 3) {
+                    uint8_t valByte = static_cast<uint8_t>(raw[2]);
+                    uint16_t raw16 = valByte;
+                    if (raw.size() >= 4)
+                        raw16 = (static_cast<uint8_t>(raw[2]) << 8) | static_cast<uint8_t>(raw[3]);
 
-            // "62 XX" pattern bul
-            QString pidCheck = QString("62%1").arg(localID, 2, 16, QChar('0')).toUpper();
-            int posPid = cleaned.indexOf(pidCheck, 0, Qt::CaseInsensitive);
-            if (posPid < 0 || posPid % 2 != 0) continue;
-
-            QString dataHex = cleaned.mid(posPid);
-            for (int i = 0; i + 1 < dataHex.length(); i += 2)
-                raw.append(static_cast<char>(dataHex.mid(i, 2).toUInt(nullptr, 16)));
-            break;
-        }
-
-        if (raw.size() >= 3 && static_cast<uint8_t>(raw[0]) == 0x62) {
-            uint8_t valByte = static_cast<uint8_t>(raw[2]);
-            uint16_t raw16 = valByte;
-            if (raw.size() >= 4)
-                raw16 = (static_cast<uint8_t>(raw[2]) << 8) | static_cast<uint8_t>(raw[3]);
-
-            bool found = false;
-            for (const auto &p : m_liveParams) {
-                if (p.localID == localID) {
-                    if (p.byteLen == 1)
-                        val = valByte * p.factor + p.offset;
-                    else
-                        val = raw16 * p.factor + p.offset;
-                    found = true;
-                    break;
+                    bool found = false;
+                    for (const auto &p : m_liveParams) {
+                        if (p.localID == localID) {
+                            if (p.byteLen == 1)
+                                val = valByte * p.factor + p.offset;
+                            else
+                                val = raw16 * p.factor + p.offset;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) val = raw16;
                 }
             }
-            if (!found) val = raw16;
         }
         if (cb) cb(val);
     });
@@ -1275,7 +1160,7 @@ void WJDiagnostics::readTCMInfo(std::function<void(const QMap<QString,QString>&)
 // initLiveDataParams - TCM J1850 VPW PID listesi (referans)
 void WJDiagnostics::initLiveDataParams()
 {
-    // referansndan: J1850 VPW, ATSH242822, "22 XX" komutu
+    // TCM K-Line (0x20) ReadLocalData parameters
     m_liveParams = {
         {0x01, "Actual Gear",                 "",      0,   7,   1.0,    0, 1, false},
         {0x02, "Selected Gear",               "",      0,   7,   1.0,    0, 1, false},
@@ -1312,8 +1197,18 @@ void WJDiagnostics::initLiveDataParams()
         {0x2C, "Swirl Solenoid",              "",      0,   1,  1.0,    0, 1, false},
         {0x2D, "Wastegate Solenoid",          "%",     0, 100,  0.39,   0, 1, false},
         {0x30, "Calculated Gear",             "",      0,   7,  1.0,    0, 1, false},
+        // ECU (0x15) parameters - localID 0xE0+ range (virtual IDs for ECU block data)
+        {0xE0, "Engine RPM",                  "rpm",   0, 6000, 1.0,    0, 2, false},
+        {0xE1, "Coolant Temp",                "C",   -40, 150,  1.0,    0, 2, false},
+        {0xE2, "Intake Air Temp",             "C",   -40, 100,  1.0,    0, 2, false},
+        {0xE3, "Throttle Position",           "%",     0, 100,  1.0,    0, 2, false},
+        {0xE4, "Boost Pressure",              "mbar",  0, 3000, 1.0,    0, 2, false},
+        {0xE5, "MAF Actual",                  "mg/s",  0, 2000, 1.0,    0, 2, false},
+        {0xE6, "Rail Pressure",               "bar",   0, 2000, 1.0,    0, 2, false},
+        {0xE7, "Injection Qty",               "mg",    0, 100,  1.0,    0, 2, false},
+        {0xE8, "Battery Voltage",             "V",     0,  20,  1.0,    0, 2, false},
     };
-    emit logMessage(QString("Live data: %1 parameters loaded (J1850 VPW)").arg(m_liveParams.size()));
+    emit logMessage(QString("Live data: %1 parameters loaded").arg(m_liveParams.size()));
 }
 
 // ioDefinitions - I/O kontrol tanimlari (NAG1 selenoidler)
@@ -1357,7 +1252,7 @@ void WJDiagnostics::readIOStates(std::function<void(const QList<IOState>&)> cb)
         });
     };
 
-    switchToModule(Module::TCM, [readNext](bool ok) {
+    switchToModule(Module::KLineTCM, [readNext](bool ok) {
         if (ok) (*readNext)();
     });
 }

@@ -8,17 +8,17 @@ INCLUDEPATH += include
 HEADERS += \
     include/elm327connection.h \
     include/kwp2000handler.h \
-    include/tcmdiagnostics.h \
     include/mainwindow.h \
-    include/livedata.h
+    include/livedata.h \
+    include/wjdiagnostics.h
 
 SOURCES += \
     src/main.cpp \
     src/elm327connection.cpp \
     src/kwp2000handler.cpp \
-    src/tcmdiagnostics.cpp \
     src/mainwindow.cpp \
-    src/livedata.cpp
+    src/livedata.cpp \
+    src/wjdiagnostics.cpp
 
 ios {
     QMAKE_INFO_PLIST = ios/Info.plist

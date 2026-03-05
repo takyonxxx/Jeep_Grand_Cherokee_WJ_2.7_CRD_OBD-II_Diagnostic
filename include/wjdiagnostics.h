@@ -46,7 +46,7 @@ public:
     };
     Q_ENUM(Module)
 
-    enum class BusType { KLine, J1850 };
+    enum class BusType { None, KLine, J1850 };
 
     // --- Data Structures ---
     struct ModuleInfo {

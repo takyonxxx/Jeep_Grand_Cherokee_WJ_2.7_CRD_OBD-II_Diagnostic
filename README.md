@@ -6,10 +6,10 @@ The Jeep WJ 2.7 CRD uses **two separate communication buses**:
 
 | Bus | Protocol | ELM327 Command | Modules |
 |-----|----------|----------------|---------|
-| **K-Line** | ISO 14230-4 (KWP2000) | ATSP5 | Engine ECU (0x15), TCM/Gearbox (0x20) |
-| **J1850 VPW** | SAE J1850 VPW | ATSP2 | TCM (0x28), ABS (0x40), Airbag (0x60), and 10+ modules |
+| **K-Line** | ISO 14230-4 (KWP2000) | ATSP5 | Engine ECU (0x15), **TCM/Gearbox (0x20)** |
+| **J1850 VPW** | SAE J1850 VPW | ATSP2 | ABS (0x40), Airbag (0x60), BCM (0x80), and 10+ body modules |
 
-The Engine ECU and Transmission are accessible over **both K-Line and J1850**. K-Line provides deep diagnostics (block reads, security access), while J1850 is used for basic PID reading.
+**CRITICAL (real vehicle verified 2025-03-05):** The NAG1 722.6 Transmission on the 2.7 CRD uses **K-Line only** (address 0x20). It does NOT respond on J1850 VPW. The APK's J1850 address 0x28 is for US-market WJ with 545RFE/45RFE transmission. WJdiag official docs confirm: "Engine and Transmission of the Jeep 2.7 CRD are using K-Line data bus."
 
 ---
 
@@ -23,7 +23,7 @@ ATIFR0         -> Disable IFR (In-Frame Response) for J1850 VPW
 ATSP2          -> Select J1850 VPW as default protocol
 ```
 
-These 5 commands run once at connection. No ATAT, ATST, ATRV, or ATI commands are sent during init (APK confirmed). What follows depends on the target module's bus type.
+These 5 commands run once at connection. What follows depends on the target module's bus type.
 
 ---
 
@@ -46,163 +46,72 @@ ATFI               -> Fast init trigger (bus init)
 27 02 [KEY]        -> SecurityAccess - send key (calculated from seed)
 ```
 
-**Note:** ATWM and ATSH are sent **before** ATSP5. The ELM327 stores the wakeup/header configuration first, then the protocol is selected and fast init is triggered. Ignition must be ON (ACC or RUN) for ATFI to succeed.
-
-**Security Access:** The key must be calculated from the seed — a static key does not work. NRC 0x35 (invalidKey) is returned if the key is wrong. Blocks 21 12, 21 28, 21 20, 21 22 work without security; blocks 21 62, 21 B0-B2 require valid security access (NRC 0x33 = securityAccessDenied).
+**Security Access:** The key must be calculated from the seed — static key `CD 46` does not work (NRC 0x35). Blocks 21 12, 21 28, 21 20, 21 22 work without security; blocks 21 62, 21 B0-B2 require valid security (NRC 0x33).
 
 **Post-init commands (ReadLocalData SID 0x21):**
 
-| Command | Description | Security |
-|---------|-------------|----------|
-| `21 12` | Coolant, IAT, TPS, MAP, Rail Pressure, AAP | No |
-| `21 28` | RPM, Injection Qty, Corrections | No |
-| `21 20` | MAF sensor values | No |
-| `21 22` | Rail pressure spec, MAP spec | No |
-| `21 62` | EGR, Wastegate, Glow Plugs, MAF, Alternator | **Yes** |
-| `21 B0` | Injector corrections, oil pressure | **Yes** |
-| `21 B1` | Boost/idle adaptation | **Yes** |
-| `21 B2` | Fuel adaptation | **Yes** |
-
-**Other K-Line commands:**
-
-| Command | Description |
-|---------|-------------|
-| `1A 86` | ReadEcuId - Manufacturer |
-| `1A 90` | ReadEcuId - VIN |
-| `1A 91` | ReadEcuId - Hardware version |
-| `18 02 00 00` | ReadDTCsByStatus - Read fault codes |
-| `14 00 00` | ClearDTCs - Clear fault codes |
+| Command | Description | Security | Verified |
+|---------|-------------|----------|----------|
+| `21 12` | Coolant, IAT, TPS, MAP, Rail Pressure, AAP | No | OK |
+| `21 28` | RPM, Injection Qty, Corrections | No | OK |
+| `21 20` | MAF sensor values | No | OK |
+| `21 22` | Rail pressure spec, MAP spec | No | OK |
+| `21 62` | EGR, Wastegate, Glow Plugs, MAF, Alternator | **Yes** | NRC 0x33 |
+| `21 B0` | Injector corrections, oil pressure | **Yes** | NRC 0x33 |
+| `21 B1` | Boost/idle adaptation | **Yes** | NRC 0x33 |
+| `21 B2` | Fuel adaptation | **Yes** | NRC 0x33 |
 
 ---
 
-## 3. Transmission/TCM (NAG1 722.6) - K-Line Init
+## 3. TCM/Transmission (NAG1 722.6 EGS52) - K-Line Init
 
 **Bus:** K-Line (ISO 14230-4)
 **Address:** 0x20
-**Init Sequence:**
+
+**IMPORTANT:** K-Line modules share the same physical wire. Switching between ECU (0x15) and TCM (0x20) requires a **full ATZ reinit** — just changing ATSH is not enough. Each module needs its own ATWM wakeup + ATFI fast init + StartComm(81) sequence.
+
+**Init Sequence (real vehicle verified):**
 
 ```
-ATZ                -> Full reset (shares physical bus with Engine ECU, switch required)
+ATZ                -> Full reset (mandatory for K-Line module change)
 ATE1               -> Echo ON
 ATH1               -> Headers ON
 ATWM8120F13E       -> Wakeup message (target 0x20, source 0xF1, pattern 0x3E)
 ATSH8120F1         -> Set header (TCM addr 0x20, tester addr 0xF1)
 ATSP5              -> ISO 14230-4 fast init
-ATFI               -> Fast init trigger
-81                 -> StartCommunication
-27 01 / 27 02      -> SecurityAccess (if required)
+ATFI               -> Fast init trigger → "BUS INIT: OK" (verified!)
+81                 -> StartCommunication → 83 F1 20 C1 EF 8F D3 (verified!)
+27 01              -> SecurityAccess seed → 84 F1 20 67 01 xx xx (verified!)
+27 02 [KEY]        -> SecurityAccess key (algorithm TBD, CD 46 rejected)
 ```
 
-**Note:** K-Line TCM (0x20) shares the same physical wire as the Engine ECU. Switching between them requires a full ATZ reset.
+**Real vehicle test results (2025-03-05):**
+- ATFI → BUS INIT: OK (TCM physically responds on K-Line)
+- 81 → `83 F1 20 C1 EF 8F D3` (StartComm positive, address 0x20 confirmed)
+- 27 01 → seed received (e.g. `68 24 89`)
+- 27 02 CD 46 → NRC 0x35 (invalidKey - need seed-to-key algorithm)
+- DTC 18 02 FF 00 → NRC 0x79 (format issue or security required)
+- ReadLocalData blocks (21 01 - 21 FF) → TBD (first test used wrong init path)
+
+**K-Line TCM Commands (from APK):**
+
+| Command | SID | Description |
+|---------|-----|-------------|
+| `18 02 FF 00` | 0x18 | ReadDTCsByStatus |
+| `31 31` | 0x31 | StartRoutine (routine 0x31) |
+| `31 32` | 0x31 | StartRoutine (routine 0x32) |
+| `30 10 07 00 02` | 0x30 | InputOutputControl (solenoid test) |
+| `30 10 07 00 00` | 0x30 | InputOutputControl (solenoid off) |
+| `30 10 07 04 00` | 0x30 | InputOutputControl |
+| `30 30 07 00` | 0x30 | InputOutputControl |
+| `3B 90` | 0x3B | WriteDataByLocalID (adaptation) |
+| `14 00 00` | 0x14 | ClearDTCs |
+
+**Live Data:** ReadLocalData (SID 0x21) block numbers for NAG1 722.6 to be determined by block scan. APK does NOT contain K-Line TCM live data blocks — it only has J1850 live data which doesn't work on 2.7 CRD.
 
 ---
 
-## 4. TCM/Transmission (NAG1) - J1850 VPW Init
-
-**Bus:** J1850 VPW
-**Address:** 0x28
-**Init Sequence (APK verified):**
-
-```
-ATSP2              -> Select J1850 VPW protocol
-ATSH242810         -> Functional header (SID 0x10 = DiagSession)
-02 00 00           -> DiagnosticSessionControl subFunc=0x02 (extended diagnostic)
-                      Wait for response containing "50" (positive)
-ATSH242822         -> Switch to ReadDataByID header (SID 0x22)
-```
-
-**CRITICAL:** The TCM requires a DiagnosticSessionControl command before data read. Without the `ATSH242810` + `02 00 00` sequence, all `2E xx 00` data read commands return NO DATA. The session command uses the functional header with SID 0x10 embedded, and the `02 00 00` data bytes represent subFunction=0x02 (extended/programming diagnostic session) with zero padding.
-
-**Live Data Reading (APK verified):**
-
-```
-ATSH242822         -> ReadDataByID header (set once after session)
-2E PID 00          -> Read PID (e.g. "2E 10 00" for Turbine RPM)
-Response: 62 PID DATA
-```
-
-The command format is `2E [PID] 00` — the `2E` prefix is the TCM's LocalID identifier, `00` is padding for 3-byte minimum. This is different from standard OBD-II `22 PID` format.
-
-**TCM J1850 Live Data PIDs (APK verified, 33 PIDs):**
-
-| PID | Description | Size |
-|-----|-------------|------|
-| 0x00 | Status/Unknown | 1B |
-| 0x01 | Actual Gear | 1B |
-| 0x02 | Selected Gear | 1B |
-| 0x03 | Max Gear | 1B |
-| 0x04 | Shift Selector Position | 1B |
-| 0x05 | Unknown | 1B |
-| 0x06 | Unknown | 1B |
-| 0x07 | Unknown | 1B |
-| 0x08 | Unknown | 1B |
-| 0x09 | Unknown | 1B |
-| 0x0D | Unknown | 1B |
-| 0x10 | Turbine RPM | 2B |
-| 0x11 | Input RPM (N2) | 2B |
-| 0x12 | Input RPM (N3) | 2B |
-| 0x13 | Output RPM | 2B |
-| 0x14 | Transmission Temp (+40 offset) | 1B |
-| 0x15 | TCC Pressure (*0.1) | 1B |
-| 0x16 | Solenoid Supply Voltage (*0.1V) | 1B |
-| 0x17 | TCC Clutch State | 1B |
-| 0x18 | Actual TCC Slip (signed) | 2B |
-| 0x19 | Desired TCC Slip (signed) | 2B |
-| 0x1A-0x1F | Solenoid act/set values (*0.39%) | 1B each |
-| 0x20 | Vehicle Speed | 2B |
-| 0x21 | Front Vehicle Speed | 2B |
-| 0x22 | Rear Vehicle Speed | 2B |
-| 0x23 | Shift PSI | 2B |
-| 0x24 | Modulation PSI | 2B |
-| 0x25 | Park Lockout Solenoid | 1B |
-| 0x26 | Park/Neutral Switch | 1B |
-| 0x27 | Brake Light Switch | 1B |
-| 0x28-0x2D | Various switches and solenoids | 1B each |
-| 0x30 | Calculated Gear | 1B |
-| 0x50-0x54 | Adaptation Values (APK extra) | 2B each |
-
-**TCM J1850 Headers (all SIDs from APK):**
-
-| Header | SID | Description | Command |
-|--------|-----|-------------|---------|
-| `ATSH242810` | 0x10 | DiagnosticSessionControl | `02 00 00` → response `50` |
-| `ATSH242811` | 0x11 | ECUReset | `01 02 00` → response `51` |
-| `ATSH242814` | 0x14 | ClearDTCs | DTC clear operations |
-| `ATSH242820` | 0x20 | ReturnToNormal | `00 00 00` → response `60` |
-| `ATSH242822` | 0x22 | ReadDataByID | `2E PID 00` → response `62` |
-| `ATSH242830` | 0x30 | InputOutputControl | Bitmask solenoid commands |
-| `ATSH2428A0` | 0xA0 | WriteMemoryByAddress | `00 BD 02`, `00 BE`, `00 64 00` |
-| `ATSH2428A3` | 0xA3 | ReadMemoryByAddress | `00 BD 00` → response `E3` |
-
-**TCM I/O Control (ATSH242830, APK verified):**
-
-| Command | Description |
-|---------|-------------|
-| `01 FE FF` | Solenoid output 1 |
-| `01 FB FF` | Solenoid output 2 |
-| `01 EF FF` | Solenoid output 3 |
-| `01 BF FF` | Solenoid output 4 |
-| `01 FD FF` | Solenoid output 5 |
-| `01 F7 FF` | Solenoid output 6 |
-| `01 DF FF` | Solenoid output 7 |
-| `01 7F FF` | Solenoid output 8 |
-| `01 FF BF` | Solenoid output 9 |
-| `36 00 00` | TransferData |
-| `01 55 40` | Multi-solenoid pattern |
-| `01 FF 40` | All solenoids + pattern |
-| `01 FF 00` | All solenoids off |
-
-**DTC Reading (APK verified):**
-```
-ATSH242810         -> Functional header (SID 0x10)
-02 00 00           -> DiagSession (needed before DTC read too)
-ATSH242814         -> ClearDTC header (SID 0x14)
-18 02 FF 00        -> ReadDTCsByStatus (via functional header)
-```
-
----
-
-## 5. ABS (Anti-lock Braking System) - J1850 VPW Init
+## 4. ABS (Anti-lock Braking System) - J1850 VPW Init
 
 **Bus:** J1850 VPW
 **Address:** 0x40
@@ -211,36 +120,24 @@ ATSH242814         -> ClearDTC header (SID 0x14)
 ```
 ATSP2              -> Select J1850 VPW protocol
 ATSH244022         -> ABS ReadDataByID header
-ATRA40             -> Filter/listen for ABS address responses
+ATRA40             -> Filter for ABS address responses
 ```
 
-**No DiagSession needed** — ABS responds to data read commands directly.
+**No DiagSession needed** — ABS responds directly.
 
-**Live Data Reading (APK verified, real device confirmed):**
+**Live Data (real device verified):**
 
 ```
-20 PID 00          -> Read PID (e.g. "20 01 00" for LF Wheel Speed)
-Response: 26 40 62 DATA (with headers on)
+20 PID 00          -> Read PID (e.g. "20 01 00" for wheel speed)
+Response: 26 40 62 DATA
 ```
 
-The ABS module uses `20` prefix (its own LocalID) followed by PID and `00` padding.
-
-**ABS PIDs (real device verified):**
+**ABS PIDs (verified):**
 
 | PID | Response | Status |
 |-----|----------|--------|
-| `20 00 00` | `26 40 62 05 08 00 E2` | Data OK |
-| `20 01 00` | `26 40 62 38 92 00 F0` | Data OK |
-| `20 02 00` | `26 40 62 41 43 00 E0` | Data OK |
-| `20 03 00` | `26 40 62 01 00 00 BE` | Data OK |
-| `20 04 00` | `26 40 62 1A 65 00 D8` | Data OK |
-| `20 05 00` | `26 40 62 41 00 00 DE` | Data OK |
-| `20 06 00` | `26 40 62 02 00 00 32` | Data OK |
-| `20 07 00` | `26 40 7F 22 12` | NRC: subFunctionNotSupported |
-| `20 08 00` | `26 40 7F 22 12` | NRC: subFunctionNotSupported |
-| `20 09 00` | `26 40 7F 22 12` | NRC: subFunctionNotSupported |
-
-PIDs 0x00-0x06 return valid data; 0x07-0x09 are not supported on this vehicle.
+| `20 00` - `20 06` | `26 40 62 xx xx xx xx` | Data OK |
+| `20 07` - `20 09` | `26 40 7F 22 12` | NRC: not supported |
 
 **ABS Headers (from APK):**
 
@@ -248,14 +145,12 @@ PIDs 0x00-0x06 return valid data; 0x07-0x09 are not supported on this vehicle.
 |--------|-----|-------------|
 | `ATSH244011` | 0x11 | ECUReset |
 | `ATSH244022` | 0x22 | ReadDataByID |
-| `ATSH24402F` | 0x2F | IOControl (actuator test) |
+| `ATSH24402F` | 0x2F | IOControl |
 | `ATSH2440B4` | 0xB4 | ReadMemoryByAddress |
-
-**Note:** ABS has no SecurityAccess (0x27) header — no security required.
 
 ---
 
-## 6. Airbag/ORC (AOSIM) - J1850 VPW Init
+## 5. Airbag/ORC (AOSIM) - J1850 VPW Init
 
 **Bus:** J1850 VPW
 **Address:** 0x60
@@ -267,165 +162,99 @@ ATSH246022         -> Airbag ReadDataByID header
 ATRA60             -> Listen for Airbag messages
 ```
 
-**No DiagSession needed** — Airbag responds directly (though with NRC in some PIDs).
-
-**Live Data Reading (APK verified, real device tested):**
-
-```
-28 PID 00          -> Read PID (e.g. "28 00 00" for status)
-Response: 26 60 7F 22 22 (NRC: conditionsNotCorrect for PID 0x00, 0x01)
-Response: 26 60 7F 22 12 (NRC: subFunctionNotSupported for PID 0x02-0x05)
-```
-
-The Airbag module uses `28` prefix followed by PID and `00` padding. On real device test, all PIDs returned NRC — this may require ignition RUN (not just ACC) or a specific DiagSession.
-
-**Airbag Headers (from APK):**
-
-| Header | SID | Description |
-|--------|-----|-------------|
-| `ATSH246011` | 0x11 | ECUReset |
-| `ATSH246022` | 0x22 | ReadDataByID |
-| `ATSH246027` | 0x27 | SecurityAccess |
-| `ATSH246031` | 0x31 | StartRoutine |
-| `ATSH2460A0` | 0xA0 | Download/Upload |
-| `ATSH2460A3` | 0xA3 | WriteDataByAddress |
-| `ATSH2460B4` | 0xB4 | ReadMemoryByAddress |
+**Real device test:** All PIDs return NRC (0x00-0x01: conditionsNotCorrect, 0x02+: subFuncNotSupported). May require ignition RUN or specific DiagSession.
 
 ---
 
-## 7. Other J1850 Modules
+## 6. Other J1850 Modules
 
-| Module | Address | ATRA | Headers | Features |
-|--------|---------|------|---------|----------|
-| **Security/SKIM** | 0x62 | - | ATSH246211, 246222 | Immobilizer, key programming |
-| **HVAC/ATC** | 0x68 | - | ATSH246811, 246822, 246831, 246833 | Climate control, StartRoutine+StopRoutine |
-| **BCM (Body Computer)** | 0x80 | ATRA80 | ATSH248022, 24802F, 2480B4 | Body control, IOControl, memory read |
-| **Radio/Audio** | 0x87 | - | ATSH248722, 24872F | Radio, IOControl |
-| **Instrument Cluster** | 0x90 | - | ATSH249011, 249022, 24902F | Odometer, IOControl |
-| **Memory Seat** | 0x98 | - | ATSH249811, 249822, 24982F, 249830 | Seat/mirror position |
-| **Power Liftgate** | 0xA0 | - | ATSH24A022, 24A02F | Tailgate |
-| **HandsFree/Uconnect** | 0xA1 | - | ATSH24A122, 24A12F, 24A131, 24A133 | Phone, Start/Stop Routine |
-| **Park Assist** | 0xC0 | - | ATSH24C011, 24C022, 24C027, 24C02F, 24C0B4 | Parking sensor, Security, Memory |
-| **Overhead Console (EVIC)** | 0x2A | - | ATSH242A22, 242A2F, 242AB7 | Compass/temperature, DynData |
+| Module | Address | ATRA | Headers |
+|--------|---------|------|---------|
+| **Security/SKIM** | 0x62 | - | ATSH246211, 246222 |
+| **HVAC/ATC** | 0x68 | - | ATSH246811, 246822, 246831, 246833 |
+| **BCM** | 0x80 | ATRA80 | ATSH248022, 24802F, 2480B4 |
+| **Radio** | 0x87 | - | ATSH248722, 24872F |
+| **Instrument Cluster** | 0x90 | - | ATSH249011, 249022, 24902F |
+| **Overhead Console** | 0x2A | - | ATSH242A22, 242A2F, 242AB7 |
 
 ---
 
-## 8. J1850 VPW Command Format (APK Verified)
+## 7. J1850 VPW Command Format
 
-Each J1850 module uses its **own LocalID prefix** in the data portion. The header contains SID 0x22 (ReadDataByID), and the data bytes use a module-specific LocalID:
-
-| Module | Header (ReadData) | LocalID | Data Format | Example | Response |
-|--------|-------------------|---------|-------------|---------|----------|
-| **TCM (0x28)** | ATSH242822 | 0x2E | `2E PID 00` | `2E 10 00` | `62 10 xx xx` |
-| **ABS (0x40)** | ATSH244022 | 0x20 | `20 PID 00` | `20 01 00` | `60 01 xx xx` |
-| **Airbag (0x60)** | ATSH246022 | 0x28 | `28 PID 00` | `28 00 00` | `68 00 xx` |
-
-The `00` suffix is padding to meet the 3-byte minimum message length.
-
-**Wire format:** `[priority=24][target_addr][SID_in_header=22][LocalID][PID][00]`
-
-**Response format:** Positive response byte = LocalID + 0x40:
-- TCM: `2E` → `6E` (but standard response uses `62` from SID 0x22)
-- ABS: `20` → `60`
-- Airbag: `28` → `68`
-
-**DiagSession requirement by module:**
-
-| Module | DiagSession Required | Command |
-|--------|---------------------|---------|
-| TCM (0x28) | **YES** | `ATSH242810` → `02 00 00` → response `50` |
-| ABS (0x40) | No | Direct data read |
-| Airbag (0x60) | No | Direct data read |
+| Module | Header | LocalID | Format | Example | Response |
+|--------|--------|---------|--------|---------|----------|
+| **ABS (0x40)** | ATSH244022 | 0x20 | `20 PID 00` | `20 01 00` | `26 40 62 xx` |
+| **Airbag (0x60)** | ATSH246022 | 0x28 | `28 PID 00` | `28 00 00` | `26 60 7F 22 22` |
 
 ---
 
-## 9. Bus Switching Strategy (K-Line <-> J1850)
+## 8. Bus Switching Strategy
 
-### Switching to K-Line (J1850 -> K-Line):
+### K-Line module switch (ECU ↔ TCM):
+**MUST do full ATZ reinit** — just changing ATSH does not work!
 ```
-ATZ              -> Full ELM327 reset
-ATE1             -> Echo ON
-ATH1             -> Headers ON
-ATWM81xxF13E     -> Wakeup (xx = module address: 0x15 or 0x20)
-ATSH81xxF1       -> Set header
-ATSP5            -> Select K-Line protocol
-ATFI             -> Fast init trigger
+ATZ              -> Full reset (clears previous module's session)
+ATE1 → ATH1     -> Echo + Headers ON
+ATWM81xxF13E     -> Wakeup for NEW target (xx = 0x15 or 0x20)
+ATSH81xxF1       -> Header for NEW target
+ATSP5            -> K-Line protocol
+ATFI             -> Fast init (establishes session with new module)
 81               -> StartCommunication
-27 01 / 27 02    -> SecurityAccess
+27 01 / 27 02    -> SecurityAccess (if needed)
 ```
 
-### Switching to J1850 (K-Line -> J1850):
+### K-Line → J1850 switch:
 ```
-ATZ              -> Full ELM327 reset
-ATE1             -> Echo ON
-ATH1             -> Headers ON
-ATIFR0           -> Disable IFR
-ATSP2            -> Select J1850 VPW protocol
-ATSH24xxYY       -> Set header (xx = module, YY = SID)
-ATRAxx           -> Set receive filter (if required: ABS=ATRA40, Airbag=ATRA60, BCM=ATRA80)
+ATZ → ATE1 → ATH1 → ATIFR0 → ATSP2 → ATSH24xxYY → ATRAxx
 ```
 
-### TCM J1850 switch includes DiagSession:
+### J1850 → K-Line switch:
 ```
-ATZ → ATE1 → ATH1 → ATIFR0 → ATSP2 → ATSH242810 → "02 00 00" (DiagSession)
-→ ATSH242822 (switch to data read header) → ready for "2E xx 00" commands
-```
-
-### Same-bus module change (J1850 -> J1850):
-```
-ATSH24xxYY       -> Change header
-ATRAxx           -> Set receive filter (if required)
+ATZ → ATE1 → ATH1 → ATWM → ATSH → ATSP5 → ATFI → 81 → 27
 ```
 
-When switching to TCM from another J1850 module, the DiagSession (`ATSH242810` → `02 00 00` → `ATSH242822`) is sent even on same-bus switch.
+### J1850 same-bus module change:
+```
+ATSH24xxYY → ATRAxx (just header + filter change)
+```
 
 ### ATFI Failure Recovery:
-If K-Line ATFI fails (e.g. ignition off), the code automatically:
-1. Sends ATZ to reset
-2. Restores J1850 VPW (ATE1 → ATH1 → ATSP2)
-3. Restores previous J1850 module ATSH header
-4. Reports error but keeps J1850 session alive
+If ATFI fails, code automatically restores J1850 VPW with previous module header.
 
 ---
 
-## 10. Timing (Real Device Verified)
+## 9. Timing (Real Device Verified)
 
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| **Inter-command delay** | 340ms | Timer between sequential commands (APK matched) |
-| **ATZ timeout** | ~840ms | ELM327 reset response time |
-| **ATFI timeout** | ~470ms | K-Line bus init response time |
-| **AT command response** | ~35-80ms | Typical AT command response |
-| **K-Line data response** | ~280-400ms | ECU block read response |
-| **J1850 data response** | ~120-220ms | Module PID response |
-| **NO DATA response** | ~140-220ms | When module doesn't respond |
-| **ATZ recovery delay** | 500ms | After ATZ before next command |
+| Parameter | Value |
+|-----------|-------|
+| **Inter-command delay** | 340ms |
+| **ATZ response** | ~840ms |
+| **ATFI response** | ~470ms |
+| **K-Line data response** | ~280-400ms |
+| **J1850 data response** | ~120-220ms |
+| **NO DATA response** | ~140-350ms |
 
 ---
 
-## 11. ELM327 Compatibility
+## 10. Real Device Test Results (2025-03-05)
 
-- **Genuine ELM327 recommended:** ATFI, ATWM, ATSH support required for K-Line ECU access
-- **Clone ELM327 (v1.5/v2.1):** J1850 VPW modules work, K-Line may fail (no ATFI support)
-- **BLE OBD adapters (Viecar etc.):** Supported via Bluetooth Low Energy connection
-- **WiFi OBD adapters:** Supported via TCP connection (default 192.168.0.10:35000)
+**Setup:** iPhone 16 Pro + Viecar BLE (ELM327 v1.5) + Jeep WJ 2.7 CRD
 
----
-
-## 12. Real Device Test Results (2025-03-04)
-
-**Test setup:** iPhone 16 Pro + Viecar BLE (ELM327 v1.5) + Jeep WJ 2.7 CRD (engine running, idle)
-
-| Module | Result | Notes |
-|--------|--------|-------|
-| **Engine ECU K-Line** | Blocks 21 12, 21 28, 21 20, 21 22 OK | 21 62/B0/B1/B2 → NRC 0x33 (security key wrong) |
-| **TCM J1850** | All PIDs NO DATA | DiagSession was missing (fixed) |
-| **ABS J1850** | PIDs 0x00-0x06 return data | PIDs 0x07-0x09 → NRC 0x12 |
-| **Airbag J1850** | All PIDs NRC | 0x00-0x01: conditionsNotCorrect, 0x02-0x05: subFuncNotSupported |
-| **Battery Voltage** | ATRV = 14.0-14.5V | Alternator charging confirmed |
+| Module | Bus | Result |
+|--------|-----|--------|
+| **Engine ECU (0x15)** | K-Line | 21 12/28/20/22 OK, 21 62/B0-B2 NRC 0x33 |
+| **TCM (0x20)** | K-Line | ATFI OK, 81 OK, seed OK — **TCM is alive!** |
+| **TCM (0x28)** | J1850 | **NO RESPONSE** — not on J1850 for 2.7 CRD |
+| **ABS (0x40)** | J1850 | PIDs 0x00-0x06 OK |
+| **Airbag (0x60)** | J1850 | All NRC |
+| **Battery** | ATRV | 14.3-14.5V |
 
 **ECU data samples (engine idle):**
-- Coolant: 65-66°C, IAT: 25-31°C, TPS: 0.0%
-- RPM: 746-752, Injection Qty: 7.6-8.2 mg
-- Rail Pressure: 280-306 bar, MAP: 910-928 mbar
-- Battery: 14.0-14.5V
+- Coolant: 24-66°C, IAT: 13-31°C, TPS: 0.0%
+- RPM: 746-752, Injection Qty: 7.6-12.9 mg
+- Rail Pressure: 280-306 bar, MAP: 907-928 mbar
+
+**Pending:**
+- TCM ReadLocalData block scan (21 01-21 FF) — first test used wrong init path, needs retest with full ATZ reinit
+- TCM security key algorithm (seed-to-key for NAG1 722.6)
+- TCM DTC format (NRC 0x79 on `18 02 FF 00` — may need different format or security)

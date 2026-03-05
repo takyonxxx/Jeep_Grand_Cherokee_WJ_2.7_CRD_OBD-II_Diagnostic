@@ -6,7 +6,7 @@
 #include <QList>
 #include <QFile>
 #include <QTextStream>
-#include "tcmdiagnostics.h"
+#include "wjdiagnostics.h"
 
 /**
  * Live Data Polling Manager - Dual Mode (TCM J1850 + Motor ECU K-Line)

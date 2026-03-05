@@ -15,7 +15,7 @@
 #include <functional>
 #include "elm327connection.h"
 #include "kwp2000handler.h"
-#include "tcmdiagnostics.h"
+#include "wjdiagnostics.h"
 #include "livedata.h"
 
 class MainWindow : public QMainWindow {

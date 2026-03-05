@@ -154,14 +154,29 @@ void LiveDataManager::pollTCM(std::function<void()> then)
 
 void LiveDataManager::pollECU(std::function<void()> then)
 {
-    // readECULiveData: switchToModule(MotorECU) + blok okuma + switchToModule(TCM) geri don
     m_tcm->readECULiveData([this, then](const TCMDiagnostics::ECUStatus &ecu) {
         m_lastECU = ecu;
         emit ecuDataUpdated(ecu);
 
-        // DUAL modda: TCM'e geri don (J1850 restore)
+        // ECU verilerini virtual ID'lerle dataUpdated signal'ina ekle
+        QMap<uint8_t, double> ecuValues;
+        ecuValues[0xE0] = ecu.rpm;
+        ecuValues[0xE1] = ecu.coolantTemp;
+        ecuValues[0xE2] = ecu.iat;
+        ecuValues[0xE3] = ecu.tps;
+        ecuValues[0xE4] = ecu.boostPressure;
+        ecuValues[0xE5] = ecu.mafActual;
+        ecuValues[0xE6] = ecu.railActual;
+        ecuValues[0xE7] = ecu.injectionQty;
+        ecuValues[0xE8] = ecu.batteryVoltage;
+        // Merge with existing TCM values
+        for (auto it = ecuValues.begin(); it != ecuValues.end(); ++it)
+            m_lastValues[it.key()] = it.value();
+        emit dataUpdated(m_lastValues);
+
+        // DUAL modda: KLineTCM'e geri don
         if (m_mode == DUAL) {
-            m_tcm->switchToModule(TCMDiagnostics::Module::TCM, [then](bool) {
+            m_tcm->switchToModule(TCMDiagnostics::Module::KLineTCM, [then](bool) {
                 if (then) then();
             });
         } else {

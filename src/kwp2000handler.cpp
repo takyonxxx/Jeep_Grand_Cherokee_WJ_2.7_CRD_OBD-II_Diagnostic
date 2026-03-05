@@ -58,11 +58,11 @@ void KWP2000Handler::readAllDTCs(std::function<void(const QList<DTCInfo>&)> call
     emit logMessage("Reading TCM fault codes...");
 
     // KWP2000 ReadDTCByStatus
-    // Sub-function: 0x02 = reportDTCByStatusMask
-    // Status mask: 0xFF = hepsi (aktif + geçmiş)
+    // Mercedes NAG1: 18 02 FF 00 (4 bytes, APK verified)
     QByteArray data;
     data.append(static_cast<char>(0x02));  // reportDTCByStatusMask
     data.append(static_cast<char>(0xFF));  // status mask - all DTCs
+    data.append(static_cast<char>(0x00));  // padding (Mercedes/Chrysler requires 4-byte msg)
 
     sendKWPRequest(ReadDTCByStatus, data,
                    [this, callback](const QByteArray &resp) {
@@ -79,6 +79,14 @@ void KWP2000Handler::readAllDTCs(std::function<void(const QList<DTCInfo>&)> call
             sendKWPRequest(0x17, altData,
                            [this, callback](const QByteArray &altResp) {
                 QByteArray altPayload = stripHeader(altResp);
+                // Check for negative response before parsing
+                if (altPayload.size() >= 3 && static_cast<uint8_t>(altPayload[0]) == 0x7F) {
+                    uint8_t nrc = static_cast<uint8_t>(altPayload[2]);
+                    emit logMessage(QString("Chrysler DTC read also failed: NRC 0x%1")
+                        .arg(nrc, 2, 16, QChar('0')));
+                    if (callback) callback({});
+                    return;
+                }
                 QList<DTCInfo> dtcList = parseDTCResponse(altPayload);
                 emit dtcListReceived(dtcList);
                 if (callback) callback(dtcList);
@@ -97,10 +105,10 @@ void KWP2000Handler::clearAllDTCs(std::function<void(bool)> callback)
     emit logMessage("Clearing TCM fault codes...");
 
     // ClearDiagnosticInformation (0x14)
-    // Group: FF FF = all DTCs
+    // Mercedes NAG1: 14 00 00 (APK verified, NOT FF FF)
     QByteArray data;
-    data.append(static_cast<char>(0xFF));
-    data.append(static_cast<char>(0xFF));
+    data.append(static_cast<char>(0x00));
+    data.append(static_cast<char>(0x00));
 
     sendKWPRequest(ClearDTC, data, [this, callback](const QByteArray &resp) {
         bool success = isPositiveResponse(resp, ClearDTC);
