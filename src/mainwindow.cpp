@@ -17,6 +17,7 @@
 #include <QScrollArea>
 #include <QSet>
 #include <QScroller>
+#include <QScrollBar>
 #include <QDir>
 #include <QFrame>
 
@@ -1109,6 +1110,7 @@ void MainWindow::onLogMessage(const QString &msg)
 {
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     m_logText->append(QString("[%1] %2").arg(timestamp, msg));
+    m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
 }
 
 void MainWindow::updateStatusLabels(const TCMDiagnostics::TCMStatus &st)
@@ -1182,6 +1184,7 @@ void MainWindow::onRawBusDump()
     auto logRaw = [this](const QString &color, const QString &msg) {
         QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
         m_logText->append(QString("<font color='%1'>[%2] %3</font>").arg(color, ts, msg));
+        m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
     };
 
     m_logText->append("<font color='white'>========== DIAGNOSTIC TEST v3 ==========</font>");
