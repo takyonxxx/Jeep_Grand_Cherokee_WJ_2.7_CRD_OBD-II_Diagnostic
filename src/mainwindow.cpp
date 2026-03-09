@@ -1289,7 +1289,8 @@ void MainWindow::onRawBusDump()
                 return;
             }
 
-            auto [label, wait] = steps->at(*idx);
+            QString label = steps->at(*idx).first;
+            int wait = steps->at(*idx).second;
             (*idx)++;
 
             // Marker satiri mi? (=== ile baslar)
@@ -1360,6 +1361,30 @@ void MainWindow::scanBluetoothDevices()
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
 void MainWindow::requestBluetoothPermissions()
 {
+    // Android: request location first, then bluetooth, then scan
+    // Sequential to avoid QtAndroidAccessibility deadlock
+#ifdef Q_OS_ANDROID
+    QLocationPermission locationPermission;
+    locationPermission.setAccuracy(QLocationPermission::Approximate);
+
+    if (qApp->checkPermission(locationPermission) == Qt::PermissionStatus::Undetermined) {
+        qApp->requestPermission(locationPermission, this,
+            [this](const QPermission &) {
+                // After location, request bluetooth
+                QTimer::singleShot(300, this, [this]() {
+                    requestBluetoothPermissionOnly();
+                });
+            });
+        return;
+    }
+    requestBluetoothPermissionOnly();
+#else
+    requestBluetoothPermissionOnly();
+#endif
+}
+
+void MainWindow::requestBluetoothPermissionOnly()
+{
     QBluetoothPermission bluetoothPermission;
     bluetoothPermission.setCommunicationModes(QBluetoothPermission::Access);
 
@@ -1368,7 +1393,7 @@ void MainWindow::requestBluetoothPermissions()
         qApp->requestPermission(bluetoothPermission, this,
             [this](const QPermission &permission) {
                 if (qApp->checkPermission(permission) == Qt::PermissionStatus::Granted) {
-                    scanBluetoothDevices();
+                    QTimer::singleShot(200, this, [this]() { scanBluetoothDevices(); });
                 } else {
                     onLogMessage("Bluetooth permission denied. Cannot scan.");
                 }
@@ -1381,27 +1406,5 @@ void MainWindow::requestBluetoothPermissions()
         onLogMessage("Bluetooth permission denied. Please enable in Settings.");
         break;
     }
-
-#ifdef Q_OS_ANDROID
-    // Android requires location permission for Bluetooth scanning
-    QLocationPermission locationPermission;
-    locationPermission.setAccuracy(QLocationPermission::Approximate);
-
-    switch (qApp->checkPermission(locationPermission)) {
-    case Qt::PermissionStatus::Undetermined:
-        qApp->requestPermission(locationPermission, this,
-            [this](const QPermission &permission) {
-                if (qApp->checkPermission(permission) != Qt::PermissionStatus::Granted) {
-                    onLogMessage("Location permission denied. BT scanning may not work.");
-                }
-            });
-        break;
-    case Qt::PermissionStatus::Granted:
-        break;
-    case Qt::PermissionStatus::Denied:
-        onLogMessage("Location permission denied. BT scanning may not work.");
-        break;
-    }
-#endif
 }
 #endif

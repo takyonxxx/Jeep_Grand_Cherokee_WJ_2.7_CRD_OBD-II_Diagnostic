@@ -41,6 +41,7 @@ private slots:
     void scanBluetoothDevices();
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
     void requestBluetoothPermissions();
+    void requestBluetoothPermissionOnly();
 #endif
 private:
     void setupUI();
