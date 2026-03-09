@@ -1175,7 +1175,8 @@ QString MainWindow::gearToString(TCMDiagnostics::Gear gear)
     }
 }
 
-// --- Ham Bus Veri Dump ---
+
+// --- Raw Data Read - Block 0x30 Byte Mapping Discovery Test ---
 void MainWindow::onRawBusDump()
 {
     m_rawDumpBtn->setEnabled(false);
@@ -1187,138 +1188,142 @@ void MainWindow::onRawBusDump()
         m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
     };
 
-    m_logText->append("<font color='white'>========== DIAGNOSTIC TEST v3 ==========</font>");
+    // Helper: read block 0x30 and log indexed hex + decode
+    auto read30 = std::make_shared<std::function<void(const QString&, std::function<void()>)>>();
+    *read30 = [this](const QString &label, std::function<void()> next) {
+        m_elm->sendCommand("21 30", [this, label, next](const QString &resp) {
+            QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
+            if (resp.contains("7F") || resp.contains("NO DATA") || resp.contains("ERROR")) {
+                m_logText->append(QString("<font color='#ff3333'>[%1] %2: %3</font>")
+                    .arg(ts, label, resp.trimmed()));
+            } else {
+                QString cleaned = resp;
+                cleaned.remove(' ').remove('\r').remove('\n');
+                int pos = cleaned.indexOf("6130", 0, Qt::CaseInsensitive);
+                if (pos >= 0) {
+                    QString dataOnly = cleaned.mid(pos + 4);
+                    if (dataOnly.length() > 2) dataOnly.chop(2);
+                    QString formatted;
+                    QByteArray raw;
+                    for (int i = 0; i + 1 < dataOnly.length(); i += 2) {
+                        bool ok2;
+                        uint8_t b = dataOnly.mid(i, 2).toUInt(&ok2, 16);
+                        if (ok2) raw.append(static_cast<char>(b));
+                        formatted += QString("[%1]%2 ").arg(i/2, 2, 10, QChar('0'))
+                            .arg(dataOnly.mid(i, 2).toUpper());
+                    }
+                    m_logText->append(QString("<font color='#00ff88'>[%1] %2: %3</font>")
+                        .arg(ts, label, formatted.trimmed()));
+                    if (raw.size() >= 19) {
+                        auto u8 = [&](int i) -> uint8_t { return (i < raw.size()) ? static_cast<uint8_t>(raw[i]) : 0; };
+                        auto u16 = [&](int i) -> uint16_t { return (uint16_t(u8(i)) << 8) | u8(i+1); };
+                        auto s16 = [&](int i) -> int16_t { return static_cast<int16_t>(u16(i)); };
+                        m_logText->append(QString("<font color='#70C8F0'>  [0-1]=%1 [2-3]=%2 [4-5]=%3 [7]=%4 [8]=%5 [9-10]=%6 [11]=%7(%8C) [12-13]=%9 [14-15]=%10 [18]=%11 [19]=%12 [20-21]=%13</font>")
+                            .arg(u16(0)).arg(u16(2)).arg(u16(4)).arg(u8(7))
+                            .arg(u8(8)).arg(u16(9)).arg(u8(11)).arg(u8(11)-40)
+                            .arg(s16(12)).arg(s16(14)).arg(u8(18)).arg(u8(19))
+                            .arg(u16(20)));
+                    }
+                } else {
+                    m_logText->append(QString("<font color='#c08840'>[%1] %2 raw: %3</font>")
+                        .arg(ts, label, resp.trimmed()));
+                }
+            }
+            m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
+            if (next) next();
+        });
+    };
 
-    // ============================================================
-    // PHASE 1: K-Line TCM (0x20) - Block 0x30 repeated read
-    // This is the main test - read block 0x30 multiple times
-    // to see live data changes between P, R, N, D positions
-    // ============================================================
-    m_logText->append("<font color='#00ffcc'>--- Phase 1: TCM Block 0x30 Live Data Test ---</font>");
-    logRaw("#00ffcc", "Switch to K-Line TCM (0x20)...");
+    m_logText->append("<font color='white'>========== BYTE MAPPING TEST v4 ==========</font>");
+    m_logText->append("<font color='#ffff00'>Motor CALISIYOR olmali! Fren basili tut!</font>");
+    m_logText->append("<font color='#ffff00'>Talimatlar ekranda cikacak. Her adimda 5sn bekleme.</font>");
 
-    m_tcm->switchToModule(WJDiagnostics::Module::KLineTCM, [this, logRaw](bool ok) {
+    logRaw("#00ffcc", "K-Line TCM (0x20) baglaniyor...");
+
+    m_tcm->switchToModule(WJDiagnostics::Module::KLineTCM, [this, logRaw, read30](bool ok) {
         if (!ok) {
-            logRaw("#ff3333", "K-Line TCM switch FAILED!");
-            m_rawDumpBtn->setEnabled(true);
-            m_rawDumpBtn->setText("Raw Data Read");
+            logRaw("#ff3333", "TCM BAGLANTI BASARISIZ!");
+            m_rawDumpBtn->setEnabled(true); m_rawDumpBtn->setText("Raw Data Read");
             return;
         }
-        logRaw("#00ff88", "TCM session active. Reading block 0x30 x5...");
-        logRaw("#ffff00", ">> Move shifter between P/R/N/D between reads <<");
+        logRaw("#00ff88", "TCM OK!");
 
-        // Read block 0x30 five times with 2 second gaps
-        auto readCount = std::make_shared<int>(0);
-        auto readLoop = std::make_shared<std::function<void()>>();
+        // --- Tum adimlari sirayla calistir ---
+        auto steps = std::make_shared<QList<std::pair<QString, int>>>();
+        // {label, wait_before_ms}
+        steps->append({"P-1", 1000});
+        steps->append({"P-2", 500});
+        steps->append({"P-3", 500});
+        steps->append({"===R", 5000});   // marker: R'ye al
+        steps->append({"R-1", 500});
+        steps->append({"R-2", 500});
+        steps->append({"===N", 5000});   // marker: N'ye al
+        steps->append({"N-1", 500});
+        steps->append({"N-2", 500});
+        steps->append({"===D", 5000});   // marker: D'ye al (fren basili)
+        steps->append({"D-1", 500});
+        steps->append({"D-2", 500});
+        steps->append({"===GAZ", 5000}); // marker: D'de gaza bas 1500rpm
+        steps->append({"D-RPM-1", 500});
+        steps->append({"D-RPM-2", 500});
+        steps->append({"===P2", 5000});  // marker: tekrar P'ye al
+        steps->append({"P-fin", 500});
 
-        *readLoop = [this, readCount, readLoop, logRaw]() {
-            if (*readCount >= 5) {
-                // After 5 reads, do phase 2
-                phase2_ExtraBlocks(logRaw);
+        auto idx = std::make_shared<int>(0);
+        auto runStep = std::make_shared<std::function<void()>>();
+
+        *runStep = [this, steps, idx, runStep, read30, logRaw]() {
+            if (*idx >= steps->size()) {
+                // Tum okumalar bitti -> DTC + Battery
+                m_logText->append("<font color='#00ffcc'>--- DTC + Battery ---</font>");
+                m_elm->sendCommand("18 02 FF 00", [this, logRaw](const QString &dtcResp) {
+                    logRaw("#ffff00", "DTC: " + dtcResp);
+                    m_elm->sendCommand("ATRV", [this, logRaw](const QString &rv) {
+                        logRaw("#60b8a0", "Battery: " + rv);
+                        m_logText->append("<font color='white'>========== TEST v4 BITTI ==========</font>");
+                        m_logText->append("<font color='#ffff00'>Logu COPY LOG ile kopyala!</font>");
+                        m_rawDumpBtn->setEnabled(true);
+                        m_rawDumpBtn->setText("Raw Data Read");
+                    });
+                });
                 return;
             }
 
-            (*readCount)++;
-            logRaw("#00ffcc", QString("--- Read #%1 ---").arg(*readCount));
+            auto [label, wait] = steps->at(*idx);
+            (*idx)++;
 
-            m_elm->sendCommand("21 30", [this, readCount, readLoop, logRaw](const QString &resp) {
-                QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
-                if (resp.contains("7F") || resp.contains("NO DATA") || resp.contains("ERROR")) {
-                    m_logText->append(QString("<font color='#ff3333'>[%1] 21 30 -> %2</font>")
-                        .arg(ts, resp.trimmed()));
-                } else {
-                    // Parse and display raw hex + decoded attempt
-                    QString cleaned = resp;
-                    cleaned.remove(' ').remove('\r').remove('\n');
-                    int pos = cleaned.indexOf("6130", 0, Qt::CaseInsensitive);
-                    if (pos >= 0) {
-                        // Extract data after "6130", strip header before it and checksum at end
-                        QString dataOnly = cleaned.mid(pos + 4); // skip "6130"
-                        if (dataOnly.length() > 2) dataOnly.chop(2); // strip checksum
-                        // Format as spaced hex with byte indices
-                        QString formatted;
-                        for (int i = 0; i + 1 < dataOnly.length(); i += 2) {
-                            int byteIdx = i / 2;
-                            formatted += QString("[%1]%2 ")
-                                .arg(byteIdx, 2, 10, QChar('0'))
-                                .arg(dataOnly.mid(i, 2).toUpper());
-                        }
-                        m_logText->append(QString("<font color='#00ff88'>[%1] 21 30 -> %2</font>")
-                            .arg(ts, formatted.trimmed()));
+            // Marker satiri mi? (=== ile baslar)
+            if (label.startsWith("===")) {
+                QString instruction;
+                if (label == "===R")   instruction = ">> R (Reverse) POZISYONUNA AL <<";
+                if (label == "===N")   instruction = ">> N (Notr) POZISYONUNA AL <<";
+                if (label == "===D")   instruction = ">> D (Drive) AL - FREN BASILI! <<";
+                if (label == "===GAZ") instruction = ">> D'de GAZA BAS (~1500rpm) <<";
+                if (label == "===P2")  instruction = ">> Tekrar P (Park) AL <<";
+                m_logText->append(QString("<font color='#ff8800'>===== %1 - %2sn bekle =====</font>")
+                    .arg(instruction).arg(wait/1000));
+                m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
+                QTimer::singleShot(wait, *runStep);
+                return;
+            }
 
-                        // Also show key interpreted values
-                        QByteArray raw;
-                        for (int i = 0; i + 1 < dataOnly.length(); i += 2) {
-                            bool ok2;
-                            raw.append(static_cast<char>(dataOnly.mid(i, 2).toUInt(&ok2, 16)));
-                        }
-                        if (raw.size() >= 12) {
-                            auto u8 = [&](int i) -> uint8_t { return (i < raw.size()) ? static_cast<uint8_t>(raw[i]) : 0; };
-                            auto u16 = [&](int i) -> uint16_t { return (uint16_t(u8(i)) << 8) | u8(i+1); };
-                            auto s16 = [&](int i) -> int16_t { return static_cast<int16_t>(u16(i)); };
-                            QString decoded = QString("  b0-1=%1 b2-3=%2 b4-5=%3 b6-7=%4 b8=%5 b9-10=%6 b11=%7(%8C) b12-13=%9 b18=%10")
-                                .arg(u16(0)).arg(u16(2)).arg(u16(4)).arg(u16(6))
-                                .arg(u8(8))
-                                .arg(u16(9)).arg(u8(11)).arg(u8(11) - 40)
-                                .arg(s16(12)).arg(raw.size() > 18 ? u8(18) : 0);
-                            m_logText->append(QString("<font color='#70C8F0'>%1</font>").arg(decoded));
-                        }
-                    } else {
-                        m_logText->append(QString("<font color='#c08840'>[%1] 21 30 raw: %2</font>")
-                            .arg(ts, resp.trimmed()));
-                    }
-                }
-                // Wait 2 seconds before next read (time to move shifter)
-                QTimer::singleShot(2000, *readLoop);
+            // Normal okuma
+            QTimer::singleShot(wait, [read30, label, runStep]() {
+                (*read30)(label, [runStep]() {
+                    (*runStep)();
+                });
             });
         };
-        (*readLoop)();
+
+        (*runStep)();
     });
 }
 
-// Phase 2: Read other known TCM blocks for reference
+// phase2_ExtraBlocks stub (header compat)
 void MainWindow::phase2_ExtraBlocks(
     std::function<void(const QString&, const QString&)> logRaw)
 {
-    m_logText->append("<font color='#00ffcc'>--- Phase 2: Other TCM Blocks ---</font>");
-
-    // Read known working blocks: 0x60, 0x80, 0xB0, 0xE0, 0xE1
-    auto blkIdx = std::make_shared<int>(0);
-    QList<uint8_t> extraBlocks = {0x60, 0x80, 0xB0, 0xE0, 0xE1};
-    auto blkList = std::make_shared<QList<uint8_t>>(extraBlocks);
-    auto readExtra = std::make_shared<std::function<void()>>();
-
-    *readExtra = [this, blkIdx, blkList, readExtra, logRaw]() {
-        if (*blkIdx >= blkList->size()) {
-            // Phase 3: DTC + battery
-            m_logText->append("<font color='#00ffcc'>--- Phase 3: DTC + Info ---</font>");
-            m_elm->sendCommand("18 02 FF 00", [this, logRaw](const QString &dtcResp) {
-                logRaw("#ffff00", "DTC: " + dtcResp);
-                m_elm->sendCommand("ATRV", [this, logRaw](const QString &rv) {
-                    logRaw("#60b8a0", "Battery: " + rv);
-                    m_logText->append("<font color='white'>========== TEST v3 COMPLETED ==========</font>");
-                    m_rawDumpBtn->setEnabled(true);
-                    m_rawDumpBtn->setText("Raw Data Read");
-                });
-            });
-            return;
-        }
-        uint8_t blk = blkList->at(*blkIdx);
-        QString cmd = QString("21 %1").arg(blk, 2, 16, QChar('0')).toUpper();
-        m_elm->sendCommand(cmd, [this, blkIdx, readExtra, blk, cmd, logRaw](const QString &resp) {
-            QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
-            if (!resp.contains("7F") && !resp.contains("NO DATA") && !resp.contains("ERROR")) {
-                m_logText->append(QString("<font color='#00ff88'>[%1] %2 -> %3</font>")
-                    .arg(ts, cmd, resp.trimmed()));
-            } else {
-                m_logText->append(QString("<font color='#805050'>[%1] %2 -> %3</font>")
-                    .arg(ts, cmd, resp.trimmed()));
-            }
-            (*blkIdx)++;
-            QTimer::singleShot(340, *readExtra);
-        });
-    };
-    (*readExtra)();
+    (void)logRaw;
 }
 
 void MainWindow::onRawSendCustom()

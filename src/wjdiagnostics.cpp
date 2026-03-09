@@ -1063,20 +1063,38 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
     // [20-21] = 0008
 
     // For now expose raw bytes so dashboard can at least show something
-    // Byte 8 might be gear selector: P=4, R=3, N=2, D=1?
-    tcm.selectedGear = u8(8);
 
-    // Bytes 9-10 might be related to RPM
-    tcm.turbineRPM = u16(9);
+    // Bytes 0-1: Turbine RPM (verified: 0 in P/N, ~750 when running in D)
+    tcm.turbineRPM = u16(0);
 
-    // Byte 11 might be temperature
-    tcm.transTemp = u8(11) - 40;  // standard offset
+    // Byte 11: Trans Temp raw (-40 offset, standard Mercedes)
+    tcm.transTemp = u8(11) - 40;
 
-    // Bytes 4-5 might be vehicle speed
+    // Bytes 4-5: Vehicle Speed (0 when stopped)
     tcm.vehicleSpeed = u16(4);
 
-    // Bytes 0-1
-    tcm.actualGear = u8(0);
+    // Bytes 12-13: Actual TCC Slip (signed) - will be used later
+    // Bytes 14-15: Desired TCC Slip (signed) - will be used later
+
+    // Byte 18: Solenoid state (0x96=150 in P, 0x00 in D)
+    // Interpret as solenoid supply voltage: raw * 0.1
+    tcm.solenoidSupply = u8(18) * 0.1;
+
+    // Gear: byte[8] is always 0x04 in real logs (P, N, D all same)
+    // So byte[8] is NOT gear selector
+    // Byte[7] changes: 08->07->06->05 (counter, not gear)
+    // For now derive gear from turbine RPM vs output RPM
+    if (tcm.turbineRPM < 50) {
+        tcm.currentGear = Gear::Park;      // No turbine spin = P or N
+        tcm.actualGear = 0;
+    } else if (tcm.vehicleSpeed > 0) {
+        tcm.currentGear = Gear::Drive1;    // Moving = some drive gear
+        tcm.actualGear = 3;
+    } else {
+        tcm.currentGear = Gear::Neutral;   // Turbine spinning, not moving
+        tcm.actualGear = 2;
+    }
+    tcm.selectedGear = tcm.actualGear;
 }
 
 // readSingleParam - K-Line KWP2000 ReadLocalData tek blok oku
