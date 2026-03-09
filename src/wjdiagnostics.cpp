@@ -249,10 +249,10 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
         }
     } else {
         // Same bus - check if K-Line needs full reinit
-        if (newBus == BusType::KLine && m_activeModule != targetMod) {
-            // K-Line: each module needs its own ATWM+ATFI+81 sequence
-            // Cannot just change ATSH - must do full ATZ reinit
-            emit logMessage("K-Line module change: full reinit required");
+        if (newBus == BusType::KLine) {
+            // K-Line: ALWAYS needs full ATZ+ATWM+ATFI+81 sequence
+            // Session is lost when switching to another K-Line module and back
+            emit logMessage("K-Line: full reinit required");
             m_activeBus = BusType::None; // Force different-bus path
             switchToModule(mod, done);   // Recurse with bus mismatch
             return;

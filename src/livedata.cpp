@@ -113,41 +113,12 @@ void LiveDataManager::onPollTimer()
 
 void LiveDataManager::pollTCM(std::function<void()> then)
 {
-    if (m_selectedParams.isEmpty()) {
-        // Tum TCM PID'leri oku (readAllLiveData)
-        m_tcm->readAllLiveData([this, then](const TCMDiagnostics::TCMStatus &status) {
-            emit fullStatusUpdated(status);
-            logCurrentValues();
-            if (then) then();
-        });
-    } else {
-        // Sadece secili parametreleri oku
-        struct ReadCtx {
-            int index = 0;
-            QList<uint8_t> params;
-            QMap<uint8_t, double> values;
-        };
-        auto ctx = std::make_shared<ReadCtx>();
-        ctx->params = m_selectedParams;
-
-        auto readNext = std::make_shared<std::function<void()>>();
-        *readNext = [this, ctx, readNext, then]() {
-            if (ctx->index >= ctx->params.size()) {
-                m_lastValues = ctx->values;
-                emit dataUpdated(ctx->values);
-                logCurrentValues();
-                if (then) then();
-                return;
-            }
-            uint8_t localID = ctx->params[ctx->index];
-            m_tcm->readSingleParam(localID, [ctx, readNext](double val) {
-                ctx->values[ctx->params[ctx->index]] = val;
-                ctx->index++;
-                QTimer::singleShot(10, *readNext);
-            });
-        };
-        (*readNext)();
-    }
+    // TCM live data is in a single block (0x30) - always read full block
+    m_tcm->readAllLiveData([this, then](const TCMDiagnostics::TCMStatus &status) {
+        emit fullStatusUpdated(status);
+        logCurrentValues();
+        if (then) then();
+    });
 }
 
 // === ECU Polling (K-Line) ===
