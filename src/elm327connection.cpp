@@ -29,7 +29,6 @@ ELM327Connection::ELM327Connection(QObject *parent)
         bool isBLE = (info.coreConfigurations() & QBluetoothDeviceInfo::LowEnergyCoreConfiguration);
         QString type = isBLE ? "BLE" : "Classic";
 
-
         if (name.isEmpty())
             return;
 
@@ -46,6 +45,8 @@ ELM327Connection::ELM327Connection(QObject *parent)
                      name.contains("Viecar", Qt::CaseInsensitive) ||
                      name.contains("Konnwei", Qt::CaseInsensitive);
 
+        //emit logMessage(QString("BT filter: name='%1' match=%2").arg(name, match ? "YES" : "NO"));
+
         if (match) {
             emit logMessage(QString("BT device found: %1 [%2] (%3)").arg(name, addr, type));
             emit bluetoothDeviceFound(name, addr);
@@ -57,7 +58,7 @@ ELM327Connection::ELM327Connection(QObject *parent)
     });
     connect(m_btAgent, &QBluetoothDeviceDiscoveryAgent::finished,
             this, [this]() {
-        emit logMessage("BT scan finished");
+        emit logMessage("BT scan finished (agent done)");
         emit bluetoothScanFinished();
         if (m_state == ConnectionState::Scanning)
             setState(ConnectionState::Disconnected);
@@ -98,6 +99,7 @@ void ELM327Connection::connectToDevice(const QString &host, quint16 port)
 void ELM327Connection::scanBluetooth()
 {
 #if HAS_BLUETOOTH
+    emit logMessage("BT scan starting...");
     if (m_btAgent->isActive())
         m_btAgent->stop();
     setState(ConnectionState::Scanning);
@@ -105,6 +107,7 @@ void ELM327Connection::scanBluetooth()
     qDebug() << "[BT SCAN] Starting discovery - Classic + LowEnergy";
     m_btAgent->start(QBluetoothDeviceDiscoveryAgent::ClassicMethod |
                      QBluetoothDeviceDiscoveryAgent::LowEnergyMethod);
+    emit logMessage(QString("BT scan started, agent active=%1").arg(m_btAgent->isActive() ? "yes" : "no"));
 #else
     emit logMessage("ERROR: Bluetooth not available on this platform");
 #endif

@@ -306,6 +306,9 @@ QWidget* MainWindow::createConnectionTab()
     m_btCombo->setPlaceholderText("Select Bluetooth device...");
     m_btCombo->setStyleSheet("QComboBox{background:#0e1828;color:#60b8d0;border:1px solid #1a4060;"
                              "border-radius:4px;padding:6px 8px;font-size:13px;}");
+    // CRITICAL: Disable mouse/touch on combo to prevent Android popup crash
+    m_btCombo->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_btCombo->setFocusPolicy(Qt::NoFocus);
     connGrid->addWidget(m_btCombo, 1, 1, 1, 2);
     m_btScanBtn = new QPushButton("Scan");
     m_btScanBtn->setMinimumHeight(36);
@@ -397,24 +400,34 @@ QWidget* MainWindow::createConnectionTab()
 #endif
     });
     connect(m_btConnectBtn, &QPushButton::clicked, this, [this]() {
-        if (m_btCombo->currentIndex() >= 0) {
+        if (m_btCombo && m_btCombo->currentIndex() >= 0) {
             QString addr = m_btCombo->currentData().toString();
-            m_elm->connectBluetooth(addr);
+            if (!addr.isEmpty()) {
+                onLogMessage(QString("Connecting BT: %1").arg(addr));
+                m_elm->connectBluetooth(addr);
+            }
         }
     });
-    connect(m_btCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
-        m_btConnectBtn->setEnabled(idx >= 0);
-    });
+    // Combo is touch-disabled (WA_TransparentForMouseEvents) - no popup crash
+    // Selection is automatic: scan finds device -> auto-select -> connect button enabled
 #if HAS_BLUETOOTH
     connect(m_elm, &ELM327Connection::bluetoothDeviceFound, this,
             [this](const QString &name, const QString &addr) {
         m_btCombo->addItem(name + " [" + addr + "]", addr);
+        // Auto-select first found device
+        if (m_btCombo->count() == 1) {
+            m_btCombo->setCurrentIndex(0);
+            m_btConnectBtn->setEnabled(true);
+        }
     });
     connect(m_elm, &ELM327Connection::bluetoothScanFinished, this, [this]() {
         m_btScanBtn->setText("Scan");
         m_btScanBtn->setEnabled(true);
-        if (m_btCombo->count() == 0)
+        if (m_btCombo->count() == 0) {
+            m_btCombo->addItem("No BT devices found");
+            m_btConnectBtn->setEnabled(false);
             statusBar()->showMessage("No BT device found");
+        }
     });
 #endif
 
@@ -1177,25 +1190,24 @@ QString MainWindow::gearToString(TCMDiagnostics::Gear gear)
 
 
 // --- Raw Data Read - Block 0x30 Byte Mapping Discovery Test ---
+
+// --- Raw Data Read - Final Comprehensive Test v5 ---
 void MainWindow::onRawBusDump()
 {
     m_rawDumpBtn->setEnabled(false);
     m_rawDumpBtn->setText("Testing...");
 
-    auto logRaw = [this](const QString &color, const QString &msg) {
+    auto log = [this](const QString &color, const QString &msg) {
         QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
         m_logText->append(QString("<font color='%1'>[%2] %3</font>").arg(color, ts, msg));
         m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
     };
 
-    // Helper: read block 0x30 and log indexed hex + decode
     auto read30 = std::make_shared<std::function<void(const QString&, std::function<void()>)>>();
-    *read30 = [this](const QString &label, std::function<void()> next) {
-        m_elm->sendCommand("21 30", [this, label, next](const QString &resp) {
-            QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
+    *read30 = [this, log](const QString &label, std::function<void()> next) {
+        m_elm->sendCommand("21 30", [this, label, next, log](const QString &resp) {
             if (resp.contains("7F") || resp.contains("NO DATA") || resp.contains("ERROR")) {
-                m_logText->append(QString("<font color='#ff3333'>[%1] %2: %3</font>")
-                    .arg(ts, label, resp.trimmed()));
+                log("#ff3333", label + ": " + resp.trimmed());
             } else {
                 QString cleaned = resp;
                 cleaned.remove(' ').remove('\r').remove('\n');
@@ -1203,30 +1215,28 @@ void MainWindow::onRawBusDump()
                 if (pos >= 0) {
                     QString dataOnly = cleaned.mid(pos + 4);
                     if (dataOnly.length() > 2) dataOnly.chop(2);
-                    QString formatted;
                     QByteArray raw;
                     for (int i = 0; i + 1 < dataOnly.length(); i += 2) {
                         bool ok2;
-                        uint8_t b = dataOnly.mid(i, 2).toUInt(&ok2, 16);
-                        if (ok2) raw.append(static_cast<char>(b));
-                        formatted += QString("[%1]%2 ").arg(i/2, 2, 10, QChar('0'))
-                            .arg(dataOnly.mid(i, 2).toUpper());
+                        raw.append(static_cast<char>(dataOnly.mid(i, 2).toUInt(&ok2, 16)));
                     }
-                    m_logText->append(QString("<font color='#00ff88'>[%1] %2: %3</font>")
-                        .arg(ts, label, formatted.trimmed()));
                     if (raw.size() >= 19) {
                         auto u8 = [&](int i) -> uint8_t { return (i < raw.size()) ? static_cast<uint8_t>(raw[i]) : 0; };
                         auto u16 = [&](int i) -> uint16_t { return (uint16_t(u8(i)) << 8) | u8(i+1); };
                         auto s16 = [&](int i) -> int16_t { return static_cast<int16_t>(u16(i)); };
-                        m_logText->append(QString("<font color='#70C8F0'>  [0-1]=%1 [2-3]=%2 [4-5]=%3 [7]=%4 [8]=%5 [9-10]=%6 [11]=%7(%8C) [12-13]=%9 [14-15]=%10 [18]=%11 [19]=%12 [20-21]=%13</font>")
-                            .arg(u16(0)).arg(u16(2)).arg(u16(4)).arg(u8(7))
-                            .arg(u8(8)).arg(u16(9)).arg(u8(11)).arg(u8(11)-40)
-                            .arg(s16(12)).arg(s16(14)).arg(u8(18)).arg(u8(19))
-                            .arg(u16(20)));
+                        QString gear = "?";
+                        switch (u8(7)) {
+                            case 8: gear = "P"; break; case 7: gear = "R"; break;
+                            case 6: gear = "N"; break; case 5: gear = "D"; break;
+                            case 4: gear = "D2"; break; case 3: gear = "D3"; break;
+                            case 2: gear = "D4"; break; case 1: gear = "D5"; break;
+                        }
+                        log("#00ff88", QString("%1: GEAR=%2 RPM=%3 SPD=%4 TEMP=%5C SLIP=%6/%7 SOL=%8")
+                            .arg(label, gear).arg(u16(0)).arg(u16(4))
+                            .arg(u8(11)-40).arg(s16(12)).arg(s16(14)).arg(u8(18)));
                     }
                 } else {
-                    m_logText->append(QString("<font color='#c08840'>[%1] %2 raw: %3</font>")
-                        .arg(ts, label, resp.trimmed()));
+                    log("#c08840", label + " raw: " + resp.trimmed());
                 }
             }
             m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
@@ -1234,98 +1244,120 @@ void MainWindow::onRawBusDump()
         });
     };
 
-    m_logText->append("<font color='white'>========== BYTE MAPPING TEST v4 ==========</font>");
-    m_logText->append("<font color='#ffff00'>Motor CALISIYOR olmali! Fren basili tut!</font>");
-    m_logText->append("<font color='#ffff00'>Talimatlar ekranda cikacak. Her adimda 5sn bekleme.</font>");
+    m_logText->append("<font color='white'>========== FINAL TEST v5 ==========</font>");
+    log("#ffff00", "Motor CALISIYOR olmali! Fren basili!");
 
-    logRaw("#00ffcc", "K-Line TCM (0x20) baglaniyor...");
+    auto steps = std::make_shared<QList<std::pair<QString, int>>>();
+    steps->append({"===TCM", 0});
+    steps->append({"P-1", 1000}); steps->append({"P-2", 500});
+    steps->append({"===R", 5000});
+    steps->append({"R-1", 500}); steps->append({"R-2", 500});
+    steps->append({"===N", 5000});
+    steps->append({"N-1", 500}); steps->append({"N-2", 500});
+    steps->append({"===D", 5000});
+    steps->append({"D-1", 500}); steps->append({"D-2", 500});
+    steps->append({"===P2", 5000});
+    steps->append({"P-fin", 500});
+    steps->append({"===DTC_TCM", 500});
+    steps->append({"===DTC_ECU", 500});
+    steps->append({"===DTC_ABS", 500});
+    steps->append({"===DTC_CLEAR_TCM", 500});
+    steps->append({"===DONE", 500});
 
-    m_tcm->switchToModule(WJDiagnostics::Module::KLineTCM, [this, logRaw, read30](bool ok) {
-        if (!ok) {
-            logRaw("#ff3333", "TCM BAGLANTI BASARISIZ!");
+    auto idx = std::make_shared<int>(0);
+    auto runStep = std::make_shared<std::function<void()>>();
+
+    *runStep = [this, steps, idx, runStep, read30, log]() {
+        if (*idx >= steps->size()) {
             m_rawDumpBtn->setEnabled(true); m_rawDumpBtn->setText("Raw Data Read");
             return;
         }
-        logRaw("#00ff88", "TCM OK!");
+        QString label = steps->at(*idx).first;
+        int wait = steps->at(*idx).second;
+        (*idx)++;
 
-        // --- Tum adimlari sirayla calistir ---
-        auto steps = std::make_shared<QList<std::pair<QString, int>>>();
-        // {label, wait_before_ms}
-        steps->append({"P-1", 1000});
-        steps->append({"P-2", 500});
-        steps->append({"P-3", 500});
-        steps->append({"===R", 5000});   // marker: R'ye al
-        steps->append({"R-1", 500});
-        steps->append({"R-2", 500});
-        steps->append({"===N", 5000});   // marker: N'ye al
-        steps->append({"N-1", 500});
-        steps->append({"N-2", 500});
-        steps->append({"===D", 5000});   // marker: D'ye al (fren basili)
-        steps->append({"D-1", 500});
-        steps->append({"D-2", 500});
-        steps->append({"===GAZ", 5000}); // marker: D'de gaza bas 1500rpm
-        steps->append({"D-RPM-1", 500});
-        steps->append({"D-RPM-2", 500});
-        steps->append({"===P2", 5000});  // marker: tekrar P'ye al
-        steps->append({"P-fin", 500});
+        if (label == "===TCM") {
+            log("#00ffcc", "--- Phase 1: TCM Live Data (P/R/N/D) ---");
+            m_tcm->switchToModule(WJDiagnostics::Module::KLineTCM, [this, log, runStep](bool ok) {
+                log(ok ? "#00ff88" : "#ff3333", ok ? "TCM OK" : "TCM FAIL");
+                if (!ok) { m_rawDumpBtn->setEnabled(true); m_rawDumpBtn->setText("Raw Data Read"); return; }
+                (*runStep)();
+            });
+            return;
+        }
+        if (label == "===R")  { log("#ff8800", ">> R'ye AL - 5sn bekle <<"); QTimer::singleShot(wait, *runStep); return; }
+        if (label == "===N")  { log("#ff8800", ">> N'ye AL - 5sn bekle <<"); QTimer::singleShot(wait, *runStep); return; }
+        if (label == "===D")  { log("#ff8800", ">> D'ye AL (fren!) - 5sn bekle <<"); QTimer::singleShot(wait, *runStep); return; }
+        if (label == "===P2") { log("#ff8800", ">> Tekrar P'ye AL - 5sn bekle <<"); QTimer::singleShot(wait, *runStep); return; }
 
-        auto idx = std::make_shared<int>(0);
-        auto runStep = std::make_shared<std::function<void()>>();
-
-        *runStep = [this, steps, idx, runStep, read30, logRaw]() {
-            if (*idx >= steps->size()) {
-                // Tum okumalar bitti -> DTC + Battery
-                m_logText->append("<font color='#00ffcc'>--- DTC + Battery ---</font>");
-                m_elm->sendCommand("18 02 FF 00", [this, logRaw](const QString &dtcResp) {
-                    logRaw("#ffff00", "DTC: " + dtcResp);
-                    m_elm->sendCommand("ATRV", [this, logRaw](const QString &rv) {
-                        logRaw("#60b8a0", "Battery: " + rv);
-                        m_logText->append("<font color='white'>========== TEST v4 BITTI ==========</font>");
-                        m_logText->append("<font color='#ffff00'>Logu COPY LOG ile kopyala!</font>");
-                        m_rawDumpBtn->setEnabled(true);
-                        m_rawDumpBtn->setText("Raw Data Read");
-                    });
-                });
-                return;
-            }
-
-            QString label = steps->at(*idx).first;
-            int wait = steps->at(*idx).second;
-            (*idx)++;
-
-            // Marker satiri mi? (=== ile baslar)
-            if (label.startsWith("===")) {
-                QString instruction;
-                if (label == "===R")   instruction = ">> R (Reverse) POZISYONUNA AL <<";
-                if (label == "===N")   instruction = ">> N (Notr) POZISYONUNA AL <<";
-                if (label == "===D")   instruction = ">> D (Drive) AL - FREN BASILI! <<";
-                if (label == "===GAZ") instruction = ">> D'de GAZA BAS (~1500rpm) <<";
-                if (label == "===P2")  instruction = ">> Tekrar P (Park) AL <<";
-                m_logText->append(QString("<font color='#ff8800'>===== %1 - %2sn bekle =====</font>")
-                    .arg(instruction).arg(wait/1000));
-                m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
-                QTimer::singleShot(wait, *runStep);
-                return;
-            }
-
-            // Normal okuma
-            QTimer::singleShot(wait, [read30, label, runStep]() {
-                (*read30)(label, [runStep]() {
+        if (label == "===DTC_TCM") {
+            log("#00ffcc", "--- Phase 2: DTC Read/Clear ---");
+            log("#00ffcc", "TCM DTC okuma...");
+            m_tcm->readDTCs(WJDiagnostics::Module::KLineTCM,
+                [this, log, runStep](const QList<WJDiagnostics::DTCEntry> &dtcs) {
+                if (dtcs.isEmpty()) log("#00ff88", "TCM: 0 DTC (temiz)");
+                for (const auto &d : dtcs)
+                    log("#ffff00", QString("TCM: %1 %2 [%3]").arg(d.code, d.description, d.isActive?"AKTIF":"kayitli"));
+                (*runStep)();
+            });
+            return;
+        }
+        if (label == "===DTC_ECU") {
+            log("#00ffcc", "ECU DTC okuma...");
+            m_tcm->readDTCs(WJDiagnostics::Module::MotorECU,
+                [this, log, runStep](const QList<WJDiagnostics::DTCEntry> &dtcs) {
+                if (dtcs.isEmpty()) log("#00ff88", "ECU: 0 DTC (temiz)");
+                for (const auto &d : dtcs)
+                    log("#ffff00", QString("ECU: %1 %2 [%3]").arg(d.code, d.description, d.isActive?"AKTIF":"kayitli"));
+                (*runStep)();
+            });
+            return;
+        }
+        if (label == "===DTC_ABS") {
+            log("#00ffcc", "ABS DTC okuma (J1850)...");
+            m_tcm->readDTCs(WJDiagnostics::Module::ABS,
+                [this, log, runStep](const QList<WJDiagnostics::DTCEntry> &dtcs) {
+                if (dtcs.isEmpty()) log("#00ff88", "ABS: 0 DTC veya raw response");
+                for (const auto &d : dtcs)
+                    log("#ffff00", QString("ABS: %1 %2").arg(d.code, d.description));
+                (*runStep)();
+            });
+            return;
+        }
+        if (label == "===DTC_CLEAR_TCM") {
+            log("#00ffcc", "TCM DTC silme (14 00 00)...");
+            m_tcm->clearDTCs(WJDiagnostics::Module::KLineTCM, [this, log, runStep](bool ok) {
+                log(ok ? "#00ff88" : "#ff3333", ok ? "TCM clear: OK" : "TCM clear: FAIL");
+                log("#00ffcc", "TCM DTC tekrar okuma (dogrulama)...");
+                m_tcm->readDTCs(WJDiagnostics::Module::KLineTCM,
+                    [this, log, runStep](const QList<WJDiagnostics::DTCEntry> &dtcs) {
+                    log("#60b8a0", QString("TCM verify: %1 DTC").arg(dtcs.size()));
                     (*runStep)();
                 });
             });
-        };
+            return;
+        }
+        if (label == "===DONE") {
+            m_elm->sendCommand("ATRV", [this, log](const QString &rv) {
+                log("#60b8a0", "Battery: " + rv.trimmed());
+                m_logText->append("<font color='white'>========== TEST v5 BITTI ==========</font>");
+                log("#ffff00", "COPY LOG ile kopyala!");
+                m_rawDumpBtn->setEnabled(true); m_rawDumpBtn->setText("Raw Data Read");
+            });
+            return;
+        }
 
-        (*runStep)();
-    });
+        QTimer::singleShot(wait, [read30, label, runStep]() {
+            (*read30)(label, [runStep]() { (*runStep)(); });
+        });
+    };
+
+    (*runStep)();
 }
 
-// phase2_ExtraBlocks stub (header compat)
 void MainWindow::phase2_ExtraBlocks(
     std::function<void(const QString&, const QString&)> logRaw)
-{
-    (void)logRaw;
-}
+{ (void)logRaw; }
 
 void MainWindow::onRawSendCustom()
 {

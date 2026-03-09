@@ -115,10 +115,34 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                             return;
                         }
 
-                    // ATFI - Fast Init (bus init)
-                    m_elm->sendCommand("ATFI", [this, info, done, targetMod](const QString &fi) {
+                    // ATFI - Fast Init (bus init) with 1 retry
+                    auto atfiRetry = std::make_shared<int>(0);
+                    auto doATFI = std::make_shared<std::function<void()>>();
+                    *doATFI = [this, info, done, targetMod, atfiRetry, doATFI](/*capture*/) {
+                    m_elm->sendCommand("ATFI", [this, info, done, targetMod, atfiRetry, doATFI](const QString &fi) {
                         // Check ERROR first - "BUS INIT: ERROR" contains "BUS INIT" too!
                         if (fi.contains("ERROR") || fi.contains("TIMEOUT") || fi.contains("?")) {
+                            if (*atfiRetry < 1) {
+                                // Retry once: ATZ + reinit + ATFI
+                                (*atfiRetry)++;
+                                emit logMessage("ATFI failed, retry #" + QString::number(*atfiRetry));
+                                m_elm->sendCommand("ATZ", [this, info, doATFI](const QString&) {
+                                    QTimer::singleShot(500, this, [this, info, doATFI]() {
+                                        m_elm->sendCommand("ATE1", [this, info, doATFI](const QString&) {
+                                        m_elm->sendCommand("ATH1", [this, info, doATFI](const QString&) {
+                                        m_elm->sendCommand(info.atwmWakeup, [this, info, doATFI](const QString&) {
+                                        m_elm->sendCommand(info.atshHeader, [this, info, doATFI](const QString&) {
+                                        m_elm->sendCommand("ATSP5", [this, doATFI](const QString&) {
+                                            (*doATFI)();
+                                        });
+                                        });
+                                        });
+                                        });
+                                        });
+                                    });
+                                });
+                                return;
+                            }
                             emit logMessage("ATFI failed: " + fi);
                             // Save previous module before recovery
                             Module prevMod = m_activeModule;
@@ -179,6 +203,8 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                             if (done) done(true);
                         }
                     }, 5000); // ATFI timeout 5s
+                    }; // end doATFI lambda
+                    (*doATFI)(); // initial ATFI call
                     });
                     });
                 };
@@ -1062,37 +1088,43 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
     // [19]  = 18 (24)
     // [20-21] = 0008
 
-    // For now expose raw bytes so dashboard can at least show something
+    // VERIFIED BYTE MAPPING (real vehicle 2025-03-07, P/R/N/D tested):
+    // [0-1]   Turbine/Input RPM (P/N: ~20, R/D idle: ~750, D+gas: ~1100+)
+    // [2-3]   Engagement status (0x1E=30 for P/N, 0x3C=60 for R/D)
+    // [4-5]   Vehicle Speed (0 when stationary)
+    // [7]     Gear selector: P=8, R=7, N=6, D=5
+    // [8]     Config byte (always 4)
+    // [9-10]  Solenoid pressure (P:221, R:187, N:0, D:17)
+    // [11]    Trans Temp raw (subtract 40 for Celsius)
+    // [12-13] TCC Slip actual (signed: P/N: -10, R/D: +26..+149)
+    // [14-15] TCC Slip desired (signed: follows actual)
+    // [18]    Solenoid state (P/N: 0x96, R/D: 0x00)
+    // [19]    Mode bitmask (0x18=P/N, 0x10=D)
 
-    // Bytes 0-1: Turbine RPM (verified: 0 in P/N, ~750 when running in D)
+    // Turbine RPM
     tcm.turbineRPM = u16(0);
 
-    // Byte 11: Trans Temp raw (-40 offset, standard Mercedes)
-    tcm.transTemp = u8(11) - 40;
-
-    // Bytes 4-5: Vehicle Speed (0 when stopped)
+    // Vehicle Speed
     tcm.vehicleSpeed = u16(4);
 
-    // Bytes 12-13: Actual TCC Slip (signed) - will be used later
-    // Bytes 14-15: Desired TCC Slip (signed) - will be used later
+    // Trans Temp
+    tcm.transTemp = u8(11) - 40;
 
-    // Byte 18: Solenoid state (0x96=150 in P, 0x00 in D)
-    // Interpret as solenoid supply voltage: raw * 0.1
-    tcm.solenoidSupply = u8(18) * 0.1;
+    // Solenoid supply: byte[9-10] as pressure/current indicator
+    tcm.solenoidSupply = u16(9) * 0.1;
 
-    // Gear: byte[8] is always 0x04 in real logs (P, N, D all same)
-    // So byte[8] is NOT gear selector
-    // Byte[7] changes: 08->07->06->05 (counter, not gear)
-    // For now derive gear from turbine RPM vs output RPM
-    if (tcm.turbineRPM < 50) {
-        tcm.currentGear = Gear::Park;      // No turbine spin = P or N
-        tcm.actualGear = 0;
-    } else if (tcm.vehicleSpeed > 0) {
-        tcm.currentGear = Gear::Drive1;    // Moving = some drive gear
-        tcm.actualGear = 3;
-    } else {
-        tcm.currentGear = Gear::Neutral;   // Turbine spinning, not moving
-        tcm.actualGear = 2;
+    // Gear from byte[7]: P=8, R=7, N=6, D=5
+    uint8_t gearByte = u8(7);
+    switch (gearByte) {
+    case 8: tcm.currentGear = Gear::Park;    tcm.actualGear = 0; break;
+    case 7: tcm.currentGear = Gear::Reverse; tcm.actualGear = 1; break;
+    case 6: tcm.currentGear = Gear::Neutral; tcm.actualGear = 2; break;
+    case 5: tcm.currentGear = Gear::Drive1;  tcm.actualGear = 3; break;
+    case 4: tcm.currentGear = Gear::Drive2;  tcm.actualGear = 4; break;
+    case 3: tcm.currentGear = Gear::Drive3;  tcm.actualGear = 5; break;
+    case 2: tcm.currentGear = Gear::Drive4;  tcm.actualGear = 6; break;
+    case 1: tcm.currentGear = Gear::Drive5;  tcm.actualGear = 7; break;
+    default: tcm.currentGear = Gear::Unknown; tcm.actualGear = -1; break;
     }
     tcm.selectedGear = tcm.actualGear;
 }
