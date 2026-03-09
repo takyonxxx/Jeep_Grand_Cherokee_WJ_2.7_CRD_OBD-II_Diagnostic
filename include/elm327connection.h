@@ -12,6 +12,10 @@
 #include <QBluetoothSocket>
 #include <QBluetoothDeviceDiscoveryAgent>
 #include <QBluetoothDeviceInfo>
+#include <QLowEnergyController>
+#include <QLowEnergyService>
+#include <QLowEnergyCharacteristic>
+#include <QLowEnergyDescriptor>
 #define HAS_BLUETOOTH 1
 #else
 #define HAS_BLUETOOTH 0
@@ -133,7 +137,17 @@ private:
 #if HAS_BLUETOOTH
     QBluetoothSocket *m_btSocket = nullptr;
     QBluetoothDeviceDiscoveryAgent *m_btAgent = nullptr;
-    QString m_btAddress;               // hedef BT adresi
+    QString m_btAddress;
+
+    // BLE GATT (iOS + Android BLE devices)
+    QLowEnergyController *m_bleController = nullptr;
+    QLowEnergyService *m_bleService = nullptr;
+    QLowEnergyCharacteristic m_bleWriteChar;
+    QLowEnergyCharacteristic m_bleNotifyChar;
+    bool m_useBLE = false;  // true = BLE GATT, false = RFCOMM
+    QBluetoothDeviceInfo m_bleDeviceInfo;
+    void connectBLE(const QBluetoothDeviceInfo &info);
+    void setupBLEService(QLowEnergyService *service);
 #endif
 
     Transport m_transport = Transport::WiFi;

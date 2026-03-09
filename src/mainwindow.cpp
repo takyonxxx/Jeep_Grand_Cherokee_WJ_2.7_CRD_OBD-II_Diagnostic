@@ -1364,18 +1364,11 @@ void MainWindow::onRawSendCustom()
     QString cmd = m_rawCmdEdit->text().trimmed();
     if (cmd.isEmpty()) return;
     m_rawCmdEdit->clear();
-    QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     if (cmd.startsWith("AT", Qt::CaseInsensitive)) {
-        m_logText->append(QString("<font color='#a080c0'>[%1] TX (AT): %2</font>").arg(ts, cmd));
-        m_elm->sendCommand(cmd, [this](const QString &resp) {
-            m_logText->append(QString("<font color='#60b8a0'>       RX: %1</font>").arg(resp));
-        });
+        m_elm->sendCommand(cmd, [](const QString &) {});
     } else {
         QString hexClean = cmd.remove(' ');
-        m_logText->append(QString("<font color='#a080c0'>[%1] TX (KWP): %2</font>").arg(ts, cmd));
-        m_elm->sendCommand(hexClean, [this](const QString &resp) {
-            m_logText->append(QString("<font color='#60b8a0'>       RX: %1</font>").arg(resp));
-        });
+        m_elm->sendCommand(hexClean, [](const QString &) {});
     }
 }
 

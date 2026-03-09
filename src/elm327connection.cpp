@@ -19,15 +19,23 @@ ELM327Connection::ELM327Connection(QObject *parent)
 
 #if HAS_BLUETOOTH
     m_btSocket = new QBluetoothSocket(QBluetoothServiceInfo::RfcommProtocol, this);
+    m_bleController = nullptr;
+    m_bleService = nullptr;
+    m_useBLE = false;
     m_btAgent = new QBluetoothDeviceDiscoveryAgent(this);
     m_btAgent->setLowEnergyDiscoveryTimeout(10000);
 
     connect(m_btAgent, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered,
             this, [this](const QBluetoothDeviceInfo &info) {
         QString name = info.name().trimmed();
+        // iOS: address() is empty, use deviceUuid() instead
         QString addr = info.address().toString();
+        if (addr.isEmpty() || addr == "00:00:00:00:00:00")
+            addr = info.deviceUuid().toString(QUuid::WithoutBraces);
         bool isBLE = (info.coreConfigurations() & QBluetoothDeviceInfo::LowEnergyCoreConfiguration);
-        QString type = isBLE ? "BLE" : "Classic";
+        QString type = "BLE";
+
+
 
         if (name.isEmpty())
             return;
@@ -45,9 +53,9 @@ ELM327Connection::ELM327Connection(QObject *parent)
                      name.contains("Viecar", Qt::CaseInsensitive) ||
                      name.contains("Konnwei", Qt::CaseInsensitive);
 
-        //emit logMessage(QString("BT filter: name='%1' match=%2").arg(name, match ? "YES" : "NO"));
 
         if (match) {
+            m_bleDeviceInfo = info;  // Save for BLE GATT connection
             emit logMessage(QString("BT device found: %1 [%2] (%3)").arg(name, addr, type));
             emit bluetoothDeviceFound(name, addr);
             m_btAgent->stop();
@@ -99,15 +107,13 @@ void ELM327Connection::connectToDevice(const QString &host, quint16 port)
 void ELM327Connection::scanBluetooth()
 {
 #if HAS_BLUETOOTH
-    emit logMessage("BT scan starting...");
+
     if (m_btAgent->isActive())
         m_btAgent->stop();
     setState(ConnectionState::Scanning);
-    emit logMessage("BT scan started (Classic + BLE)...");
-    qDebug() << "[BT SCAN] Starting discovery - Classic + LowEnergy";
-    m_btAgent->start(QBluetoothDeviceDiscoveryAgent::ClassicMethod |
-                     QBluetoothDeviceDiscoveryAgent::LowEnergyMethod);
-    emit logMessage(QString("BT scan started, agent active=%1").arg(m_btAgent->isActive() ? "yes" : "no"));
+    emit logMessage("BT scan started (BLE only)...");
+    m_btAgent->start(QBluetoothDeviceDiscoveryAgent::LowEnergyMethod);
+
 #else
     emit logMessage("ERROR: Bluetooth not available on this platform");
 #endif
@@ -130,18 +136,29 @@ void ELM327Connection::connectBluetooth(const QString &address)
         disconnect();
 
     stopScan();
-
     m_transport = Transport::Bluetooth;
     m_btAddress = address;
-    m_io = m_btSocket;
-    connectSignals();
-
     setState(ConnectionState::Connecting);
     emit logMessage(QString("BT ELM327: %1").arg(address));
 
-    // SPP UUID = 00001101-0000-1000-8000-00805F9B34FB
-    static const QBluetoothUuid sppUuid(QStringLiteral("00001101-0000-1000-8000-00805F9B34FB"));
-    m_btSocket->connectToService(QBluetoothAddress(address), sppUuid);
+    // Always use BLE GATT - works on both iOS and Android
+    if (m_bleDeviceInfo.isValid()) {
+        m_useBLE = true;
+        connectBLE(m_bleDeviceInfo);
+    } else {
+        // Fallback: try classic RFCOMM (Android only)
+        m_useBLE = false;
+        m_io = m_btSocket;
+        connectSignals();
+        static const QBluetoothUuid sppUuid(QStringLiteral("00001101-0000-1000-8000-00805F9B34FB"));
+        QBluetoothAddress btAddr(address);
+        if (!btAddr.isNull()) {
+            m_btSocket->connectToService(btAddr, sppUuid);
+        } else {
+            emit logMessage("ERROR: No valid BT address or device info");
+            setState(ConnectionState::Error);
+        }
+    }
 #else
     Q_UNUSED(address)
     emit logMessage("ERROR: Bluetooth not available on this platform");
@@ -164,8 +181,13 @@ void ELM327Connection::disconnect()
     }
 #if HAS_BLUETOOTH
     else if (m_transport == Transport::Bluetooth) {
-        if (m_btSocket->state() != QBluetoothSocket::SocketState::UnconnectedState)
-            m_btSocket->close();
+        if (m_useBLE) {
+            if (m_bleService) { delete m_bleService; m_bleService = nullptr; }
+            if (m_bleController) { m_bleController->disconnectFromDevice(); delete m_bleController; m_bleController = nullptr; }
+        } else {
+            if (m_btSocket->state() != QBluetoothSocket::SocketState::UnconnectedState)
+                m_btSocket->close();
+        }
     }
 #endif
     setState(ConnectionState::Disconnected);
@@ -226,10 +248,19 @@ void ELM327Connection::connectSignals()
 
 void ELM327Connection::writeToDevice(const QByteArray &data)
 {
+    // BLE GATT write - m_io is null for BLE, handle separately
+    if (m_transport == Transport::Bluetooth && m_useBLE && m_bleService && m_bleWriteChar.isValid()) {
+        QLowEnergyService::WriteMode mode = QLowEnergyService::WriteWithoutResponse;
+        if (m_bleWriteChar.properties() & QLowEnergyCharacteristic::Write)
+            mode = QLowEnergyService::WriteWithResponse;
+        if (m_bleWriteChar.properties() & QLowEnergyCharacteristic::WriteNoResponse)
+            mode = QLowEnergyService::WriteWithoutResponse;
+        m_bleService->writeCharacteristic(m_bleWriteChar, data, mode);
+        return;
+    }
+
     if (m_io && m_io->isOpen()) {
         m_io->write(data);
-        // QTcpSocket'te flush() var, QBluetoothSocket'te yok
-        if (m_transport == Transport::WiFi && m_tcpSocket)
             m_tcpSocket->flush();
     }
 }
@@ -453,3 +484,151 @@ QByteArray ELM327Connection::parseHexResponse(const QString &response)
 
     return result;
 }
+
+// === BLE GATT Connection (iOS + Android BLE) ===
+
+#if HAS_BLUETOOTH
+void ELM327Connection::connectBLE(const QBluetoothDeviceInfo &info)
+{
+    emit logMessage("BLE GATT connecting...");
+
+    if (m_bleController) {
+        delete m_bleController;
+        m_bleController = nullptr;
+    }
+
+    m_bleController = QLowEnergyController::createCentral(info, this);
+
+    connect(m_bleController, &QLowEnergyController::connected, this, [this]() {
+        emit logMessage("BLE connected, discovering services...");
+        m_bleController->discoverServices();
+    });
+
+    connect(m_bleController, &QLowEnergyController::disconnected, this, [this]() {
+        emit logMessage("BLE disconnected");
+        setState(ConnectionState::Disconnected);
+        emit disconnected();
+    });
+
+    connect(m_bleController, &QLowEnergyController::errorOccurred, this,
+            [this](QLowEnergyController::Error err) {
+        emit logMessage(QString("BLE error: %1").arg(static_cast<int>(err)));
+        setState(ConnectionState::Error);
+    });
+
+    connect(m_bleController, &QLowEnergyController::serviceDiscovered, this,
+            [this](const QBluetoothUuid &uuid) {
+        Q_UNUSED(uuid);
+    });
+
+    connect(m_bleController, &QLowEnergyController::discoveryFinished, this, [this]() {
+        emit logMessage(QString("BLE services found: %1").arg(m_bleController->services().size()));
+        // ELM327 BLE: common service UUIDs
+        // FFF0 (most clones), FFE0 (some), 18F0 (OBDLink), E7810A71... (custom)
+        QList<QBluetoothUuid> tryServices = {
+            QBluetoothUuid(QStringLiteral("0000fff0-0000-1000-8000-00805f9b34fb")),
+            QBluetoothUuid(QStringLiteral("0000ffe0-0000-1000-8000-00805f9b34fb")),
+            QBluetoothUuid(QStringLiteral("000018f0-0000-1000-8000-00805f9b34fb")),
+        };
+
+        QLowEnergyService *svc = nullptr;
+        for (const auto &suuid : tryServices) {
+            auto services = m_bleController->services();
+            if (services.contains(suuid)) {
+                svc = m_bleController->createServiceObject(suuid, this);
+                if (svc) {
+                    emit logMessage(QString("BLE using service: %1").arg(suuid.toString()));
+                    break;
+                }
+            }
+        }
+
+        if (!svc) {
+            // Try first available service
+            auto services = m_bleController->services();
+            for (const auto &suuid : services) {
+                svc = m_bleController->createServiceObject(suuid, this);
+                if (svc) {
+                    emit logMessage(QString("BLE fallback service: %1").arg(suuid.toString()));
+                    break;
+                }
+            }
+        }
+
+        if (!svc) {
+            emit logMessage("BLE: No suitable service found!");
+            setState(ConnectionState::Error);
+            return;
+        }
+
+        setupBLEService(svc);
+    });
+
+    m_bleController->connectToDevice();
+}
+
+void ELM327Connection::setupBLEService(QLowEnergyService *service)
+{
+    m_bleService = service;
+
+    connect(m_bleService, &QLowEnergyService::stateChanged, this,
+            [this](QLowEnergyService::ServiceState state) {
+        if (state == QLowEnergyService::RemoteServiceDiscovered) {
+            // Find write + notify characteristics
+            // ELM327 BLE: FFF1=write, FFF2=notify (most common)
+            // or FFE1=write+notify (some)
+            auto chars = m_bleService->characteristics();
+            for (const auto &ch : chars) {
+                // char found
+
+                if (ch.properties() & QLowEnergyCharacteristic::Write ||
+                    ch.properties() & QLowEnergyCharacteristic::WriteNoResponse) {
+                    m_bleWriteChar = ch;
+                }
+                if (ch.properties() & QLowEnergyCharacteristic::Notify) {
+                    m_bleNotifyChar = ch;
+                    // Enable notifications via CCCD descriptor
+                    auto desc = ch.descriptor(QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration);
+                    if (desc.isValid()) {
+
+                        m_bleService->writeDescriptor(desc, QByteArray::fromHex("0100"));
+                    } else {
+                        emit logMessage("BLE WARNING: No CCCD descriptor for notify!");
+                    }
+                }
+            }
+
+            if (m_bleWriteChar.isValid() && m_bleNotifyChar.isValid()) {
+                emit logMessage("BLE ready: write + notify OK");
+                setState(ConnectionState::Initializing);
+                emit logMessage("Bluetooth BLE connection established, initializing ELM327...");
+                initializeELM();
+            } else {
+                emit logMessage("BLE: Missing write or notify characteristic!");
+                setState(ConnectionState::Error);
+            }
+        }
+    });
+
+    connect(m_bleService, &QLowEnergyService::characteristicChanged, this,
+            [this](const QLowEnergyCharacteristic &ch, const QByteArray &data) {
+        Q_UNUSED(ch)
+        // BLE data received
+        m_responseBuffer += QString::fromLatin1(data);
+        emit rawDataReceived(data);
+        // Check for ELM327 prompt '>'
+        if (m_responseBuffer.contains('>')) {
+            // Trigger same processing as onDataReady via timer
+            QTimer::singleShot(0, this, &ELM327Connection::onDataReady);
+        }
+    });
+
+    connect(m_bleService, &QLowEnergyService::descriptorWritten, this,
+            [this](const QLowEnergyDescriptor &desc, const QByteArray &value) {
+        Q_UNUSED(desc)
+        Q_UNUSED(value)
+    });
+
+    m_bleService->discoverDetails();
+}
+#endif
