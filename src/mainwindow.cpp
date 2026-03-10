@@ -20,6 +20,7 @@
 #include <QScrollBar>
 #include <QDir>
 #include <QFrame>
+#include <QPointer>
 
 #ifdef Q_OS_ANDROID
 #include <QJniObject>
@@ -272,11 +273,6 @@ void MainWindow::updateDashboardFromLiveData(const QMap<uint8_t, double> &v)
 
 QWidget* MainWindow::createConnectionTab()
 {
-    QScrollArea *scroll = new QScrollArea();
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    QScroller::grabGesture(scroll->viewport(), QScroller::LeftMouseButtonGesture);
-
     QWidget *w = new QWidget();
     QVBoxLayout *layout = new QVBoxLayout(w);
     layout->setSpacing(6);
@@ -343,7 +339,7 @@ QWidget* MainWindow::createConnectionTab()
         {WJDiagnostics::Module::Airbag, "Airbag", "J1850 VPW | ATSH246022", true},
         {WJDiagnostics::Module::BCM, "Body Computer", "J1850 VPW | ATSH248022", false},
         {WJDiagnostics::Module::Cluster, "Instrument Cluster", "J1850 VPW | ATSH249022", false},
-        {WJDiagnostics::Module::ATC, "Climate (HVAC)", "J1850 VPW | ATSH246822", false},
+        {WJDiagnostics::Module::ATC, "Climate (HVAC)", "J1850 VPW | ATSH246822", true},
         {WJDiagnostics::Module::SKIM, "SKIM Immobilizer", "J1850 VPW | ATSH246222", false},
     };
 
@@ -494,8 +490,7 @@ QWidget* MainWindow::createConnectionTab()
     });
 #endif
 
-    scroll->setWidget(w);
-    return scroll;
+    return w;
 }
 
 QWidget* MainWindow::createDTCTab()
@@ -846,79 +841,92 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
 
 void MainWindow::onReadDTCs()
 {
+    if (!m_elm->isConnected()) {
+        statusBar()->showMessage("Not connected!");
+        return;
+    }
     m_readDtcBtn->setEnabled(false);
+    m_clearDtcBtn->setEnabled(false);  // prevent clear during read
     static const char* names[] = {"TCM","ECU","ABS","Airbag"};
-    QString src = names[m_dtcSourceIdx];
+    int srcIdx = qBound(0, m_dtcSourceIdx, 3);
+    QString src = names[srcIdx];
     statusBar()->showMessage("Reading fault codes: " + src + "...");
 
     WJDiagnostics::Module mod;
-    switch (m_dtcSourceIdx) {
+    switch (srcIdx) {
     case 1:  mod = WJDiagnostics::Module::MotorECU; break;
     case 2:  mod = WJDiagnostics::Module::ABS; break;
     case 3:  mod = WJDiagnostics::Module::Airbag; break;
     default: mod = WJDiagnostics::Module::KLineTCM; break;
     }
 
-    m_tcm->readDTCs(mod, [this, src](const QList<WJDiagnostics::DTCEntry> &dtcs) {
-        m_dtcTable->setRowCount(0);
+    QPointer<MainWindow> guard(this);
+    m_tcm->readDTCs(mod, [guard, src](const QList<WJDiagnostics::DTCEntry> &dtcs) {
+        if (!guard) return;  // widget destroyed
+        auto *self = guard.data();
+        self->m_dtcTable->setRowCount(0);
         for (const auto &d : dtcs) {
-            int row = m_dtcTable->rowCount();
-            m_dtcTable->insertRow(row);
-            m_dtcTable->setItem(row, 0, new QTableWidgetItem(d.code));
-            m_dtcTable->setItem(row, 1, new QTableWidgetItem(d.description));
-            m_dtcTable->setItem(row, 2, new QTableWidgetItem(d.isActive ? "Active" : "Stored"));
+            int row = self->m_dtcTable->rowCount();
+            self->m_dtcTable->insertRow(row);
+            self->m_dtcTable->setItem(row, 0, new QTableWidgetItem(d.code));
+            self->m_dtcTable->setItem(row, 1, new QTableWidgetItem(d.description));
+            self->m_dtcTable->setItem(row, 2, new QTableWidgetItem(d.isActive ? "Active" : "Stored"));
 
             if (d.isActive) {
                 for (int col = 0; col < 3; ++col) {
-                    m_dtcTable->item(row, col)->setBackground(QColor(80, 20, 20));
-                    m_dtcTable->item(row, col)->setForeground(QColor(255, 100, 100));
+                    self->m_dtcTable->item(row, col)->setBackground(QColor(80, 20, 20));
+                    self->m_dtcTable->item(row, col)->setForeground(QColor(255, 100, 100));
                 }
             }
         }
-        m_readDtcBtn->setEnabled(true);
-        m_dtcCountLabel->setText(QString("Source: %1 - %2 fault codes").arg(src).arg(dtcs.size()));
-        statusBar()->showMessage(QString("%1 fault codes read (%2)").arg(dtcs.size()).arg(src));
+        self->m_readDtcBtn->setEnabled(true);
+        self->m_clearDtcBtn->setEnabled(true);
+        self->m_dtcCountLabel->setText(QString("Source: %1 - %2 fault codes").arg(src).arg(dtcs.size()));
+        self->statusBar()->showMessage(QString("%1 fault codes read (%2)").arg(dtcs.size()).arg(src));
     });
 }
 
 void MainWindow::onClearDTCs()
 {
-    static const char* names[] = {"TCM","ECU","ABS","Airbag"};
-    QString src = names[m_dtcSourceIdx];
-
-    QString warning = (m_dtcSourceIdx == 3)
-        ? QString("Are you sure you want to clear %1 fault codes?\n\n"
-                  "WARNING: Only clear Airbag DTCs after faults have been repaired!").arg(src)
-        : QString("Are you sure you want to clear %1 fault codes?\n\n"
-                  "NOTE: Active faults will reappear if the problem persists.").arg(src);
-
-    QMessageBox::StandardButton reply = QMessageBox::question(
-        this, "Clear DTC", warning,
-        QMessageBox::Yes | QMessageBox::No);
-
-    if (reply == QMessageBox::Yes) {
-        m_clearDtcBtn->setEnabled(false);
-        statusBar()->showMessage("Clearing " + src + " fault codes...");
-
-        WJDiagnostics::Module mod;
-        switch (m_dtcSourceIdx) {
-        case 1:  mod = WJDiagnostics::Module::MotorECU; break;
-        case 2:  mod = WJDiagnostics::Module::ABS; break;
-        case 3:  mod = WJDiagnostics::Module::Airbag; break;
-        default: mod = WJDiagnostics::Module::KLineTCM; break;
-        }
-
-        m_tcm->clearDTCs(mod, [this, src](bool success) {
-            m_clearDtcBtn->setEnabled(true);
-            if (success) {
-                m_dtcTable->setRowCount(0);
-                m_dtcCountLabel->setText(QString("Source: %1 - 0 fault codes").arg(src));
-                statusBar()->showMessage(src + " fault codes cleared");
-            } else {
-                statusBar()->showMessage(src + " fault codes could not be cleared!");
-            }
-        });
+    if (!m_elm->isConnected()) {
+        statusBar()->showMessage("Not connected!");
+        return;
     }
+    static const char* names[] = {"TCM","ECU","ABS","Airbag"};
+    int srcIdx = qBound(0, m_dtcSourceIdx, 3);
+    QString src = names[srcIdx];
+
+    m_readDtcBtn->setEnabled(false);
+    m_clearDtcBtn->setEnabled(false);
+    statusBar()->showMessage("Clearing " + src + " fault codes...");
+
+    WJDiagnostics::Module mod;
+    switch (srcIdx) {
+    case 1:  mod = WJDiagnostics::Module::MotorECU; break;
+    case 2:  mod = WJDiagnostics::Module::ABS; break;
+    case 3:  mod = WJDiagnostics::Module::Airbag; break;
+    default: mod = WJDiagnostics::Module::KLineTCM; break;
+    }
+
+    auto info = WJDiagnostics::moduleInfo(mod);
+    if (info.bus == WJDiagnostics::BusType::KLine) {
+        m_tcm->setActiveBus(WJDiagnostics::BusType::None);
+    }
+
+    QPointer<MainWindow> guard(this);
+    m_tcm->clearDTCs(mod, [guard, src](bool success) {
+        if (!guard) return;
+        auto *self = guard.data();
+        self->m_readDtcBtn->setEnabled(true);
+        self->m_clearDtcBtn->setEnabled(true);
+        if (success) {
+            self->m_dtcTable->setRowCount(0);
+            self->m_dtcCountLabel->setText(QString("Source: %1 - 0 fault codes").arg(src));
+            self->statusBar()->showMessage(src + " fault codes cleared");
+        } else {
+            self->statusBar()->showMessage(src + " fault codes could not be cleared!");
+        }
+    });
 }
 
 void MainWindow::onStartLiveData()
@@ -1144,15 +1152,8 @@ QString MainWindow::gearToString(TCMDiagnostics::Gear gear)
 }
 
 
-// --- Raw Data Read - Test v9: Streamlined diagnostics ---
-// Changes from v8:
-//   - ATFI check: accept "BUS INIT" OR "OK" (real ELM327 says "BUS INIT: ...OK")
-//   - TCM Phase 1: unlock + read all known + undiscovered blocks in one pass
-//   - ECU Phase 2: no-security blocks + new block scan
-//   - ECU Phase 3: security test with seed logging (12 combos, skip-on-NRC-level)
-//   - J1850 Phase 4: ABS/Airbag/BCM/Cluster/HVAC/SKIM (compact)
-//   - No code duplication: shared helper for post-unlock reads
-//   - parseTCMBlock30 now writes TCC slip, line pressure to TCMStatus
+
+// --- Raw Data Read - Test v10: ABS/Airbag DTC discovery + deep scan ---
 void MainWindow::onRawBusDump()
 {
     m_rawDumpBtn->setEnabled(false);
@@ -1169,269 +1170,216 @@ void MainWindow::onRawBusDump()
         m_rawDumpBtn->setText("Raw Data Read");
     };
 
-    m_logText->append("<font color='white'>========== TEST v9 ==========</font>");
-
-    // Run discovery phases
+    m_logText->append("<font color='white'>========== TEST v10 ==========</font>");
     runDiscoveryPhases(log, done);
 }
 
-
-// --- Test v9: Discovery Phases (sequential command runner) ---
 void MainWindow::runDiscoveryPhases(
     std::function<void(const QString&, const QString&)> log,
     std::function<void()> done)
 {
-    struct Step {
-        QString label;
-        QString action;
-    };
-
+    struct Step { QString label; QString action; };
     auto steps = std::make_shared<QList<Step>>();
 
-    // =====================================================================
-    // PHASE 1: TCM (K-Line 0x20) - Security + Block Discovery
-    // =====================================================================
-    steps->append(Step{"", "header:=== Phase 1: TCM (K-Line 0x20) ==="});
-    steps->append(Step{"", "switch:tcm"});
-    // Confirmed live data block
-    steps->append(Step{"TCM 0x30 (live)", "cmd:21 30"});
-    // Undiscovered blocks - scan for new data
-    steps->append(Step{"TCM 0x31", "cmd:21 31"});
-    steps->append(Step{"TCM 0x32", "cmd:21 32"});
-    steps->append(Step{"TCM 0x40", "cmd:21 40"});
-    steps->append(Step{"TCM 0x50", "cmd:21 50"});
-    steps->append(Step{"TCM 0x60", "cmd:21 60"});
-    steps->append(Step{"TCM 0x70", "cmd:21 70"});
-    steps->append(Step{"TCM 0x80", "cmd:21 80"});
-    steps->append(Step{"TCM 0x90", "cmd:21 90"});
-    steps->append(Step{"TCM 0xA0", "cmd:21 A0"});
-    steps->append(Step{"TCM 0xB0", "cmd:21 B0"});
-    steps->append(Step{"TCM 0xC0", "cmd:21 C0"});
-    steps->append(Step{"TCM 0xD0", "cmd:21 D0"});
-    steps->append(Step{"TCM 0xE0", "cmd:21 E0"});
-    steps->append(Step{"TCM 0xE1", "cmd:21 E1"});
-    steps->append(Step{"TCM 0xE2", "cmd:21 E2"});
-    steps->append(Step{"TCM 0xF0", "cmd:21 F0"});
-    // ECU identification
-    steps->append(Step{"TCM 1A 86 (mfr)", "cmd:1A 86"});
-    steps->append(Step{"TCM 1A 87 (id)", "cmd:1A 87"});
-    steps->append(Step{"TCM 1A 90 (VIN)", "cmd:1A 90"});
-    steps->append(Step{"TCM 1A 91 (HW)", "cmd:1A 91"});
-    steps->append(Step{"TCM 1A 92 (SW)", "cmd:1A 92"});
-    // IOControl / Adaptation / Routines (need security first but try anyway)
-    steps->append(Step{"TCM IOCtrl 30 10", "cmd:30 10 07 00 02"});
-    steps->append(Step{"TCM Adapt 3B 90", "cmd:3B 90"});
-
-    // =====================================================================
-    // PHASE 2: ECU (K-Line 0x15) - No-Security Blocks
-    // =====================================================================
-    steps->append(Step{"", "header:=== Phase 2: ECU (K-Line 0x15) No-Security ==="});
-    steps->append(Step{"", "switch:ecu"});
-    // Confirmed working blocks
-    steps->append(Step{"ECU 0x12 (temp/sens)", "cmd:21 12"});
-    steps->append(Step{"ECU 0x20 (MAF)", "cmd:21 20"});
-    steps->append(Step{"ECU 0x22 (rail/map)", "cmd:21 22"});
-    steps->append(Step{"ECU 0x28 (rpm/inj)", "cmd:21 28"});
-    // Scan unconfirmed blocks (may need security)
-    steps->append(Step{"ECU 0x10", "cmd:21 10"});
-    steps->append(Step{"ECU 0x14", "cmd:21 14"});
-    steps->append(Step{"ECU 0x16", "cmd:21 16"});
-    steps->append(Step{"ECU 0x18", "cmd:21 18"});
-    steps->append(Step{"ECU 0x1A", "cmd:21 1A"});
-    steps->append(Step{"ECU 0x1C", "cmd:21 1C"});
-    steps->append(Step{"ECU 0x1E", "cmd:21 1E"});
-    steps->append(Step{"ECU 0x24", "cmd:21 24"});
-    steps->append(Step{"ECU 0x26", "cmd:21 26"});
-    steps->append(Step{"ECU 0x2A", "cmd:21 2A"});
-    steps->append(Step{"ECU 0x30", "cmd:21 30"});
-    steps->append(Step{"ECU 0x40", "cmd:21 40"});
-    steps->append(Step{"ECU 0x50", "cmd:21 50"});
-    steps->append(Step{"ECU 0x60", "cmd:21 60"});
-    // Security-protected blocks (will get NRC 0x33 without unlock)
-    steps->append(Step{"ECU 0x62 (EGR/WG)", "cmd:21 62"});
-    steps->append(Step{"ECU 0xB0 (inj corr)", "cmd:21 B0"});
-    steps->append(Step{"ECU 0xB1 (boost ad)", "cmd:21 B1"});
-    steps->append(Step{"ECU 0xB2 (fuel ad)", "cmd:21 B2"});
-    // ECU identification
-    steps->append(Step{"ECU 1A 86", "cmd:1A 86"});
-    steps->append(Step{"ECU 1A 87", "cmd:1A 87"});
-    steps->append(Step{"ECU 1A 90 (VIN)", "cmd:1A 90"});
-    steps->append(Step{"ECU 1A 91", "cmd:1A 91"});
-    // Battery
-    steps->append(Step{"Battery (ATRV)", "cmd:ATRV"});
-
-    // =====================================================================
-    // PHASE 3: ECU Security Key Test
-    // =====================================================================
-    steps->append(Step{"", "header:=== Phase 3: ECU Security Key Test ==="});
-    steps->append(Step{"", "switch:ecu_sectest"});
-
-    // =====================================================================
-    // PHASE 4: J1850 VPW Module Scan
-    // =====================================================================
-    steps->append(Step{"", "header:=== Phase 4: J1850 VPW Modules ==="});
+    // =================================================================
+    // PHASE 1: ABS (0x40) DTC FORMAT DISCOVERY
+    // Real: "26 40 62 43 00 00 DD" — what is 0x43?
+    // =================================================================
+    steps->append(Step{"", "header:=== Phase 1: ABS (0x40) DTC Discovery ==="});
     steps->append(Step{"", "switch:j1850"});
-
-    // --- ABS (0x40) - verified ---
-    steps->append(Step{"", "header:--- ABS (0x40) ---"});
-    steps->append(Step{"ABS DTC", "j1850cmd:24 00 00"});
-    steps->append(Step{"ABS LF wheel", "j1850cmd:20 01 00"});
-    steps->append(Step{"ABS RF wheel", "j1850cmd:20 02 00"});
-    steps->append(Step{"ABS LR wheel", "j1850cmd:20 03 00"});
-    steps->append(Step{"ABS RR wheel", "j1850cmd:20 04 00"});
-    steps->append(Step{"ABS speed", "j1850cmd:20 10 00"});
-    steps->append(Step{"ABS PID 05", "j1850cmd:20 05 00"});
-    steps->append(Step{"ABS PID 06", "j1850cmd:20 06 00"});
+    steps->append(Step{"ABS 24 00 00 (current)", "j1850cmd:24 00 00"});
+    steps->append(Step{"ABS 20 37 00 (Chrysler DTC)", "j1850cmd:20 37 00"});
+    steps->append(Step{"ABS 18 00 FF", "j1850cmd:18 00 FF"});
+    steps->append(Step{"ABS 18 02 FF", "j1850cmd:18 02 FF"});
+    steps->append(Step{"ABS 18 02 FF 00", "j1850cmd:18 02 FF 00"});
+    steps->append(Step{"ABS 19 02 FF (UDS)", "j1850cmd:19 02 FF"});
+    steps->append(Step{"ABS 24 01 00", "j1850cmd:24 01 00"});
+    steps->append(Step{"ABS 24 02 00", "j1850cmd:24 02 00"});
+    steps->append(Step{"ABS 24 37 00", "j1850cmd:24 37 00"});
+    steps->append(Step{"ABS 24 FF 00", "j1850cmd:24 FF 00"});
+    steps->append(Step{"ABS 22 00 00", "j1850cmd:22 00 00"});
+    steps->append(Step{"ABS 22 FF 00", "j1850cmd:22 FF 00"});
+    steps->append(Step{"ABS 10 01 (DiagSess)", "j1850cmd:10 01 00"});
+    steps->append(Step{"ABS 24 00 00 (after)", "j1850cmd:24 00 00"});
+    // Diag header mode
+    steps->append(Step{"", "j1850hdr:ATSH244010"});
+    steps->append(Step{"ABS hdr10 24 00", "j1850cmd:24 00 00"});
+    steps->append(Step{"ABS hdr10 18 02 FF", "j1850cmd:18 02 FF"});
+    steps->append(Step{"", "j1850hdr:ATSH244022"});
+    steps->append(Step{"", "j1850hdr:ATRA40"});
+    // Extra PIDs
+    steps->append(Step{"", "header:--- ABS Extra PIDs ---"});
     steps->append(Step{"ABS PID 07", "j1850cmd:20 07 00"});
     steps->append(Step{"ABS PID 08", "j1850cmd:20 08 00"});
-    steps->append(Step{"ABS PID 09", "j1850cmd:20 09 00"});
-    steps->append(Step{"ABS PID 0A", "j1850cmd:20 0A 00"});
-    steps->append(Step{"ABS svc 1A 87", "j1850cmd:1A 87 00"});
+    steps->append(Step{"ABS PID 0B", "j1850cmd:20 0B 00"});
+    steps->append(Step{"ABS PID 0F", "j1850cmd:20 0F 00"});
+    steps->append(Step{"ABS PID 11", "j1850cmd:20 11 00"});
+    steps->append(Step{"ABS PID 20", "j1850cmd:20 20 00"});
+    steps->append(Step{"ABS PID 30", "j1850cmd:20 30 00"});
+    steps->append(Step{"ABS 1A 80", "j1850cmd:1A 80 00"});
+    steps->append(Step{"ABS 1A 86", "j1850cmd:1A 86 00"});
+    steps->append(Step{"ABS 1A 87", "j1850cmd:1A 87 00"});
 
-    // --- Airbag (0x60) - verified ---
-    steps->append(Step{"", "header:--- Airbag (0x60) ---"});
+    // =================================================================
+    // PHASE 2: AIRBAG (0x60) DTC DISCOVERY
+    // "28 37 00" -> NRC 0x12. Try everything.
+    // =================================================================
+    steps->append(Step{"", "header:=== Phase 2: Airbag (0x60) DTC Discovery ==="});
     steps->append(Step{"", "j1850hdr:ATSH246022"});
     steps->append(Step{"", "j1850hdr:ATRA60"});
-    steps->append(Step{"Airbag DTC", "j1850cmd:28 37 00"});
-    steps->append(Step{"Airbag svc 1A 87", "j1850cmd:1A 87 00"});
+    steps->append(Step{"Airbag 28 00 00", "j1850cmd:28 00 00"});
+    steps->append(Step{"Airbag 28 01 00", "j1850cmd:28 01 00"});
+    steps->append(Step{"Airbag 28 02 00", "j1850cmd:28 02 00"});
+    steps->append(Step{"Airbag 28 03 00", "j1850cmd:28 03 00"});
+    steps->append(Step{"Airbag 28 10 00", "j1850cmd:28 10 00"});
+    steps->append(Step{"Airbag 28 37 00", "j1850cmd:28 37 00"});
+    steps->append(Step{"Airbag 28 FF 00", "j1850cmd:28 FF 00"});
+    steps->append(Step{"Airbag 20 00 00", "j1850cmd:20 00 00"});
+    steps->append(Step{"Airbag 20 37 00", "j1850cmd:20 37 00"});
+    steps->append(Step{"Airbag 18 02 FF", "j1850cmd:18 02 FF"});
+    steps->append(Step{"Airbag 19 02 FF (UDS)", "j1850cmd:19 02 FF"});
+    steps->append(Step{"Airbag 22 00 00", "j1850cmd:22 00 00"});
+    steps->append(Step{"Airbag 24 00 00", "j1850cmd:24 00 00"});
+    steps->append(Step{"Airbag 10 01 (DiagSess)", "j1850cmd:10 01 00"});
+    steps->append(Step{"Airbag 28 37 (after)", "j1850cmd:28 37 00"});
+    steps->append(Step{"Airbag 28 00 (after)", "j1850cmd:28 00 00"});
+    // Diag header
+    steps->append(Step{"", "j1850hdr:ATSH246010"});
+    steps->append(Step{"Airbag hdr10 28 37", "j1850cmd:28 37 00"});
+    steps->append(Step{"Airbag hdr10 18 02 FF", "j1850cmd:18 02 FF"});
+    steps->append(Step{"", "j1850hdr:ATSH246022"});
+    // ECU ID
+    steps->append(Step{"Airbag 1A 80", "j1850cmd:1A 80 00"});
+    steps->append(Step{"Airbag 1A 86", "j1850cmd:1A 86 00"});
+    steps->append(Step{"Airbag 1A 87", "j1850cmd:1A 87 00"});
 
-    // --- BCM (0x80) ---
-    steps->append(Step{"", "header:--- BCM (0x80) ---"});
-    steps->append(Step{"", "j1850hdr:ATSH248022"});
-    steps->append(Step{"", "j1850hdr:ATRA80"});
-    steps->append(Step{"BCM DTC 00", "j1850cmd:20 00 00"});
-    steps->append(Step{"BCM DTC 37", "j1850cmd:20 37 00"});
-    steps->append(Step{"BCM PID 01", "j1850cmd:20 01 00"});
-    steps->append(Step{"BCM PID 02", "j1850cmd:20 02 00"});
-    steps->append(Step{"BCM PID 03", "j1850cmd:20 03 00"});
-    steps->append(Step{"BCM PID 04", "j1850cmd:20 04 00"});
-    steps->append(Step{"BCM svc 1A 87", "j1850cmd:1A 87 00"});
-    steps->append(Step{"BCM svc 22 01", "j1850cmd:22 00 01"});
-    steps->append(Step{"BCM svc 22 02", "j1850cmd:22 00 02"});
-
-    // --- Cluster (0x90) ---
-    steps->append(Step{"", "header:--- Cluster (0x90) ---"});
-    steps->append(Step{"", "j1850hdr:ATSH249022"});
-    steps->append(Step{"", "j1850hdr:ATRA90"});
-    steps->append(Step{"Cluster DTC 00", "j1850cmd:30 00 00"});
-    steps->append(Step{"Cluster DTC 37", "j1850cmd:30 37 00"});
-    steps->append(Step{"Cluster PID 01", "j1850cmd:30 01 00"});
-    steps->append(Step{"Cluster PID 02", "j1850cmd:30 02 00"});
-    steps->append(Step{"Cluster svc 1A 87", "j1850cmd:1A 87 00"});
-    steps->append(Step{"Cluster svc 22 01", "j1850cmd:22 00 01"});
-
-    // --- HVAC (0x68) ---
-    steps->append(Step{"", "header:--- HVAC (0x68) ---"});
+    // =================================================================
+    // PHASE 3: HVAC (0x68) FULL PID SCAN
+    // =================================================================
+    steps->append(Step{"", "header:=== Phase 3: HVAC (0x68) Full PID Scan ==="});
     steps->append(Step{"", "j1850hdr:ATSH246822"});
     steps->append(Step{"", "j1850hdr:ATRA68"});
-    steps->append(Step{"HVAC DTC 00", "j1850cmd:28 00 00"});
-    steps->append(Step{"HVAC DTC 37", "j1850cmd:28 37 00"});
-    steps->append(Step{"HVAC PID 01", "j1850cmd:28 01 00"});
-    steps->append(Step{"HVAC PID 02", "j1850cmd:28 02 00"});
-    steps->append(Step{"HVAC PID 03", "j1850cmd:28 03 00"});
-    steps->append(Step{"HVAC svc 1A 87", "j1850cmd:1A 87 00"});
-    steps->append(Step{"HVAC svc 22 01", "j1850cmd:22 00 01"});
+    for (int pid = 0x04; pid <= 0x20; pid++)
+        steps->append(Step{QString("HVAC %1").arg(pid,2,16,QChar('0')).toUpper(),
+            QString("j1850cmd:28 %1 00").arg(pid,2,16,QChar('0')).toUpper()});
+    steps->append(Step{"HVAC 18 02 FF (DTC)", "j1850cmd:18 02 FF"});
+    steps->append(Step{"HVAC 1A 86", "j1850cmd:1A 86 00"});
+    steps->append(Step{"HVAC 1A 87", "j1850cmd:1A 87 00"});
 
-    // --- SKIM (0x62) ---
-    steps->append(Step{"", "header:--- SKIM (0x62) ---"});
+    // =================================================================
+    // PHASE 4: TCM BLOCK DEEP ANALYSIS
+    // =================================================================
+    steps->append(Step{"", "header:=== Phase 4: TCM (0x20) Deep Analysis ==="});
+    steps->append(Step{"", "switch:tcm"});
+    steps->append(Step{"TCM 0x30 (live)", "cmd:21 30"});
+    steps->append(Step{"TCM 0x31 (shift)", "cmd:21 31"});
+    steps->append(Step{"TCM 0x32", "cmd:21 32"});
+    steps->append(Step{"TCM 0x33", "cmd:21 33"});
+    steps->append(Step{"TCM 0x34", "cmd:21 34"});
+    steps->append(Step{"TCM 0x35", "cmd:21 35"});
+    steps->append(Step{"TCM 0x38", "cmd:21 38"});
+    steps->append(Step{"TCM 0x3F", "cmd:21 3F"});
+    steps->append(Step{"TCM 0x60", "cmd:21 60"});
+    steps->append(Step{"TCM 0x80", "cmd:21 80"});
+    steps->append(Step{"TCM 0xC0 (lookup)", "cmd:21 C0"});
+    steps->append(Step{"TCM 22 00 01", "cmd:22 00 01"});
+    steps->append(Step{"TCM 22 F1 00", "cmd:22 F1 00"});
+
+    // =================================================================
+    // PHASE 5: ECU UNKNOWN BLOCKS
+    // =================================================================
+    steps->append(Step{"", "header:=== Phase 5: ECU (0x15) Unknown Blocks ==="});
+    steps->append(Step{"", "switch:ecu"});
+    steps->append(Step{"ECU 0x12 (ref)", "cmd:21 12"});
+    steps->append(Step{"ECU 0x26 (sensors)", "cmd:21 26"});
+    steps->append(Step{"ECU 0x10 (idle)", "cmd:21 10"});
+    steps->append(Step{"ECU 0x14", "cmd:21 14"});
+    steps->append(Step{"ECU 0x2C", "cmd:21 2C"});
+    steps->append(Step{"ECU 0x2E", "cmd:21 2E"});
+    steps->append(Step{"ECU 0x32", "cmd:21 32"});
+    steps->append(Step{"ECU 0x34", "cmd:21 34"});
+    steps->append(Step{"ECU 0x38", "cmd:21 38"});
+    steps->append(Step{"ECU 0x42", "cmd:21 42"});
+    steps->append(Step{"ECU 0x44", "cmd:21 44"});
+    steps->append(Step{"ECU 0x48", "cmd:21 48"});
+    steps->append(Step{"ECU 22 00 01", "cmd:22 00 01"});
+    steps->append(Step{"ECU 22 F1 90", "cmd:22 F1 90"});
+    steps->append(Step{"Battery", "cmd:ATRV"});
+
+    // =================================================================
+    // PHASE 6: ECU SECURITY (4 attempts)
+    // =================================================================
+    steps->append(Step{"", "header:=== Phase 6: ECU Security ==="});
+    steps->append(Step{"", "switch:ecu_sectest"});
+
+    // =================================================================
+    // PHASE 7: SKIM + FUNCTIONAL ADDRESSING
+    // =================================================================
+    steps->append(Step{"", "header:=== Phase 7: SKIM + Functional ==="});
+    steps->append(Step{"", "switch:j1850"});
     steps->append(Step{"", "j1850hdr:ATSH246222"});
     steps->append(Step{"", "j1850hdr:ATRA62"});
-    steps->append(Step{"SKIM DTC 00", "j1850cmd:22 00 00"});
-    steps->append(Step{"SKIM DTC 37", "j1850cmd:22 37 00"});
-    steps->append(Step{"SKIM PID 01", "j1850cmd:22 01 00"});
-    steps->append(Step{"SKIM svc 1A 87", "j1850cmd:1A 87 00"});
+    steps->append(Step{"SKIM 22 00 00", "j1850cmd:22 00 00"});
+    steps->append(Step{"SKIM 1A 87 (retry)", "j1850cmd:1A 87 00"});
+    steps->append(Step{"SKIM 1A 86", "j1850cmd:1A 86 00"});
+    steps->append(Step{"SKIM 10 01", "j1850cmd:10 01 00"});
+    steps->append(Step{"SKIM 20 00 00", "j1850cmd:20 00 00"});
+    // Functional addressing
+    steps->append(Step{"", "header:--- Functional Addressing ---"});
+    steps->append(Step{"", "j1850hdr:ATSH24FF22"});
+    steps->append(Step{"Func 1A 87", "j1850cmd:1A 87 00"});
+    steps->append(Step{"Func 18 02 FF", "j1850cmd:18 02 FF"});
 
-    // --- Quick probes: Radio/EVIC/MemSeat/Liftgate ---
-    steps->append(Step{"", "header:--- Other Modules ---"});
-    steps->append(Step{"", "j1850hdr:ATSH248722"});
-    steps->append(Step{"Radio probe", "j1850cmd:27 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH242A22"});
-    steps->append(Step{"EVIC probe", "j1850cmd:0A 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH249822"});
-    steps->append(Step{"MemSeat probe", "j1850cmd:38 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH24A022"});
-    steps->append(Step{"Liftgate probe", "j1850cmd:40 00 00"});
-
-    // --- Final ---
+    // Final
     steps->append(Step{"", "header:--- Final ---"});
     steps->append(Step{"Battery", "cmd:ATRV"});
 
-    // =====================================================================
-    // Step Runner
-    // =====================================================================
+    // =================================================================
+    // STEP RUNNER
+    // =================================================================
     auto idx = std::make_shared<int>(0);
     auto run = std::make_shared<std::function<void()>>();
 
     *run = [this, steps, idx, run, log, done]() {
         if (*idx >= steps->size()) {
-            m_logText->append("<font color='white'>========== TEST v9 BITTI ==========</font>");
+            m_logText->append("<font color='white'>========== TEST v10 BITTI ==========</font>");
             log("#ffff00", "COPY LOG ile kopyala!");
             done();
             return;
         }
-
         auto &step = steps->at(*idx);
         (*idx)++;
 
-        // --- Header ---
         if (step.action.startsWith("header:")) {
             log("#00ffcc", step.action.mid(7));
-            (*run)();
-            return;
+            (*run)(); return;
         }
-
-        // --- K-Line TCM switch ---
         if (step.action == "switch:tcm") {
             m_tcm->switchToModule(WJDiagnostics::Module::KLineTCM, [this, log, run](bool ok) {
-                log(ok ? "#60b8a0" : "#ff3333", ok ? "TCM K-Line session OK" : "TCM K-Line FAIL");
+                log(ok ? "#60b8a0" : "#ff3333", ok ? "TCM OK" : "TCM FAIL");
                 (*run)();
-            });
-            return;
+            }); return;
         }
-
-        // --- K-Line ECU switch ---
         if (step.action == "switch:ecu") {
             m_tcm->switchToModule(WJDiagnostics::Module::MotorECU, [this, log, run](bool ok) {
-                log(ok ? "#60b8a0" : "#ff3333", ok ? "ECU K-Line session OK" : "ECU K-Line FAIL");
+                log(ok ? "#60b8a0" : "#ff3333", ok ? "ECU OK" : "ECU FAIL");
                 (*run)();
-            });
-            return;
+            }); return;
         }
-
-        // --- ECU Security Test (Phase 3) ---
         if (step.action == "switch:ecu_sectest") {
-            // EDC15C2 security: NRC 0x12 = subFunctionNotSupported (format error)
-            // Need to find correct seed level + key format
             struct SecAttempt {
-                const char* label;
-                QString seedCmd;    // "27 01" or "27 03" or "27 41"
-                uint8_t keyLevel;   // 0x02, 0x04, 0x42
-                bool twoByteKey;    // true=2-byte key, false=4-byte key
+                const char* label; QString seedCmd; uint8_t keyLevel; bool twoByteKey;
                 uint32_t xor1, xor2, magic;
             };
             auto attempts = std::make_shared<QVector<SecAttempt>>(QVector<SecAttempt>{
-                // Level 01/02, 2-byte key
-                {"Lvl1 2B EDC16",    "27 01", 0x02, true,  0x1289, 0x0A22, 0x1C60020},
-                {"Lvl1 2B EDC15P",   "27 01", 0x02, true,  0xDA1C, 0xF781, 0x3800000},
-                {"Lvl1 2B EDC15V",   "27 01", 0x02, true,  0x508D, 0xA647, 0x3800000},
-                {"Lvl1 2B EDC15VM+", "27 01", 0x02, true,  0xF25E, 0x6533, 0x3800000},
-                // Level 01/02, 4-byte key
-                {"Lvl1 4B EDC16",    "27 01", 0x02, false, 0x1289, 0x0A22, 0x1C60020},
-                {"Lvl1 4B EDC15P",   "27 01", 0x02, false, 0xDA1C, 0xF781, 0x3800000},
-                // Level 03/04
-                {"Lvl3 2B EDC16",    "27 03", 0x04, true,  0x1289, 0x0A22, 0x1C60020},
-                {"Lvl3 4B EDC16",    "27 03", 0x04, false, 0x1289, 0x0A22, 0x1C60020},
-                // Level 41/42 (Bosch bootloader)
-                {"Lvl41 4B EDC15P",  "27 41", 0x42, false, 0xDA1C, 0xF781, 0x3800000},
-                {"Lvl41 4B EDC15V",  "27 41", 0x42, false, 0x508D, 0xA647, 0x3800000},
-                {"Lvl41 4B EDC15VM+","27 41", 0x42, false, 0xF25E, 0x6533, 0x3800000},
-                {"Lvl41 4B EDC16",   "27 41", 0x42, false, 0x1289, 0x0A22, 0x1C60020},
+                {"EDC16",    "27 01", 0x02, true, 0x1289, 0x0A22, 0x1C60020},
+                {"EDC15P",   "27 01", 0x02, true, 0xDA1C, 0xF781, 0x3800000},
+                {"EDC15V",   "27 01", 0x02, true, 0x508D, 0xA647, 0x3800000},
+                {"EDC15VM+", "27 01", 0x02, true, 0xF25E, 0x6533, 0x3800000},
             });
             auto aIdx = std::make_shared<int>(0);
-            auto tryAttempt = std::make_shared<std::function<void()>>();
-
-            // Helper: read protected blocks after successful unlock
-            auto readProtected = [this, log, run]() {
+            auto tryA = std::make_shared<std::function<void()>>();
+            auto readProt = [this, log, run]() {
                 m_elm->sendCommand("21 62", [this, log, run](const QString &r) {
                 log("#00ff88", "ECU 0x62: " + r.trimmed());
                 m_elm->sendCommand("21 B0", [this, log, run](const QString &r) {
@@ -1445,164 +1393,59 @@ void MainWindow::runDiscoveryPhases(
                 (*run)();
                 });});});});});
             };
-
-            *tryAttempt = [this, attempts, aIdx, tryAttempt, log, run, readProtected]() {
+            *tryA = [this, attempts, aIdx, tryA, log, run, readProt]() {
                 if (*aIdx >= attempts->size()) {
-                    log("#ff8800", "ECU security: all attempts exhausted");
-                    (*run)();
-                    return;
+                    log("#ff8800", "ECU security: all exhausted");
+                    (*run)(); return;
                 }
                 auto &a = attempts->at(*aIdx);
-                log("#c0c0ff", QString("[%1/%2] %3 (seed=%4, keyLvl=0x%5)")
-                    .arg(*aIdx + 1).arg(attempts->size()).arg(a.label)
-                    .arg(a.seedCmd).arg(a.keyLevel, 2, 16, QChar('0')));
-
-                // Full K-Line reinit for each attempt
-                m_elm->sendCommand("ATZ", [this, attempts, aIdx, tryAttempt, log, run, a, readProtected](const QString &) {
-                QTimer::singleShot(500, this, [this, attempts, aIdx, tryAttempt, log, run, a, readProtected]() {
-                m_elm->sendCommand("ATE1", [this, attempts, aIdx, tryAttempt, log, run, a, readProtected](const QString &) {
-                m_elm->sendCommand("ATH1", [this, attempts, aIdx, tryAttempt, log, run, a, readProtected](const QString &) {
-                m_elm->sendCommand("ATWM8115F13E", [this, attempts, aIdx, tryAttempt, log, run, a, readProtected](const QString &) {
-                m_elm->sendCommand("ATSH8115F1", [this, attempts, aIdx, tryAttempt, log, run, a, readProtected](const QString &) {
-                m_elm->sendCommand("ATSP5", [this, attempts, aIdx, tryAttempt, log, run, a, readProtected](const QString &) {
-                m_elm->sendCommand("ATFI", [this, attempts, aIdx, tryAttempt, log, run, a, readProtected](const QString &fi) {
-                    // Accept "BUS INIT: ...OK" or just "OK"
-                    bool atfiOk = fi.contains("OK", Qt::CaseInsensitive) ||
-                                  fi.contains("BUS INIT", Qt::CaseInsensitive);
-                    if (!atfiOk || fi.contains("ERROR", Qt::CaseInsensitive)) {
-                        log("#ff8800", "ATFI fail: " + fi.trimmed());
-                        (*aIdx)++;
-                        QTimer::singleShot(2000, this, [tryAttempt]() { (*tryAttempt)(); });
-                        return;
+                log("#c0c0ff", QString("[%1/%2] %3").arg(*aIdx+1).arg(attempts->size()).arg(a.label));
+                m_elm->sendCommand("ATZ", [this, attempts, aIdx, tryA, log, run, a, readProt](const QString &) {
+                QTimer::singleShot(500, this, [this, attempts, aIdx, tryA, log, run, a, readProt]() {
+                m_elm->sendCommand("ATE1", [this, attempts, aIdx, tryA, log, run, a, readProt](const QString &) {
+                m_elm->sendCommand("ATH1", [this, attempts, aIdx, tryA, log, run, a, readProt](const QString &) {
+                m_elm->sendCommand("ATWM8115F13E", [this, attempts, aIdx, tryA, log, run, a, readProt](const QString &) {
+                m_elm->sendCommand("ATSH8115F1", [this, attempts, aIdx, tryA, log, run, a, readProt](const QString &) {
+                m_elm->sendCommand("ATSP5", [this, attempts, aIdx, tryA, log, run, a, readProt](const QString &) {
+                m_elm->sendCommand("ATFI", [this, attempts, aIdx, tryA, log, run, a, readProt](const QString &fi) {
+                    if (fi.contains("ERROR") || (!fi.contains("OK") && !fi.contains("BUS INIT"))) {
+                        (*aIdx)++; QTimer::singleShot(2000, this, [tryA](){ (*tryA)(); }); return;
                     }
-                    log("#60b8a0", "ATFI: " + fi.trimmed());
-                m_elm->sendCommand("81", [this, attempts, aIdx, tryAttempt, log, run, a, readProtected](const QString &sc) {
-                    log("#60b8a0", "StartComm: " + sc.trimmed());
-                m_elm->sendCommand(a.seedCmd, [this, attempts, aIdx, tryAttempt, log, run, a, readProtected](const QString &seedResp) {
-                    log("#60b8a0", "Seed resp: " + seedResp.trimmed());
-                    QStringList parts = seedResp.trimmed().split(' ');
-
-                    // Find "67" positive response
-                    bool hasSeed = false;
-                    int seedStart = -1;
-                    for (int i = 0; i < parts.size(); i++) {
-                        if (parts[i].compare("67", Qt::CaseInsensitive) == 0) {
-                            hasSeed = true; seedStart = i; break;
-                        }
-                    }
-
-                    if (hasSeed && seedStart + 3 < parts.size()) {
-                        bool ok1, ok2;
-                        uint8_t s0 = parts[seedStart + 2].toUInt(&ok1, 16);
-                        uint8_t s1 = parts[seedStart + 3].toUInt(&ok2, 16);
-                        if (ok1 && ok2) {
-                            // Log raw seed for analysis
-                            log("#c080ff", QString("Raw seed: %1 %2 (0x%3)")
-                                .arg(s0, 2, 16, QChar('0')).arg(s1, 2, 16, QChar('0'))
-                                .arg((s0<<8)|s1, 4, 16, QChar('0')));
-
-                            // EDC15 ProcessKey algorithm
-                            uint32_t KR1 = (s0 << 8) | s1;
-                            uint32_t KR2 = 0;
-                            uint32_t Key3 = a.magic;
-                            for (int i = 0; i < 5; i++) {
-                                uint32_t KeyTemp = KR1 & 0x8000;
-                                KR1 = (KR1 << 1) & 0xFFFFFFFF;
-                                if ((KeyTemp & 0x0FFFF) == 0) {
-                                    uint32_t t2 = KR2 & 0xFFFF;
-                                    KeyTemp = t2 + (KeyTemp & 0xFFFF0000);
-                                    KR1 &= 0xFFFE;
-                                    t2 = (KeyTemp & 0xFFFF) >> 0x0F;
-                                    KeyTemp = (KeyTemp & 0xFFFF0000) + t2;
-                                    KR1 |= KeyTemp;
-                                    KR2 = (KR2 << 1) & 0xFFFFFFFF;
-                                } else {
-                                    KeyTemp = (KR2 + KR2) & 0xFFFFFFFF;
-                                    KR1 &= 0xFFFE;
-                                    uint32_t t2 = (KeyTemp & 0xFF) | 1;
-                                    Key3 = (t2 + (Key3 & 0xFFFFFF00)) & 0xFFFFFFFF;
-                                    Key3 = (Key3 & 0xFFFF00FF) | KeyTemp;
-                                    t2 = (KR2 & 0xFFFF) >> 0x0F;
-                                    KeyTemp = (t2 + (KeyTemp & 0xFFFF0000)) | KR1;
-                                    Key3 = (Key3 ^ a.xor1) & 0xFFFFFFFF;
-                                    KeyTemp = (KeyTemp ^ a.xor2) & 0xFFFFFFFF;
-                                    KR2 = Key3;
-                                    KR1 = KeyTemp;
-                                }
+                m_elm->sendCommand("81", [this, attempts, aIdx, tryA, log, run, a, readProt](const QString &) {
+                m_elm->sendCommand(a.seedCmd, [this, attempts, aIdx, tryA, log, run, a, readProt](const QString &sr) {
+                    QStringList p = sr.trimmed().split(' ');
+                    int si = -1;
+                    for (int i = 0; i < p.size(); i++) if (p[i].compare("67",Qt::CaseInsensitive)==0) { si=i; break; }
+                    if (si >= 0 && si+3 < p.size()) {
+                        bool o1,o2;
+                        uint8_t s0=p[si+2].toUInt(&o1,16), s1=p[si+3].toUInt(&o2,16);
+                        if (o1&&o2) {
+                            log("#c080ff", QString("Seed: %1 %2").arg(s0,2,16,QChar('0')).arg(s1,2,16,QChar('0')));
+                            uint32_t KR1=(s0<<8)|s1, KR2=0, K3=a.magic;
+                            for (int i=0;i<5;i++) {
+                                uint32_t KT=KR1&0x8000; KR1=(KR1<<1)&0xFFFFFFFF;
+                                if ((KT&0xFFFF)==0) { uint32_t t2=KR2&0xFFFF; KT=t2+(KT&0xFFFF0000); KR1&=0xFFFE; t2=(KT&0xFFFF)>>15; KT=(KT&0xFFFF0000)+t2; KR1|=KT; KR2=(KR2<<1)&0xFFFFFFFF; }
+                                else { KT=(KR2+KR2)&0xFFFFFFFF; KR1&=0xFFFE; uint32_t t2=(KT&0xFF)|1; K3=(t2+(K3&0xFFFFFF00))&0xFFFFFFFF; K3=(K3&0xFFFF00FF)|KT; t2=(KR2&0xFFFF)>>15; KT=(t2+(KT&0xFFFF0000))|KR1; K3=(K3^a.xor1)&0xFFFFFFFF; KT=(KT^a.xor2)&0xFFFFFFFF; KR2=K3; KR1=KT; }
                             }
-                            KR1 &= 0xFFFF;
-                            KR2 &= 0xFFFF;
-
-                            QString keyCmd;
-                            if (a.twoByteKey) {
-                                keyCmd = QString("27 %1 %2 %3")
-                                    .arg(a.keyLevel, 2, 16, QChar('0'))
-                                    .arg((KR1>>8)&0xFF, 2, 16, QChar('0'))
-                                    .arg(KR1&0xFF, 2, 16, QChar('0')).toUpper();
-                            } else {
-                                keyCmd = QString("27 %1 %2 %3 %4 %5")
-                                    .arg(a.keyLevel, 2, 16, QChar('0'))
-                                    .arg((KR1>>8)&0xFF, 2, 16, QChar('0'))
-                                    .arg(KR1&0xFF, 2, 16, QChar('0'))
-                                    .arg((KR2>>8)&0xFF, 2, 16, QChar('0'))
-                                    .arg(KR2&0xFF, 2, 16, QChar('0')).toUpper();
-                            }
-                            log("#c080ff", QString("Computed key: %1").arg(keyCmd));
-
-                            m_elm->sendCommand(keyCmd, [this, attempts, aIdx, tryAttempt, log, run, readProtected](const QString &keyResp) {
-                                // Check for positive response
-                                if (keyResp.contains("67", Qt::CaseInsensitive) &&
-                                    !keyResp.contains("7F", Qt::CaseInsensitive)) {
-                                    log("#00ff00", QString("*** ECU UNLOCKED with %1! ***")
-                                        .arg(attempts->at(*aIdx).label));
-                                    readProtected();
-                                    return;
+                            KR1&=0xFFFF;
+                            QString kc=QString("27 02 %1 %2").arg((KR1>>8)&0xFF,2,16,QChar('0')).arg(KR1&0xFF,2,16,QChar('0')).toUpper();
+                            log("#c080ff", "Key: " + kc);
+                            m_elm->sendCommand(kc, [this, attempts, aIdx, tryA, log, run, readProt](const QString &kr) {
+                                if (kr.contains("67",Qt::CaseInsensitive) && !kr.contains("7F",Qt::CaseInsensitive)) {
+                                    log("#00ff00", QString("*** UNLOCKED: %1 ***").arg(attempts->at(*aIdx).label));
+                                    readProt(); return;
                                 }
-                                // Extract NRC for logging
-                                QString nrc;
-                                QStringList rp = keyResp.trimmed().split(' ');
-                                for (int i = 0; i < rp.size()-1; i++) {
-                                    if (rp[i].compare("7F", Qt::CaseInsensitive) == 0 &&
-                                        rp[i+1].compare("27", Qt::CaseInsensitive) == 0 &&
-                                        i+2 < rp.size()) {
-                                        nrc = rp[i+2];
-                                    }
-                                }
-                                log("#ff8800", QString("%1 -> NRC 0x%2: %3")
-                                    .arg(attempts->at(*aIdx).label, nrc, keyResp.trimmed()));
-                                (*aIdx)++;
-                                int delay = (nrc.compare("37", Qt::CaseInsensitive) == 0) ? 10000 : 2000;
-                                QTimer::singleShot(delay, this, [tryAttempt]() { (*tryAttempt)(); });
+                                QString nrc; QStringList rp=kr.trimmed().split(' ');
+                                for (int i=0;i<rp.size()-1;i++) if (rp[i].compare("7F",Qt::CaseInsensitive)==0&&i+2<rp.size()) nrc=rp[i+2];
+                                log("#ff8800", QString("%1 -> NRC 0x%2").arg(attempts->at(*aIdx).label,nrc));
+                                (*aIdx)++; QTimer::singleShot(nrc=="37"?10000:2000, this, [tryA](){ (*tryA)(); });
                             });
-                        } else {
-                            log("#ff8800", "Seed parse fail");
-                            (*aIdx)++;
-                            QTimer::singleShot(1000, this, [tryAttempt]() { (*tryAttempt)(); });
-                        }
-                    } else {
-                        // No seed - level not supported, skip all with same seedCmd
-                        log("#ff8800", "No seed (level not supported): " + seedResp.trimmed());
-                        QString skipCmd = a.seedCmd;
-                        while (*aIdx < attempts->size() && attempts->at(*aIdx).seedCmd == skipCmd)
-                            (*aIdx)++;
-                        QTimer::singleShot(1000, this, [tryAttempt]() { (*tryAttempt)(); });
-                    }
-                });
-                });
-                });
-                });
-                });
-                });
-                });
-                });
-                });
-                });
+                        } else { (*aIdx)++; QTimer::singleShot(1000, this, [tryA](){ (*tryA)(); }); }
+                    } else { log("#ff8800","No seed: "+sr.trimmed()); (*aIdx)++; QTimer::singleShot(1000, this, [tryA](){ (*tryA)(); }); }
+                });});});});});});});});});});
             };
-            (*tryAttempt)();
-            return;
+            (*tryA)(); return;
         }
-
-        // --- J1850 switch ---
         if (step.action == "switch:j1850") {
             m_elm->sendCommand("ATZ", [this, log, run](const QString &) {
             m_elm->sendCommand("ATE1", [this, log, run](const QString &) {
@@ -1611,49 +1454,34 @@ void MainWindow::runDiscoveryPhases(
             m_elm->sendCommand("ATSP2", [this, log, run](const QString &) {
             m_elm->sendCommand("ATSH244022", [this, log, run](const QString &) {
             m_elm->sendCommand("ATRA40", [this, log, run](const QString &) {
-                log("#60b8a0", "J1850 VPW ready (ABS header)");
+                log("#60b8a0", "J1850 VPW ready");
                 (*run)();
             });});});});});});});
             return;
         }
-
-        // --- J1850 header change ---
         if (step.action.startsWith("j1850hdr:")) {
-            QString hdr = step.action.mid(9);
-            m_elm->sendCommand(hdr, [run](const QString &) {
-                (*run)();
-            });
+            m_elm->sendCommand(step.action.mid(9), [run](const QString &) { (*run)(); });
             return;
         }
-
-        // --- J1850 command ---
         if (step.action.startsWith("j1850cmd:")) {
-            QString cmd = step.action.mid(9);
-            m_elm->sendCommand(cmd, [this, log, run, step](const QString &resp) {
-                bool noData = resp.contains("NO DATA") || resp.contains("ERROR") ||
-                              resp.contains("UNABLE") || resp.contains("?") || resp.contains("TIMEOUT");
-                log(noData ? "#666666" : "#00ff88", step.label + ": " + resp.trimmed());
+            m_elm->sendCommand(step.action.mid(9), [this, log, run, step](const QString &resp) {
+                bool nd = resp.contains("NO DATA")||resp.contains("ERROR")||resp.contains("UNABLE")||resp.contains("?")||resp.contains("TIMEOUT");
+                bool nrc = resp.contains("7F");
+                log(nd ? "#666666" : (nrc ? "#ff8800" : "#00ff88"), step.label + ": " + resp.trimmed());
                 (*run)();
-            }, 1500);
+            }, 2000);
             return;
         }
-
-        // --- K-Line command ---
         if (step.action.startsWith("cmd:")) {
-            QString cmd = step.action.mid(4);
-            m_elm->sendCommand(cmd, [this, log, run, step](const QString &resp) {
-                bool noData = resp.contains("NO DATA") || resp.contains("ERROR") ||
-                              resp.contains("7F") || resp.contains("TIMEOUT");
-                log(noData ? "#666666" : "#00ff88", step.label + ": " + resp.trimmed());
+            m_elm->sendCommand(step.action.mid(4), [this, log, run, step](const QString &resp) {
+                bool bad = resp.contains("NO DATA")||resp.contains("ERROR")||resp.contains("7F")||resp.contains("TIMEOUT");
+                log(bad ? "#666666" : "#00ff88", step.label + ": " + resp.trimmed());
                 (*run)();
             });
             return;
         }
-
-        // Unknown action, skip
         (*run)();
     };
-
     (*run)();
 }
 

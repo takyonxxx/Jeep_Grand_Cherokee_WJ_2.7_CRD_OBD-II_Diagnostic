@@ -206,7 +206,9 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                                                 emit logMessage(QString("TCM EGS52 key: seed=%1 -> key=%2")
                                                     .arg(s16, 4, 16, QChar('0')).arg(r, 4, 16, QChar('0')));
                                             } else if (!isTCM && ok0 && ok1) {
-                                                // EDC15 LVL1Key: 2-byte seed, 4-byte key
+                                                // EDC15C2 OM612: Level 01, 2-byte key
+                                                // Constants: EDC16 (0x1289/0x0A22) - gives NRC 0x35
+                                                // TODO: find correct constants for Chrysler EDC15 / Mercedes CDI E2
                                                 uint32_t KR1 = (s0 << 8) | s1;
                                                 uint32_t KR2 = 0; // 2-byte seed, no lower word
                                                 uint32_t Mag = 0x1C60020;
@@ -458,13 +460,10 @@ void WJDiagnostics::readDTCs(Module mod, std::function<void(const QList<DTCEntry
 
             m_elm->sendCommand(dtcCmd, [this, mod, modAddr, cb](const QString &resp) {
                 QList<DTCEntry> dtcs;
-                if (!resp.contains("NO DATA") && !resp.contains("ERROR") && resp.contains("62")) {
-                    // Parse DTC bytes from response
-                    // Response format: header + 62/64/68 + DTC data bytes
-                    emit logMessage(QString("%1 DTC raw: %2")
-                        .arg(moduleInfo(mod).shortName, resp.trimmed()));
-                    // TODO: decode DTC bytes into P/C/B/U codes
-                    // For now log raw response for analysis
+                if (!resp.contains("NO DATA") && !resp.contains("ERROR") && !resp.contains("7F")) {
+                    dtcs = decodeJ1850DTCs(resp, mod);
+                    emit logMessage(QString("%1 DTC: %2 codes found")
+                        .arg(moduleInfo(mod).shortName).arg(dtcs.size()));
                 }
                 emit dtcListReady(mod, dtcs);
                 if (cb) cb(dtcs);
@@ -475,6 +474,11 @@ void WJDiagnostics::readDTCs(Module mod, std::function<void(const QList<DTCEntry
 
 void WJDiagnostics::clearDTCs(Module mod, std::function<void(bool)> cb)
 {
+    if (!m_elm || !m_elm->isConnected()) {
+        emit logMessage("clearDTCs: not connected");
+        if (cb) cb(false);
+        return;
+    }
     switchToModule(mod, [this, mod, cb](bool ok) {
         if (!ok) { if (cb) cb(false); return; }
 
@@ -611,9 +615,20 @@ void WJDiagnostics::readTCMLiveData(std::function<void(const TCMStatus&)> cb)
                 }
                 if (raw.size() >= 4) parseTCMBlock30(raw, *tcm);
             }
-            m_lastTCM = *tcm;
-            emit tcmStatusUpdated(*tcm);
-            if (cb) cb(*tcm);
+
+            // Read battery voltage via ATRV
+            m_elm->sendCommand("ATRV", [this, tcm, cb](const QString &rv) {
+                QString v = rv.trimmed().remove('V').remove('v');
+                bool ok = false;
+                double volts = v.toDouble(&ok);
+                if (ok && volts > 0) {
+                    tcm->batteryVoltage = volts;
+                    tcm->solenoidSupply = volts;
+                }
+                m_lastTCM = *tcm;
+                emit tcmStatusUpdated(*tcm);
+                if (cb) cb(*tcm);
+            });
         });
     });
 }
@@ -757,6 +772,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
             ecu.mapActual = u16(18);                 // mbar
             ecu.railActual = u16(20) / 10.0;         // Java: byte 20, /10 -> bar
             ecu.aap = u16(30);                       // mbar (barometric)
+            ecu.boostPressure = ecu.mapActual;        // dashboard shows MAP as boost
             emit logMessage(QString("ECU 2112: cool=%1 iat=%2 tps=%3% map=%4 rail=%5bar aap=%6")
                 .arg(ecu.coolantTemp,0,'f',1).arg(ecu.iat,0,'f',1)
                 .arg(ecu.tps,0,'f',1).arg(ecu.mapActual)
@@ -842,6 +858,87 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
                 .arg(ecu.fuelAdapt,0,'f',2));
         }
         break;
+    case 0x10:
+        // Block 0x10: Idle/limits (verified: 18 bytes)
+        // [0-1]=005B [2-3]=0045 [4-5]=005A [6-7]=0BB8(3000) [10]=37(55)
+        if (n >= 10) {
+            ecu.idleRpmTarget = u16(2);
+            ecu.maxRpm = u16(6);
+            emit logMessage(QString("ECU 2110: idleTgt=%1 maxRpm=%2 byte10=%3")
+                .arg(u16(0)).arg(ecu.maxRpm).arg(u8(10)));
+        }
+        break;
+    case 0x14:
+        // Block 0x14: (verified: 12 bytes) - content TBD
+        if (n >= 4) {
+            emit logMessage(QString("ECU 2114: %1 %2 %3 %4 %5 %6")
+                .arg(u16(2)).arg(u16(4)).arg(u16(6))
+                .arg(u16(8)).arg(u16(10)).arg(u8(12)));
+        }
+        break;
+    case 0x16:
+        // Block 0x16: Idle/fuel parameters (verified: 40 bytes)
+        // [0-1]=012C(300) [2-3]=2134 [4-5]=012C(300)
+        if (n >= 6) {
+            emit logMessage(QString("ECU 2116: v0=%1 v2=%2 v4=%3 v16=%4 v18=%5")
+                .arg(u16(2)).arg(u16(4)).arg(u16(6))
+                .arg(n >= 20 ? u16(18) : 0).arg(n >= 22 ? u16(20) : 0));
+        }
+        break;
+    case 0x24:
+        // Block 0x24: RPM thresholds? (verified: 26 bytes)
+        // [16-17]=0746(1862) [18-19]=07B9(1977) [20-21]=094E(2382)
+        if (n >= 6) {
+            emit logMessage(QString("ECU 2124: v0=%1 v2=%2 v16=%3 v18=%4 v20=%5")
+                .arg(u16(2)).arg(u16(4))
+                .arg(n >= 20 ? u16(18) : 0)
+                .arg(n >= 22 ? u16(20) : 0)
+                .arg(n >= 24 ? u16(22) : 0));
+        }
+        break;
+    case 0x26:
+        // Block 0x26: Sensor/injector raw (verified: 32 bytes)
+        // [6-7]=5C6C [12-13]=2FA0 [14-21]=0029 repeated (injector trims?)
+        // [28-29]=0BCD (coolant raw?)
+        if (n >= 16) {
+            ecu.accelPedalRaw = u16(8);    // byte[6-7] of data (raw ADC?)
+            emit logMessage(QString("ECU 2126: raw6=%1 raw8=%2 raw12=%3 inj=%4,%5,%6,%7 cool=%8")
+                .arg(u16(8)).arg(u16(10)).arg(u16(14))
+                .arg(u16(16)).arg(u16(18)).arg(u16(20)).arg(u16(22))
+                .arg(n >= 32 ? u16(30) : 0));
+        }
+        break;
+    case 0x30:
+        // Block 0x30: RPM setpoints (verified: 26 bytes)
+        // [0-1]=02EE(750=idle RPM) [6-7]=0AD9(2777) [8-9]=0AD9
+        // [10-11]=03EA(1002=MAP?) [18-19]=0B91(2961)
+        if (n >= 4) {
+            ecu.idleRpmSet = u16(2);
+            emit logMessage(QString("ECU 2130: idleSet=%1 v6=%2 v8=%3 v10=%4 v18=%5")
+                .arg(ecu.idleRpmSet).arg(u16(8)).arg(u16(10))
+                .arg(u16(12)).arg(n >= 22 ? u16(20) : 0));
+        }
+        break;
+    case 0x18:
+        // Block 0x18: (verified: 30 bytes, all zero at idle)
+        if (n >= 4) {
+            bool allZero = true;
+            for (int i = 2; i < n && allZero; i++)
+                if (static_cast<uint8_t>(d[i]) != 0) allZero = false;
+            if (!allZero)
+                emit logMessage(QString("ECU 2118: non-zero data found"));
+        }
+        break;
+    case 0x40:
+        // Block 0x40: (verified: 52 bytes, all zero at idle)
+        if (n >= 4) {
+            bool allZero = true;
+            for (int i = 2; i < n && allZero; i++)
+                if (static_cast<uint8_t>(d[i]) != 0) allZero = false;
+            if (!allZero)
+                emit logMessage(QString("ECU 2140: non-zero data found"));
+        }
+        break;
     }
 }
 
@@ -854,32 +951,51 @@ QList<WJDiagnostics::DTCEntry> WJDiagnostics::decodeJ1850DTCs(const QString &res
     if (c.contains("NODATA") || c.contains("ERROR") || c.size() < 6)
         return result;
 
-    // ATH1 modunda header byte'lari var: "281058..." veya "281058xx..."
-    // "58" (positive response SID 0x18+0x40) byte'ini bul
-    int pos58 = c.indexOf("58", 0, Qt::CaseInsensitive);
-    if (pos58 < 0 || pos58 % 2 != 0) return result;
+    // J1850 VPW DTC response format (ATH1 mode):
+    // ABS:    "26 40 62 <count> <DTC_HI DTC_LO STATUS>..."
+    // Airbag: "26 60 68 <count> <DTC_HI DTC_LO STATUS>..."
+    // KWP:    "xx xx xx 58 <count> <DTC_HI DTC_LO STATUS>..."
+    //
+    // Find the positive-response data byte: 62, 64, 68, or 58
+    // These come after the J1850 header bytes (26 xx)
 
-    c = c.mid(pos58); // "58" den itibaren al
-
-    // 58 <count> <DTC_HI DTC_LO STATUS> ...
-    // count byte'ini al
-    if (c.size() < 4) return result;
-    int count = c.mid(2, 2).toUInt(nullptr, 16);
-
-    int start = 4; // "58 CC" den sonra
-    for (int i = 0; i < count && start + 5 < c.size(); i++, start += 6) {
+    int dataStart = -1;
+    // Search for response marker after header
+    for (int i = 4; i + 1 < c.size(); i += 2) {
         bool ok;
-        uint8_t hi = c.mid(start, 2).toUInt(&ok, 16);
+        uint8_t b = c.mid(i, 2).toUInt(&ok, 16);
         if (!ok) continue;
-        uint8_t lo = c.mid(start + 2, 2).toUInt(&ok, 16);
+        // Positive response bytes: 0x62, 0x64, 0x68, 0x58
+        if (b == 0x62 || b == 0x64 || b == 0x68 || b == 0x58) {
+            dataStart = i + 2; // skip the response byte itself
+            break;
+        }
+    }
+    if (dataStart < 0 || dataStart + 2 > c.size()) return result;
+
+    // Next byte = DTC count
+    bool okCnt;
+    int count = c.mid(dataStart, 2).toUInt(&okCnt, 16);
+    if (!okCnt || count == 0) return result;
+
+    emit logMessage(QString("%1 J1850 DTC: %2 codes, raw: %3")
+        .arg(moduleName(src)).arg(count).arg(resp.trimmed()));
+
+    int pos = dataStart + 2;
+    for (int i = 0; i < count && pos + 5 < c.size(); i++, pos += 6) {
+        bool ok;
+        uint8_t hi = c.mid(pos, 2).toUInt(&ok, 16);
         if (!ok) continue;
-        uint8_t status = c.mid(start + 4, 2).toUInt(&ok, 16);
+        uint8_t lo = c.mid(pos + 2, 2).toUInt(&ok, 16);
+        if (!ok) continue;
+        uint8_t status = c.mid(pos + 4, 2).toUInt(&ok, 16);
         if (!ok) continue;
 
         uint16_t raw = (hi << 8) | lo;
         if (raw == 0) continue;
 
         DTCEntry e;
+        // DTC type from upper 2 bits
         char pfx;
         switch ((raw >> 14) & 3) {
         case 0: pfx='P'; break; case 1: pfx='C'; break;
@@ -914,6 +1030,8 @@ QString WJDiagnostics::dtcDescription(const QString &code, Module src)
         {"P0335","CKP Position Sensor"}, {"P0340","CMP Position Sensor"},
         {"P0380","Glow Plug Circuit"}, {"P0403","EGR Solenoid Circuit"},
         {"P0500","Vehicle Speed Sensor"}, {"P1130","Boost Pressure Sensor"},
+        {"P0520","Oil Pressure Sensor/Switch Circuit"},
+        {"P0579","Cruise Control Multi-Function Input"},
         {"P2602","Fuel Pressure Solenoid"},
     };
 
@@ -1109,9 +1227,20 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
                     parseTCMBlock30(raw, *tcm);
                 }
             }
-            m_lastTCM = *tcm;
-            emit tcmStatusUpdated(*tcm);
-            if (cb) cb(*tcm);
+
+            // Read battery voltage via ATRV (use as solenoid supply proxy)
+            m_elm->sendCommand("ATRV", [this, tcm, cb](const QString &rv) {
+                QString v = rv.trimmed().remove('V').remove('v');
+                bool ok = false;
+                double volts = v.toDouble(&ok);
+                if (ok && volts > 0) {
+                    tcm->batteryVoltage = volts;
+                    tcm->solenoidSupply = volts;  // proxy: solenoid fed from battery
+                }
+                m_lastTCM = *tcm;
+                emit tcmStatusUpdated(*tcm);
+                if (cb) cb(*tcm);
+            });
         });
     });
 }
@@ -1122,7 +1251,7 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
 // Byte offsets after "61 30": [0]=00 [1]=1A [2]=00 [3]=1E ...
 void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
 {
-    // raw[0]=0x61, raw[1]=0x30, raw[2..]=data bytes
+    // raw[0]=0x61, raw[1]=0x30, raw[2..]=data bytes (22 bytes)
     int n = raw.size();
     if (n < 4) return;
 
@@ -1135,49 +1264,35 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
         hex += QString("%1 ").arg(static_cast<uint8_t>(raw[i]), 2, 16, QChar('0')).toUpper();
     emit logMessage("TCM 0x30: " + hex.trimmed());
 
-    // Tentative byte mapping (will be refined with driving test data):
-    // Based on Mercedes 722.6 EGS52 typical block 0x30 structure
-    // and comparison with known idle values:
-    // [0-1] = 001A (26) - could be gear/status
-    // [2-3] = 001E (30) - could be temperature+40 offset (30-40=-10? or raw)
-    // [4-5] = 0000 - could be vehicle speed (0 at idle)
-    // [6-7] = 0008 (8) - 
-    // [8]   = 04 - could be selector position (P=4?)
-    // [9-10] = 00DD (221) - could be turbine RPM (~750/3.4?)
-    // [11]  = 61 - could be trans temp raw (97-40=57C?)
-    // [12-13] = FFF7 - signed? (-9)
-    // [14-15] = FFF7 - signed? (-9)
-    // [16-17] = 0000
-    // [18]  = 96 (150) - could be solenoid voltage * some factor
-    // [19]  = 18 (24)
-    // [20-21] = 0008
+    // BYTE MAP - verified with real vehicle (2025-03-10, P/D idle + driving):
+    // [0-1]   Turbine/N2 sensor (P:49, D idle:222, accel:500, cruise:30-50)
+    //         NOTE: during driving values drop very low (30-50) when TCC locked
+    //         Possibly N2 clutch drum speed, not raw turbine RPM
+    // [2-3]   Engage status (P/N:0x1E=30, D idle:0x37=55, D driving:0x32-0x35)
+    // [4-5]   Output Shaft RPM (0 stopped, 600-800+ driving)
+    // [6]     Unknown (0 at idle, 1/3 during driving - NOT confirmed as gear)
+    // [7]     Selector range: P=8, R=7, N=6, D=5
+    // [8]     Config (usually 4, briefly 0xFF/0x05 during shifts)
+    // [9-10]  Line pressure (signed, P:221, D idle:1092, driving:600-900)
+    // [11]    Trans Temp raw (raw - 40 = Celsius)
+    // [12-13] TCC Slip actual (signed, idle:~100, cruise:~150-200)
+    // [14-15] TCC Slip desired (signed, tracks actual)
+    // [16-17] Unknown (increases during drive: 0x05BF->0x07D0+)
+    // [18]    Solenoid mode (P:0x96, D idle:0x08, driving:0x08, shift:0x28/0x80)
+    // [19]    Status flags (0x10 idle, 0x10 driving)
+    // [20]    Flags (0x00 idle, 0x80 during D engagement, 0x82 briefly)
+    // [21]    Flags (always 0x08)
 
-    // VERIFIED BYTE MAPPING (real vehicle 2025-03-07, P/R/N/D tested):
-    // [0-1]   Turbine/Input RPM (P/N: ~20, R/D idle: ~750, D+gas: ~1100+)
-    // [2-3]   Engagement status (0x1E=30 for P/N, 0x3C=60 for R/D)
-    // [4-5]   Vehicle Speed (0 when stationary)
-    // VERIFIED BYTE MAPPING (real vehicle, idle + driving tested):
-    // [0-1]   Turbine/Input RPM (P/N: ~10-20, R/D idle: ~750, D driving: 300-1900)
-    // [2-3]   Engage status (0x1E=30 for P/N, 0x3C=60 for R/D, varies during shifts)
-    // [4-5]   Output Shaft RPM (0 when stopped, 600-800+ when driving)
-    // [7]     Gear range: P=8, R=7, N=6, D=5 (NOT actual gear number!)
-    // [8]     Config (always 4)
-    // [9-10]  Line pressure (signed, varies widely: P:221, D:17, driving:1000+)
-    // [11]    Trans Temp raw (subtract 40 for Celsius)
-    // [12-13] TCC Slip actual (signed)
-    // [14-15] TCC Slip desired (signed)
-    // [16-17] Additional data (changes during driving)
-    // [18]    Solenoid mode bitmask (P/N:0x96, D idle:0x00, D driving:0x08, decel:0x48)
-    // [19]    Status flags
-    // [20-21] Flags
-
-    // Turbine RPM
+    // Turbine/N2 sensor RPM
     tcm.turbineRPM = u16(0);
 
-    // Output Shaft RPM (NOT vehicle speed directly)
+    // Engage status
+    tcm.engageStatus = u16(2);
+
+    // Output Shaft RPM
     uint16_t outputRPM = u16(4);
     // Vehicle speed from output RPM: NAG1 722.6 final drive ~3.27, tire ~2.1m circ
-    // speed_kmh = outputRPM * 60 * 2.1 / (3.27 * 1000) ≈ outputRPM * 0.0385
+    // speed_kmh = outputRPM * 60 * 2.1 / (3.27 * 1000) = outputRPM * 0.0385
     tcm.vehicleSpeed = outputRPM * 0.0385;
     tcm.outputRPM = outputRPM;
 
@@ -1196,19 +1311,24 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
     int16_t rawSlipD = static_cast<int16_t>(u16(14));
     tcm.desTCCslip = rawSlipD;
 
-    // Solenoid supply: NOT available in block 0x30
-    // byte[18] is mode bitmask, not voltage
-    tcm.solenoidSupply = 0;  // unknown from this block
+    // Solenoid mode bitmask
+    tcm.solenoidMode = u8(18);
 
-    // Gear from byte[7]: this is SELECTOR RANGE, not actual gear
+    // Solenoid supply: NOT available in block 0x30
+    tcm.solenoidSupply = 0;
+
+    // Gear from byte[7]: SELECTOR RANGE, not actual gear
     // P=8, R=7, N=6, D=5 (all drive gears show as 5)
-    uint8_t gearByte = u8(7);
-    switch (gearByte) {
+    tcm.gearByte = u8(7);
+    switch (tcm.gearByte) {
     case 8: tcm.currentGear = Gear::Park;    tcm.actualGear = 0; break;
     case 7: tcm.currentGear = Gear::Reverse; tcm.actualGear = 1; break;
     case 6: tcm.currentGear = Gear::Neutral; tcm.actualGear = 2; break;
     case 5: // D range - all drive gears (1-5) show as byte[7]=5
-        // Estimate actual gear from RPM ratio if both turbine and output are valid
+        // Gear estimation from RPM ratio when available.
+        // byte[0-1] = N2 sensor: unreliable during TCC lockup (drops to 30-50).
+        // Use ratio only when N2 > 100 AND output > 100 (torque converter open).
+        // When TCC locked (N2 < 100), show "D" without gear number.
         if (tcm.turbineRPM > 100 && outputRPM > 100) {
             double ratio = tcm.turbineRPM / (double)outputRPM;
             // NAG1 722.6 ratios: 1st=3.59, 2nd=2.19, 3rd=1.41, 4th=1.00, 5th=0.83
@@ -1217,8 +1337,11 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
             else if (ratio > 1.15){ tcm.currentGear = Gear::Drive3; tcm.actualGear = 5; }
             else if (ratio > 0.9) { tcm.currentGear = Gear::Drive4; tcm.actualGear = 6; }
             else                  { tcm.currentGear = Gear::Drive5; tcm.actualGear = 7; }
+        } else if (outputRPM > 50) {
+            // Moving but TCC locked — cannot determine gear
+            tcm.currentGear = Gear::Drive1; tcm.actualGear = 3; // "D"
         } else {
-            tcm.currentGear = Gear::Drive1; tcm.actualGear = 3; // D idle, no motion
+            tcm.currentGear = Gear::Drive1; tcm.actualGear = 3; // D idle
         }
         break;
     default: tcm.currentGear = Gear::Unknown; tcm.actualGear = -1; break;

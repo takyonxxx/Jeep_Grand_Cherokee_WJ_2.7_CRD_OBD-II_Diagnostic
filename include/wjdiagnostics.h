@@ -87,6 +87,12 @@ public:
         double injCorr[5]={0,0,0,0,0};
         double boostPressure=0, boostSetpoint=0;
         double batteryVoltage=0;
+        // Block 0x10 - Idle/limits
+        double idleRpmTarget=0, maxRpm=0;
+        // Block 0x26 - Sensor raw
+        double accelPedalRaw=0;
+        // Block 0x30 - RPM setpoints
+        double idleRpmSet=0;
         // Block 0x62 fields
         double egrDuty=0, wastegate=0;
         double alternatorDuty=0;
@@ -116,6 +122,10 @@ public:
         QString tccState;
         double solenoidSupply=0;
         double vehicleSpeed=0;
+        // Block 0x30 extra fields
+        uint16_t engageStatus=0;    // byte[2-3]: P/N=30, D=50-55
+        uint8_t solenoidMode=0;     // byte[18]: bitmask
+        uint8_t gearByte=0;         // byte[7]: P=8,R=7,N=6,D=5
         // Compat fields (eski dashboard icin)
         double solenoidVoltage=0;
         double batteryVoltage=0;

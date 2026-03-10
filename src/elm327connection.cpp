@@ -258,6 +258,7 @@ void ELM327Connection::writeToDevice(const QByteArray &data)
 
     if (m_io && m_io->isOpen()) {
         m_io->write(data);
+        if (m_transport == Transport::WiFi && m_tcpSocket)
             m_tcpSocket->flush();
     }
 }

@@ -104,6 +104,14 @@ void KWP2000Handler::clearAllDTCs(std::function<void(bool)> callback)
 {
     emit logMessage("Clearing fault codes...");
 
+    // Safety: check connection before sending
+    if (!m_elm || !m_elm->isConnected()) {
+        emit logMessage("DTC clear: not connected");
+        emit dtcCleared(false);
+        if (callback) callback(false);
+        return;
+    }
+
     // ClearDiagnosticInformation (0x14)
     // Mercedes NAG1: 14 00 00 (APK verified, NOT FF FF)
     QByteArray data;
