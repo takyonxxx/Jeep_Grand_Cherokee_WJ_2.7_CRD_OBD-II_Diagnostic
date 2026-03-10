@@ -207,42 +207,21 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                                                     .arg(s16, 4, 16, QChar('0')).arg(r, 4, 16, QChar('0')));
                                             } else if (!isTCM && ok0 && ok1) {
                                                 // EDC15C2 OM612: Level 01, 2-byte key
-                                                // Constants: EDC16 (0x1289/0x0A22) - gives NRC 0x35
-                                                // TODO: find correct constants for Chrysler EDC15 / Mercedes CDI E2
-                                                uint32_t KR1 = (s0 << 8) | s1;
-                                                uint32_t KR2 = 0; // 2-byte seed, no lower word
-                                                uint32_t Mag = 0x1C60020;
-                                                for (int i = 0; i < 5; i++) {
-                                                    uint32_t ts = KR1 & 0x8000;
-                                                    KR1 = (KR1 << 1) & 0xFFFFFFFF;
-                                                    if ((ts & 0xFFFF) == 0) {
-                                                        uint32_t t2 = KR2 & 0xFFFF;
-                                                        uint32_t t3 = ts & 0xFFFF0000;
-                                                        ts = t2 + t3;
-                                                        KR1 = KR1 & 0xFFFE;
-                                                        t2 = (ts & 0xFFFF) >> 15;
-                                                        ts = (ts & 0xFFFF0000) + t2;
-                                                        KR1 = KR1 | ts;
-                                                        KR2 = (KR2 << 1) & 0xFFFFFFFF;
-                                                    } else {
-                                                        ts = (KR2 + KR2) & 0xFFFFFFFF;
-                                                        KR1 = KR1 & 0xFFFE;
-                                                        uint32_t t2 = (ts & 0xFF) | 1;
-                                                        Mag = (t2 + (Mag & 0xFFFFFF00)) & 0xFFFFFFFF;
-                                                        Mag = (Mag & 0xFFFF00FF) | ts;
-                                                        t2 = (KR2 & 0xFFFF) >> 15;
-                                                        ts = (t2 + (ts & 0xFFFF0000)) | KR1;
-                                                        Mag ^= 0x1289;
-                                                        ts ^= 0x0A22;
-                                                        KR2 = Mag;
-                                                        KR1 = ts;
-                                                    }
-                                                }
-                                                // 2-byte key (same format as TCM) - NRC 0x12 with 4-byte!
+                                                // ArvutaKoodi — extracted from WJdiag-Pro.apk x86_64 disassembly
+                                                // Estonca: "Compute Code" — lookup table based, NOT ProcessKey5
+                                                static const uint8_t T1[] = {0xC0,0xD0,0xE0,0xF0,0x00,0x10,0x20,0x30,0x40,0x50,0x60,0x70,0x80,0x90,0xA0,0xB0};
+                                                static const uint8_t T2[] = {0x02,0x03,0x00,0x01,0x06,0x07,0x04,0x05,0x0A,0x0B,0x08,0x09,0x0E,0x0F,0x0C,0x0D};
+                                                static const uint8_t T3[] = {0x90,0x80,0xF0,0xE0,0xD0,0xC0,0x30,0x20,0x10,0x00,0x70,0x60,0x50,0x40,0xB0,0xA0};
+                                                static const uint8_t T4[] = {0x0D,0x0C,0x0F,0x0E,0x09,0x08,0x0B,0x0A,0x05,0x04,0x07,0x06,0x01,0x00,0x03,0x02};
+                                                uint8_t v1 = (s1 + 0x0B) & 0xFF;
+                                                uint8_t keyLo = T1[(v1 >> 4) & 0xF] | T2[v1 & 0xF];
+                                                uint8_t cond = (s1 > 0x34) ? 1 : 0;
+                                                uint8_t v2 = (s0 + cond + 1) & 0xFF;
+                                                uint8_t keyHi = T3[(v2 >> 4) & 0xF] | T4[v2 & 0xF];
                                                 keyCmd = QString("27 02 %1 %2")
-                                                    .arg((KR1 >> 8) & 0xFF, 2, 16, QChar('0'))
-                                                    .arg(KR1 & 0xFF, 2, 16, QChar('0')).toUpper();
-                                                emit logMessage(QString("ECU EDC15 key: seed=%1%2 -> key=%3")
+                                                    .arg(keyHi, 2, 16, QChar('0'))
+                                                    .arg(keyLo, 2, 16, QChar('0')).toUpper();
+                                                emit logMessage(QString("ECU ArvutaKoodi: seed=%1%2 -> key=%3")
                                                     .arg(s0,2,16,QChar('0')).arg(s1,2,16,QChar('0'))
                                                     .arg(keyCmd.mid(6)));
                                             }
@@ -250,8 +229,11 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                                         m_elm->sendCommand(keyCmd, [this, done, targetMod](const QString &key) {
                                             emit logMessage("Security key: " + key);
                                             bool unlocked = key.contains("67 02", Qt::CaseInsensitive);
-                                            if (unlocked)
+                                            if (unlocked) {
                                                 emit logMessage("Security UNLOCKED!");
+                                                if (targetMod == Module::ECU)
+                                                    m_ecuSecurityUnlocked = true;
+                                            }
                                             emit logMessage("K-Line session active (ECU ready)");
                                             if (done) done(true);
                                         });
@@ -556,12 +538,18 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
     auto step = std::make_shared<int>(0);
     auto doNext = std::make_shared<std::function<void()>>();
 
-    // Only read blocks that work without security: 0x12, 0x28, 0x20, 0x22
-    static const uint8_t ids[] = {0x12, 0x28, 0x20, 0x22};
-    static const int numBlocks = 4;
+    // Read blocks: 0x12, 0x28, 0x20, 0x22 (always)
+    // + 0x62, 0xB0, 0xB1, 0xB2 (if ECU security unlocked)
+    static const uint8_t baseIds[] = {0x12, 0x28, 0x20, 0x22};
+    static const uint8_t secIds[] = {0x62, 0xB0, 0xB1, 0xB2};
+    auto ids = std::make_shared<QVector<uint8_t>>();
+    for (auto id : baseIds) ids->append(id);
+    if (m_ecuSecurityUnlocked) {
+        for (auto id : secIds) ids->append(id);
+    }
 
-    *doNext = [this, ecu, step, doNext, cb]() {
-        if (*step >= numBlocks) {
+    *doNext = [this, ecu, step, doNext, cb, ids]() {
+        if (*step >= ids->size()) {
             // Read battery voltage
             m_elm->sendCommand("ATRV", [this, ecu, cb](const QString &rv) {
                 QString v = rv.trimmed().remove('V').remove('v');
@@ -574,9 +562,9 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
             });
             return;
         }
-        m_kwp->readLocalData(ids[*step], [this, ecu, step, doNext](const QByteArray &data) {
+        m_kwp->readLocalData(ids->at(*step), [this, ecu, step, doNext, ids](const QByteArray &data) {
             if (!data.isEmpty()) {
-                parseECUBlock(ids[*step], data, *ecu);
+                parseECUBlock(ids->at(*step), data, *ecu);
             }
             (*step)++;
             (*doNext)(); // No delay between reads

@@ -230,6 +230,7 @@ private:
     KWP2000Handler *m_kwp;
     Module m_activeModule = Module::MotorECU;
     BusType m_activeBus = BusType::J1850;  // init: ATSP2 ile J1850 basliyor
+    bool m_ecuSecurityUnlocked = false;
 
     ECUStatus m_lastECU;
     TCMStatus m_lastTCM;
