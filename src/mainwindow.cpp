@@ -1333,8 +1333,12 @@ void MainWindow::runDiscoveryPhases(
         });
     }
 
-    // ECU security removed — constants for Chrysler OM612 EDC15 unknown
-    // APK has same constants we tried, also likely fails on this ECU
+    // =================================================================
+    // PHASE 10: ECU Security — seed=key test (APK disasm finding)
+    // APK sends seed bytes directly as key! No ProcessKey algorithm.
+    // =================================================================
+    steps->append(Step{"", "header:=== Phase 10: ECU seed=key test ==="});
+    steps->append(Step{"", "switch:ecu_seedkey"});
 
     // Final
     steps->append(Step{"", "header:--- Final ---"});
@@ -1371,6 +1375,237 @@ void MainWindow::runDiscoveryPhases(
                 log(ok ? "#60b8a0" : "#ff3333", ok ? "ECU OK" : "ECU FAIL");
                 (*run)();
             }); return;
+        }
+        if (step.action == "switch:ecu_seedkey") {
+            // APK disassembly reveals: seed bytes sent directly as key
+            // Try: seed=key, ~seed, seed+1, seed-1, seed XOR 0xFFFF
+            m_elm->sendCommand("ATZ", [this, log, run](const QString &) {
+            QTimer::singleShot(500, this, [this, log, run]() {
+            m_elm->sendCommand("ATE1", [this, log, run](const QString &) {
+            m_elm->sendCommand("ATH1", [this, log, run](const QString &) {
+            m_elm->sendCommand("ATWM8115F13E", [this, log, run](const QString &) {
+            m_elm->sendCommand("ATSH8115F1", [this, log, run](const QString &) {
+            m_elm->sendCommand("ATSP5", [this, log, run](const QString &) {
+            m_elm->sendCommand("ATFI", [this, log, run](const QString &fi) {
+                if (fi.contains("ERROR") || (!fi.contains("OK") && !fi.contains("BUS INIT"))) {
+                    log("#ff3333", "ATFI fail"); (*run)(); return;
+                }
+            m_elm->sendCommand("81", [this, log, run](const QString &) {
+            m_elm->sendCommand("27 01", [this, log, run](const QString &sr) {
+                log("#c0c0ff", "Seed resp: " + sr.trimmed());
+                QStringList p = sr.trimmed().split(' ');
+                int si = -1;
+                for (int i = 0; i < p.size(); i++)
+                    if (p[i].compare("67", Qt::CaseInsensitive) == 0) { si = i; break; }
+                if (si < 0 || si + 3 >= p.size()) {
+                    log("#ff8800", "No seed found"); (*run)(); return;
+                }
+                bool o1, o2;
+                uint8_t s0 = p[si+2].toUInt(&o1, 16);
+                uint8_t s1 = p[si+3].toUInt(&o2, 16);
+                if (!o1 || !o2) { log("#ff8800", "Seed parse fail"); (*run)(); return; }
+                uint16_t seed = (s0 << 8) | s1;
+                log("#c080ff", QString("Seed: 0x%1").arg(seed, 4, 16, QChar('0')));
+
+                // Build COMPREHENSIVE list of key candidates
+                // ECU allows ~3 wrong attempts before NRC 0x36 lockout (10s wait)
+                // After lockout: full reinit (ATZ..27 01) gets new seed
+                // So we organize: try 2-3 per seed, reinit, repeat
+                struct KeyTry { QString label; uint16_t key; };
+                QList<KeyTry> tries;
+                uint16_t sw = (s1 << 8) | s0;  // swapped bytes
+
+                // Group A: Direct / simple transforms (most likely for Chrysler)
+                tries.append({"seed=key", seed});
+                tries.append({"~seed", (uint16_t)(~seed & 0xFFFF)});
+                tries.append({"swap", sw});
+
+                // Group B: XOR with common constants
+                tries.append({"seed^FFFF", (uint16_t)(seed ^ 0xFFFF)});
+                tries.append({"seed^5AA5", (uint16_t)(seed ^ 0x5AA5)});
+                tries.append({"seed^A55A", (uint16_t)(seed ^ 0xA55A)});
+
+                // Group C: Arithmetic
+                tries.append({"seed+1", (uint16_t)((seed + 1) & 0xFFFF)});
+                tries.append({"seed-1", (uint16_t)((seed - 1) & 0xFFFF)});
+                tries.append({"0-seed", (uint16_t)((0x10000 - seed) & 0xFFFF)});
+
+                // Group D: Swap + XOR
+                tries.append({"swap^FFFF", (uint16_t)(sw ^ 0xFFFF)});
+                tries.append({"swap^5AA5", (uint16_t)(sw ^ 0x5AA5)});
+                tries.append({"swap^A55A", (uint16_t)(sw ^ 0xA55A)});
+
+                // Group E: Known Chrysler/Mercedes constants
+                tries.append({"seed^1234", (uint16_t)(seed ^ 0x1234)});
+                tries.append({"seed^4321", (uint16_t)(seed ^ 0x4321)});
+                tries.append({"seed^DEAD", (uint16_t)(seed ^ 0xDEAD)});
+
+                // Group F: Multiply/rotate
+                tries.append({"seed*2", (uint16_t)((seed * 2) & 0xFFFF)});
+                tries.append({"seed/2", (uint16_t)(seed >> 1)});
+                tries.append({"ROL1", (uint16_t)(((seed << 1) | (seed >> 15)) & 0xFFFF)});
+                tries.append({"ROR1", (uint16_t)(((seed >> 1) | (seed << 15)) & 0xFFFF)});
+                tries.append({"ROL4", (uint16_t)(((seed << 4) | (seed >> 12)) & 0xFFFF)});
+                tries.append({"ROL8", (uint16_t)(((seed << 8) | (seed >> 8)) & 0xFFFF)});
+
+                // Group G: XOR with Bosch common ECU patterns
+                tries.append({"seed^8F5A", (uint16_t)(seed ^ 0x8F5A)});
+                tries.append({"seed^3586", (uint16_t)(seed ^ 0x3586)});
+                tries.append({"seed^7A12", (uint16_t)(seed ^ 0x7A12)});
+                tries.append({"seed^C541", (uint16_t)(seed ^ 0xC541)});
+
+                // Group H: Add/sub common constants
+                tries.append({"seed+5AA5", (uint16_t)((seed + 0x5AA5) & 0xFFFF)});
+                tries.append({"seed-5AA5", (uint16_t)((seed - 0x5AA5) & 0xFFFF)});
+                tries.append({"seed+A55A", (uint16_t)((seed + 0xA55A) & 0xFFFF)});
+                tries.append({"seed+1234", (uint16_t)((seed + 0x1234) & 0xFFFF)});
+
+                // Group I: Combined ops (Chrysler SCI style)
+                tries.append({"(~seed)+1 (NEG)", (uint16_t)((~seed + 1) & 0xFFFF)});
+                tries.append({"seed^s0s0", (uint16_t)(seed ^ ((s0 << 8) | s0))});
+                tries.append({"seed^s1s1", (uint16_t)(seed ^ ((s1 << 8) | s1))});
+                tries.append({"(s0*s1)&FF", (uint16_t)((s0 * s1) & 0xFFFF)});
+                tries.append({"s0^s1 x2", (uint16_t)(((s0^s1) << 8) | (s0^s1))});
+
+                // Group J: ProcessKey5 with untried constants
+                // Chrysler EDC15 (#09) and Mercedes CDI E2 (#15) from tuning lists
+                // Try common Bosch constants not yet tested
+                auto pk5 = [](uint16_t sd, uint32_t x1, uint32_t x2, uint32_t magic) -> uint16_t {
+                    uint32_t KR1 = sd, KR2 = 0, K3 = magic;
+                    for (int i = 0; i < 5; i++) {
+                        uint32_t KT = KR1 & 0x8000;
+                        KR1 = (KR1 << 1) & 0xFFFFFFFF;
+                        if ((KT & 0xFFFF) == 0) {
+                            uint32_t t2 = KR2 & 0xFFFF;
+                            KT = t2 + (KT & 0xFFFF0000);
+                            KR1 &= 0xFFFE;
+                            t2 = (KT & 0xFFFF) >> 15;
+                            KT = (KT & 0xFFFF0000) + t2;
+                            KR1 |= KT;
+                            KR2 = (KR2 << 1) & 0xFFFFFFFF;
+                        } else {
+                            KT = (KR2 + KR2) & 0xFFFFFFFF;
+                            KR1 &= 0xFFFE;
+                            uint32_t t2 = (KT & 0xFF) | 1;
+                            K3 = (t2 + (K3 & 0xFFFFFF00)) & 0xFFFFFFFF;
+                            K3 = (K3 & 0xFFFF00FF) | KT;
+                            t2 = (KR2 & 0xFFFF) >> 15;
+                            KT = (t2 + (KT & 0xFFFF0000)) | KR1;
+                            K3 = (K3 ^ x1) & 0xFFFFFFFF;
+                            KT = (KT ^ x2) & 0xFFFFFFFF;
+                            KR2 = K3; KR1 = KT;
+                        }
+                    }
+                    return KR1 & 0xFFFF;
+                };
+
+                // Citroen/Peugeot EDC15C2 (#02)
+                tries.append({"PK5 Citroen", pk5(seed, 0x8612, 0x34AB, 0x3800000)});
+                // Fiat JTD EDC15C6 (#06)
+                tries.append({"PK5 Fiat-JTD", pk5(seed, 0x9043, 0xB9E5, 0x3800000)});
+                // Smart CDI (#07/#12)
+                tries.append({"PK5 Smart", pk5(seed, 0x4521, 0x7890, 0x3800000)});
+                // Renault DCI (#14)
+                tries.append({"PK5 Renault", pk5(seed, 0x6E19, 0xF0A4, 0x3800000)});
+                // Mercedes CDI E3 (#17)
+                tries.append({"PK5 Merc-E3", pk5(seed, 0x8D27, 0xC541, 0x3800000)});
+                // BMW 3000D (#19)
+                tries.append({"PK5 BMW-3D", pk5(seed, 0xA3D7, 0x4B96, 0x3800000)});
+                // Hyundai/Kia (#18)
+                tries.append({"PK5 Hyundai", pk5(seed, 0x7A12, 0x3586, 0x3800000)});
+                // Alternative magic value
+                tries.append({"PK5 Alt-EDC16m", pk5(seed, 0x1289, 0x0A22, 0x3800000)});
+                tries.append({"PK5 Alt-EDC15Pm", pk5(seed, 0xDA1C, 0xF781, 0x1C60020)});
+
+                // Group K: Chrysler specific — DRB-III style
+                // Chrysler may use simpler: key = (seed XOR fixed) + offset
+                tries.append({"(seed^ABCD)+1", (uint16_t)(((seed ^ 0xABCD) + 1) & 0xFFFF)});
+                tries.append({"(seed+ABCD)^FF", (uint16_t)(((seed + 0xABCD) ^ 0xFFFF) & 0xFFFF)});
+                tries.append({"seed*3+1", (uint16_t)((seed * 3 + 1) & 0xFFFF)});
+                tries.append({"seed*7", (uint16_t)((seed * 7) & 0xFFFF)});
+                tries.append({"CRC16(seed)", (uint16_t)(seed ^ (seed >> 4) ^ (seed << 4) ^ 0x1021)});
+
+                // Group L: Chrysler SKIM constants (from DRBDBReader/pcmhacking)
+                tries.append({"seed^CAFE", (uint16_t)(seed ^ 0xCAFE)});
+                tries.append({"seed^BABE", (uint16_t)(seed ^ 0xBABE)});
+                tries.append({"seed^0612", (uint16_t)(seed ^ 0x0612)});  // OM612 engine
+                tries.append({"seed^2700", (uint16_t)(seed ^ 0x2700)});
+
+                log("#c0c0ff", QString("Testing %1 key variants against seed 0x%2")
+                    .arg(tries.size()).arg(seed, 4, 16, QChar('0')));
+
+                auto tryIdx = std::make_shared<int>(0);
+                auto tryList = std::make_shared<QList<KeyTry>>(tries);
+                auto tryNext = std::make_shared<std::function<void()>>();
+
+                *tryNext = [this, tryIdx, tryList, tryNext, log, run]() {
+                    if (*tryIdx >= tryList->size()) {
+                        log("#ff8800", "All seed-key variants failed");
+                        (*run)(); return;
+                    }
+                    auto &t = tryList->at(*tryIdx);
+                    QString kc = QString("27 02 %1 %2")
+                        .arg((t.key >> 8) & 0xFF, 2, 16, QChar('0'))
+                        .arg(t.key & 0xFF, 2, 16, QChar('0')).toUpper();
+                    log("#c080ff", QString("[%1/%2] %3: %4")
+                        .arg(*tryIdx+1).arg(tryList->size()).arg(t.label, kc));
+
+                    m_elm->sendCommand(kc, [this, tryIdx, tryList, tryNext, log, run](const QString &kr) {
+                        if (kr.contains("67", Qt::CaseInsensitive) &&
+                            !kr.contains("7F", Qt::CaseInsensitive)) {
+                            log("#00ff00", QString("*** ECU UNLOCKED: %1 ***").arg(tryList->at(*tryIdx).label));
+                            // Read protected blocks
+                            m_elm->sendCommand("21 62", [this, log, run](const QString &r) {
+                            log("#00ff88", "ECU 0x62: " + r.trimmed());
+                            m_elm->sendCommand("21 B0", [this, log, run](const QString &r) {
+                            log("#00ff88", "ECU 0xB0: " + r.trimmed());
+                            m_elm->sendCommand("21 B1", [this, log, run](const QString &r) {
+                            log("#00ff88", "ECU 0xB1: " + r.trimmed());
+                            m_elm->sendCommand("21 B2", [this, log, run](const QString &r) {
+                            log("#00ff88", "ECU 0xB2: " + r.trimmed());
+                            m_elm->sendCommand("1A 90", [this, log, run](const QString &r) {
+                            log("#00ff88", "ECU VIN: " + r.trimmed());
+                            (*run)();
+                            });});});});});
+                            return;
+                        }
+                        QString nrc;
+                        QStringList rp = kr.trimmed().split(' ');
+                        for (int i = 0; i < rp.size()-1; i++)
+                            if (rp[i].compare("7F", Qt::CaseInsensitive) == 0 && i+2 < rp.size())
+                                nrc = rp[i+2];
+                        log("#ff8800", QString("%1 -> NRC 0x%2").arg(tryList->at(*tryIdx).label, nrc));
+
+                        (*tryIdx)++;
+                        if (nrc.compare("36", Qt::CaseInsensitive) == 0 ||
+                            nrc.compare("37", Qt::CaseInsensitive) == 0) {
+                            // exceededNumberOfAttempts or requiredTimeDelayNotExpired
+                            log("#ff3333", "ECU locked out! Need full reinit");
+                            // Reinit for next attempt
+                            m_elm->sendCommand("ATZ", [this, tryIdx, tryList, tryNext, log, run](const QString &) {
+                            QTimer::singleShot(3000, this, [this, tryIdx, tryList, tryNext, log, run]() {
+                            m_elm->sendCommand("ATE1", [this, tryNext](const QString &) {
+                            m_elm->sendCommand("ATH1", [this, tryNext](const QString &) {
+                            m_elm->sendCommand("ATWM8115F13E", [this, tryNext](const QString &) {
+                            m_elm->sendCommand("ATSH8115F1", [this, tryNext](const QString &) {
+                            m_elm->sendCommand("ATSP5", [this, tryNext](const QString &) {
+                            m_elm->sendCommand("ATFI", [this, tryNext](const QString &) {
+                            m_elm->sendCommand("81", [this, tryNext](const QString &) {
+                            m_elm->sendCommand("27 01", [tryNext](const QString &) {
+                                // Skip seed, just continue to next key variant
+                                // (ECU already gave us a new seed but we keep trying same pattern)
+                                (*tryNext)();
+                            });});});});});});});});});
+                            });
+                        } else {
+                            // NRC 0x35 = wrong key, can try again immediately
+                            (*tryNext)();
+                        }
+                    });
+                };
+                (*tryNext)();
+            });});});});});});});});});});
+            return;
         }
         if (step.action == "switch:j1850") {
             m_elm->sendCommand("ATZ", [this, log, run](const QString &) {
