@@ -47,8 +47,7 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onLogMessage);
     connect(m_tcm, &TCMDiagnostics::logMessage,
             this, &MainWindow::onLogMessage);
-    connect(m_tcm->kwp(), &KWP2000Handler::logMessage,
-            this, &MainWindow::onLogMessage);
+    // KWP2000Handler logMessage is already forwarded by WJDiagnostics
 
     connect(m_liveData, &LiveDataManager::dataUpdated,
             this, &MainWindow::onLiveDataUpdated);
@@ -155,7 +154,6 @@ void MainWindow::setupUI()
     m_tabs->addTab(createConnectionTab(), "Connect");
     m_tabs->addTab(createDTCTab(),        "Faults");
     m_tabs->addTab(createLiveDataTab(),   "Live Data");
-    m_tabs->addTab(createIOTab(),         "I/O");
     m_tabs->addTab(createLogTab(),        "Log");
 
     mainLayout->addWidget(m_tabs);
@@ -283,9 +281,10 @@ QWidget* MainWindow::createConnectionTab()
     QVBoxLayout *layout = new QVBoxLayout(w);
     layout->setSpacing(6);
 
-    QGroupBox *connBox = new QGroupBox("ELM327 Connection");
+    QGroupBox *connBox = new QGroupBox("Connection");
     connBox->setStyleSheet("QGroupBox{font-weight:bold;color:#70C8F0;font-size:14px;}");
     QGridLayout *connGrid = new QGridLayout(connBox);
+    connGrid->setSpacing(4);
 
     // WiFi row
     connGrid->addWidget(new QLabel("WiFi:"), 0, 0);
@@ -296,85 +295,159 @@ QWidget* MainWindow::createConnectionTab()
     m_portSpin->setValue(35000);
     m_portSpin->setMaximumWidth(80);
     connGrid->addWidget(m_portSpin, 0, 2);
-    m_connectBtn = new QPushButton("WiFi Connect");
+    m_connectBtn = new QPushButton("Connect");
     m_connectBtn->setMinimumHeight(36);
     connGrid->addWidget(m_connectBtn, 0, 3);
 
-    // Bluetooth row
-    connGrid->addWidget(new QLabel("BT:"), 1, 0);
-    m_btCombo = new QComboBox();
-    m_btCombo->setPlaceholderText("Select Bluetooth device...");
-    m_btCombo->setStyleSheet("QComboBox{background:#0e1828;color:#60b8d0;border:1px solid #1a4060;"
-                             "border-radius:4px;padding:6px 8px;font-size:13px;}");
-    // CRITICAL: Disable mouse/touch on combo to prevent Android popup crash
-    m_btCombo->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    m_btCombo->setFocusPolicy(Qt::NoFocus);
-    connGrid->addWidget(m_btCombo, 1, 1, 1, 2);
-    m_btScanBtn = new QPushButton("Scan");
-    m_btScanBtn->setMinimumHeight(36);
-    // uses global button style
-    connGrid->addWidget(m_btScanBtn, 1, 3);
-
-    // BT Connect + Disconnect
-    m_btConnectBtn = new QPushButton("BT Connect");
+    // BLE row: Connect + Disconnect
+    connGrid->addWidget(new QLabel("BLE:"), 1, 0);
+    m_btConnectBtn = new QPushButton("Connect");
     m_btConnectBtn->setMinimumHeight(36);
-    // uses global button style
-    m_btConnectBtn->setEnabled(false);
-    connGrid->addWidget(m_btConnectBtn, 2, 0, 1, 2);
-
+    connGrid->addWidget(m_btConnectBtn, 1, 1, 1, 2);
     m_disconnectBtn = new QPushButton("Disconnect");
     m_disconnectBtn->setMinimumHeight(36);
     m_disconnectBtn->setEnabled(false);
-    connGrid->addWidget(m_disconnectBtn, 2, 2, 1, 2);
+    connGrid->addWidget(m_disconnectBtn, 1, 3);
 
     // Status
-    m_connStatusLabel = new QLabel("Status: Disconnected");
-    m_connStatusLabel->setStyleSheet("color: #e04040; font-weight: bold; font-size: 14px;");
-    connGrid->addWidget(m_connStatusLabel, 3, 0, 1, 4);
+    m_connStatusLabel = new QLabel("Disconnected");
+    m_connStatusLabel->setStyleSheet("color:#e04040;font-weight:bold;font-size:13px;padding:2px;");
+    m_connStatusLabel->setAlignment(Qt::AlignCenter);
+    connGrid->addWidget(m_connStatusLabel, 2, 0, 1, 4);
+
+    // Hidden internals
+    m_btScanBtn = new QPushButton(); // hidden, scan triggered by connect
+    m_btScanBtn->setVisible(false);
+    m_btCombo = new QComboBox(); // hidden, device tracking
+    m_btCombo->setVisible(false);
 
     layout->addWidget(connBox);
 
-    // TCM Session
-    QGroupBox *tcmBox = new QGroupBox("TCM - NAG1 722.6");
-    tcmBox->setStyleSheet("QGroupBox{font-weight:bold;color:#40b8d0;font-size:14px;}");
-    QVBoxLayout *tcmLayout = new QVBoxLayout(tcmBox);
-    tcmLayout->setSpacing(4);
+    // === Module List ===
+    QGroupBox *modBox = new QGroupBox("Modules");
+    modBox->setStyleSheet("QGroupBox{font-weight:bold;color:#70C8F0;font-size:14px;}");
+    m_moduleListLayout = new QVBoxLayout(modBox);
+    m_moduleListLayout->setSpacing(3);
 
-    m_startSessionBtn = new QPushButton("Start TCM Session");
-    m_startSessionBtn->setEnabled(false);
-    m_startSessionBtn->setMinimumHeight(36);
-    m_startSessionBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    m_startSessionBtn->setStyleSheet(
-        "QPushButton{background:#0e2040;color:#80b0d0;border:1px solid #1a4868;border-radius:5px;font-size:13px;}"
-        "QPushButton:hover{background:#143058;}");
-    tcmLayout->addWidget(m_startSessionBtn);
+    // Show verified modules prominently, others dimmed
+    struct ModEntry {
+        WJDiagnostics::Module id;
+        QString label;
+        QString detail;
+        bool verified;
+    };
+    QList<ModEntry> modEntries = {
+        {WJDiagnostics::Module::KLineTCM, "TCM (K-Line)", "NAG1 722.6 | ATSH8120F1 | KWP2000", true},
+        {WJDiagnostics::Module::MotorECU, "Engine ECU", "Bosch EDC15C2 OM612 | ATSH8115F1 | KWP2000", true},
+        {WJDiagnostics::Module::ABS, "ABS / ESP", "J1850 VPW | ATSH244022", true},
+        {WJDiagnostics::Module::Airbag, "Airbag", "J1850 VPW | ATSH246022", true},
+        {WJDiagnostics::Module::BCM, "Body Computer", "J1850 VPW | ATSH248022", false},
+        {WJDiagnostics::Module::Cluster, "Instrument Cluster", "J1850 VPW | ATSH249022", false},
+        {WJDiagnostics::Module::ATC, "Climate (HVAC)", "J1850 VPW | ATSH246822", false},
+        {WJDiagnostics::Module::SKIM, "SKIM Immobilizer", "J1850 VPW | ATSH246222", false},
+    };
 
-    QLabel *tcmProto = new QLabel("J1850 VPW | 0x28 | ATSH2428xx | SID 0x22");
-    tcmProto->setStyleSheet("color:#406880;font-family:monospace;font-size:11px;");
-    tcmLayout->addWidget(tcmProto);
+    m_moduleButtons.clear();
+    for (const auto &me : modEntries) {
+        QPushButton *btn = new QPushButton();
+        btn->setCheckable(true);
+        btn->setMinimumHeight(48);
+        btn->setProperty("moduleId", static_cast<int>(static_cast<uint8_t>(me.id)));
 
-    layout->addWidget(tcmBox);
+        // Two-line text: name + protocol detail
+        btn->setText(me.label + "\n" + me.detail);
+        btn->setStyleSheet(QString(
+            "QPushButton{text-align:left;padding:6px 12px;background:%1;color:%2;"
+            "border:1px solid %3;border-radius:5px;font-size:12px;}"
+            "QPushButton:checked{background:#0a3830;color:#00d4b4;border:1px solid #00806a;font-weight:bold;}"
+            "QPushButton:disabled{background:#0a0e14;color:#303840;border:1px solid #1a1e24;}")
+            .arg(me.verified ? "#0e1828" : "#0a0e14")
+            .arg(me.verified ? "#80b0d0" : "#405060")
+            .arg(me.verified ? "#1a4060" : "#101820"));
 
-    // ECU Session
-    QGroupBox *ecuBox = new QGroupBox("ECU - OM612 EDC15C2");
-    ecuBox->setStyleSheet("QGroupBox{font-weight:bold;color:#d0a040;font-size:14px;}");
-    QVBoxLayout *ecuLayout = new QVBoxLayout(ecuBox);
-    ecuLayout->setSpacing(4);
+        btn->setEnabled(false); // enabled after BT connect
 
-    m_startEcuBtn = new QPushButton("Start ECU Session");
-    m_startEcuBtn->setEnabled(false);
-    m_startEcuBtn->setMinimumHeight(36);
-    m_startEcuBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    m_startEcuBtn->setStyleSheet(
-        "QPushButton{background:#1a1a0e;color:#c0a870;border:1px solid #3a3a20;border-radius:5px;font-size:13px;}"
-        "QPushButton:hover{background:#2a2a18;}");
-    ecuLayout->addWidget(m_startEcuBtn);
+        connect(btn, &QPushButton::clicked, this, [this, btn, me]() {
+            // If already active, deactivate
+            if (m_moduleSessionActive && m_activeModId == me.id) {
+                m_moduleSessionActive = false;
+                btn->setChecked(false);
+                if (m_liveData->isPolling()) onStopLiveData();
+                updateActiveHeaderLabel();
+                statusBar()->showMessage("Module deactivated");
+                return;
+            }
 
-    QLabel *ecuProto = new QLabel("K-Line ISO14230 | 0x15 | ATSH8115F1 | ATWM8115F13E");
-    ecuProto->setStyleSheet("color:#605838;font-family:monospace;font-size:11px;");
-    ecuLayout->addWidget(ecuProto);
+            // Stop live data if running
+            if (m_liveData->isPolling()) onStopLiveData();
 
-    layout->addWidget(ecuBox);
+            // Uncheck all other buttons
+            for (auto *b : m_moduleButtons) b->setChecked(false);
+            btn->setChecked(true);
+
+            // Disable all buttons during switch
+            for (auto *b : m_moduleButtons) b->setEnabled(false);
+            statusBar()->showMessage("Switching to " + me.label + "...");
+
+            m_tcm->switchToModule(me.id, [this, btn, me](bool ok) {
+                // Re-enable all buttons
+                for (auto *b : m_moduleButtons) b->setEnabled(true);
+
+                if (ok) {
+                    m_activeModId = me.id;
+                    m_moduleSessionActive = true;
+                    btn->setChecked(true);
+                    m_readDtcBtn->setEnabled(true);
+                    m_clearDtcBtn->setEnabled(true);
+                    m_startLiveBtn->setEnabled(true);
+
+                    // Auto-set live data mode
+                    if (me.id == WJDiagnostics::Module::KLineTCM) {
+                        m_liveData->setMode(LiveDataManager::TCM_ONLY);
+                    } else if (me.id == WJDiagnostics::Module::MotorECU) {
+                        m_liveData->setMode(LiveDataManager::ECU_ONLY);
+                    } else {
+                        // J1850 modules - no live data yet
+                        m_startLiveBtn->setEnabled(false);
+                    }
+
+                    // Auto-set DTC source + update DTC tab buttons
+                    if (me.id == WJDiagnostics::Module::KLineTCM)
+                        m_dtcSourceIdx = 0;
+                    else if (me.id == WJDiagnostics::Module::MotorECU)
+                        m_dtcSourceIdx = 1;
+                    else if (me.id == WJDiagnostics::Module::ABS)
+                        m_dtcSourceIdx = 2;
+                    else if (me.id == WJDiagnostics::Module::Airbag)
+                        m_dtcSourceIdx = 3;
+                    if (m_dtcTcmBtn) {
+                        m_dtcTcmBtn->setChecked(m_dtcSourceIdx == 0);
+                        m_dtcEcuBtn->setChecked(m_dtcSourceIdx == 1);
+                        m_dtcAbsBtn->setChecked(m_dtcSourceIdx == 2);
+                        m_dtcAirbagBtn->setChecked(m_dtcSourceIdx == 3);
+                        static const char* names[] = {"TCM","ECU","ABS","Airbag"};
+                        m_dtcCountLabel->setText(QString("Source: %1 - 0 fault codes").arg(names[m_dtcSourceIdx]));
+                        m_dtcTable->setRowCount(0);
+                    }
+
+                    // Update live data table selections for this module
+                    updateLiveTableForModule();
+
+                    statusBar()->showMessage(me.label + " active");
+                } else {
+                    btn->setChecked(false);
+                    m_moduleSessionActive = false;
+                    statusBar()->showMessage(me.label + " connection failed!");
+                }
+                updateActiveHeaderLabel();
+            });
+        });
+
+        m_moduleButtons.append(btn);
+        m_moduleListLayout->addWidget(btn);
+    }
+
+    layout->addWidget(modBox);
 
     // Active Header
     m_activeHeaderLabel = new QLabel("---");
@@ -388,116 +461,38 @@ QWidget* MainWindow::createConnectionTab()
     connect(m_connectBtn, &QPushButton::clicked, this, &MainWindow::onConnect);
     connect(m_disconnectBtn, &QPushButton::clicked, this, &MainWindow::onDisconnect);
 
-    // Bluetooth butonlari
-    connect(m_btScanBtn, &QPushButton::clicked, this, [this]() {
+    // BLE Connect: start scan, auto-connect on first match
+    connect(m_btConnectBtn, &QPushButton::clicked, this, [this]() {
         m_btCombo->clear();
+        m_btConnectBtn->setEnabled(false);
+        m_connStatusLabel->setText("Scanning BLE...");
+        m_connStatusLabel->setStyleSheet("color:orange;font-weight:bold;font-size:13px;padding:2px;");
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
         requestBluetoothPermissions();
 #else
-        m_btScanBtn->setText("Scanning...");
-        m_btScanBtn->setEnabled(false);
         m_elm->scanBluetooth();
 #endif
     });
-    connect(m_btConnectBtn, &QPushButton::clicked, this, [this]() {
-        if (m_btCombo && m_btCombo->currentIndex() >= 0) {
-            QString addr = m_btCombo->currentData().toString();
-            if (!addr.isEmpty()) {
-                onLogMessage(QString("Connecting BT: %1").arg(addr));
-                m_elm->connectBluetooth(addr);
-            }
-        }
-    });
-    // Combo is touch-disabled (WA_TransparentForMouseEvents) - no popup crash
-    // Selection is automatic: scan finds device -> auto-select -> connect button enabled
 #if HAS_BLUETOOTH
     connect(m_elm, &ELM327Connection::bluetoothDeviceFound, this,
             [this](const QString &name, const QString &addr) {
         m_btCombo->addItem(name + " [" + addr + "]", addr);
-        // Auto-select first found device
         if (m_btCombo->count() == 1) {
             m_btCombo->setCurrentIndex(0);
-            m_btConnectBtn->setEnabled(true);
+            // Auto-connect to first found device
+            m_connStatusLabel->setText("Found: " + name + " — connecting...");
+            m_connStatusLabel->setStyleSheet("color:orange;font-weight:bold;font-size:13px;padding:2px;");
+            m_elm->connectBluetooth(addr);
         }
     });
     connect(m_elm, &ELM327Connection::bluetoothScanFinished, this, [this]() {
-        m_btScanBtn->setText("Scan");
-        m_btScanBtn->setEnabled(true);
         if (m_btCombo->count() == 0) {
-            m_btCombo->addItem("No BT devices found");
-            m_btConnectBtn->setEnabled(false);
-            statusBar()->showMessage("No BT device found");
+            m_connStatusLabel->setText("No BLE device found");
+            m_connStatusLabel->setStyleSheet("color:#e04040;font-weight:bold;font-size:13px;padding:2px;");
+            m_btConnectBtn->setEnabled(true);
         }
     });
 #endif
-
-    connect(m_startSessionBtn, &QPushButton::clicked, this, [this]() {
-        if (m_tcmSessionActive) {
-            // Toggle off
-            m_tcmSessionActive = false;
-            m_startSessionBtn->setText("Start TCM Session");
-            m_startSessionBtn->setStyleSheet(
-                "QPushButton{background:#0e2040;color:#80b0d0;border:1px solid #1a4868;border-radius:5px;font-size:13px;}"
-                "QPushButton:hover{background:#143058;}");
-            statusBar()->showMessage("TCM session closed");
-            updateActiveHeaderLabel();
-            return;
-        }
-        // Start session
-        m_startSessionBtn->setEnabled(false);
-        statusBar()->showMessage("Starting TCM session...");
-        m_tcm->startSession([this](bool success) {
-            if (success) {
-                m_tcmSessionActive = true;
-                m_startSessionBtn->setText("TCM Active");
-                m_startSessionBtn->setStyleSheet(
-                    "QPushButton{background:#0a3830;color:#00d4b4;border:1px solid #00806a;border-radius:5px;font-weight:bold;font-size:13px;}"
-                    "QPushButton:hover{background:#104840;}");
-                m_startSessionBtn->setEnabled(true);
-                m_startEcuBtn->setEnabled(true);
-                m_readDtcBtn->setEnabled(true);
-                m_clearDtcBtn->setEnabled(true);
-                m_startLiveBtn->setEnabled(true);
-                m_readIOBtn->setEnabled(true);
-                statusBar()->showMessage("TCM diagnostic session active");
-            } else {
-                m_startSessionBtn->setEnabled(true);
-                statusBar()->showMessage("TCM session failed!");
-            }
-            updateActiveHeaderLabel();
-        });
-    });
-
-    connect(m_startEcuBtn, &QPushButton::clicked, this, [this]() {
-        if (m_ecuSessionActive) {
-            // Toggle off
-            m_ecuSessionActive = false;
-            m_startEcuBtn->setText("Start ECU Session");
-            m_startEcuBtn->setStyleSheet(
-                "QPushButton{background:#1a1a0e;color:#c0a870;border:1px solid #3a3a20;border-radius:5px;font-size:13px;}"
-                "QPushButton:hover{background:#2a2a18;}");
-            statusBar()->showMessage("ECU session closed");
-            updateActiveHeaderLabel();
-            return;
-        }
-        // Start ECU session - K-Line init
-        m_startEcuBtn->setEnabled(false);
-        statusBar()->showMessage("Starting ECU session (K-Line)...");
-        m_tcm->switchToModule(WJDiagnostics::Module::MotorECU, [this](bool success) {
-            if (success) {
-                m_ecuSessionActive = true;
-                m_startEcuBtn->setText("ECU Active");
-                m_startEcuBtn->setStyleSheet(
-                    "QPushButton{background:#0a3830;color:#00d4b4;border:1px solid #00806a;border-radius:5px;font-weight:bold;font-size:13px;}"
-                    "QPushButton:hover{background:#104840;}");
-                statusBar()->showMessage("ECU session active - K-Line ready");
-            } else {
-                statusBar()->showMessage("ECU session failed - K-Line init error");
-            }
-            m_startEcuBtn->setEnabled(true);
-            updateActiveHeaderLabel();
-        });
-    });
 
     scroll->setWidget(w);
     return scroll;
@@ -623,21 +618,6 @@ QWidget* MainWindow::createLiveDataTab()
     m_startLiveBtn->setEnabled(false);
     m_stopLiveBtn->setEnabled(false);
 
-    // Mod secici
-    m_modeCombo = new QComboBox();
-    m_modeCombo->addItem("TCM", (int)LiveDataManager::TCM_ONLY);
-    m_modeCombo->addItem("ECU", (int)LiveDataManager::ECU_ONLY);
-    m_modeCombo->addItem("TCM+ECU", (int)LiveDataManager::DUAL);
-    m_modeCombo->setCurrentIndex(2); // default DUAL
-    m_modeCombo->setMinimumHeight(36);
-    m_modeCombo->setStyleSheet("QComboBox{background:#0e1828;color:#00d4b4;border:1px solid #1a4868;"
-                               "border-radius:4px;padding:6px 10px;font-weight:bold;font-size:13px;}");
-    connect(m_modeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
-        m_liveData->setMode(static_cast<LiveDataManager::Mode>(m_modeCombo->itemData(idx).toInt()));
-    });
-    m_liveData->setMode(LiveDataManager::DUAL);
-
-    btnLayout->addWidget(m_modeCombo);
     btnLayout->addWidget(m_startLiveBtn);
     btnLayout->addWidget(m_stopLiveBtn);
     btnLayout->addWidget(m_logBtn);
@@ -658,30 +638,12 @@ QWidget* MainWindow::createLiveDataTab()
     auto params = m_tcm->liveDataParams();
     m_liveTable->setRowCount(params.size());
 
-    // Dashboard'da gosterilen parametreler
-    QSet<uint8_t> dashboardIDs = {
-        // TCM
-        0x01, // GEAR
-        0x10, // TURBIN RPM
-        0x14, // T-TEMP
-        0x16, // SOL V
-        0x17, // LIMP (TCC Clutch State)
-        0x20, // SPEED
-        // ECU
-        0xF0, // Engine RPM
-        0xF1, // Coolant Temp (M-TEMP)
-        0xF4, // Boost Pressure
-        0xF5, // MAF
-        0xF6, // Rail Pressure
-        0xF8, // Battery Voltage
-    };
-
     for (int i = 0; i < params.size(); ++i) {
         const auto &p = params[i];
 
-        // Checkbox - sadece dashboard parametreleri default checked
+        // Checkbox - unchecked by default, updateLiveTableForModule sets per module
         QTableWidgetItem *checkItem = new QTableWidgetItem();
-        checkItem->setCheckState(dashboardIDs.contains(p.localID) ? Qt::Checked : Qt::Unchecked);
+        checkItem->setCheckState(Qt::Unchecked);
         m_liveTable->setItem(i, 0, checkItem);
 
         // Name
@@ -731,49 +693,6 @@ QWidget* MainWindow::createLiveDataTab()
     return w;
 }
 
-QWidget* MainWindow::createIOTab()
-{
-    QWidget *w = new QWidget();
-    QVBoxLayout *layout = new QVBoxLayout(w);
-
-    m_readIOBtn = new QPushButton("Read I/O States");
-    m_readIOBtn->setMinimumHeight(36);
-    m_readIOBtn->setEnabled(false);
-    layout->addWidget(m_readIOBtn);
-
-    m_ioTable = new QTableWidget(0, 2);
-    m_ioTable->setHorizontalHeaderLabels({"Output", "State"});
-    m_ioTable->horizontalHeader()->setStretchLastSection(true);
-    m_ioTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_ioTable->setAlternatingRowColors(true);
-    m_ioTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    QScroller::grabGesture(m_ioTable->viewport(), QScroller::LeftMouseButtonGesture);
-
-    // I/O tanımlarını yükle
-    auto ioDefs = m_tcm->ioDefinitions();
-    m_ioTable->setRowCount(ioDefs.size());
-
-    for (int i = 0; i < ioDefs.size(); ++i) {
-        const auto &io = ioDefs[i];
-        m_ioTable->setItem(i, 0, new QTableWidgetItem(io.description));
-        m_ioTable->setItem(i, 1, new QTableWidgetItem("---"));
-    }
-
-    layout->addWidget(m_ioTable);
-
-    QLabel *ioWarning = new QLabel(
-        "WARNING: Solenoid actuation test must only be performed with vehicle stationary and transmission in P/N!\n"
-        "Incorrect solenoid activation may damage the transmission."
-    );
-    ioWarning->setWordWrap(true);
-    ioWarning->setStyleSheet("background: #2a1018; padding: 10px; border-radius: 5px; "
-                             "color: #ff6666; font-weight: bold;");
-    layout->addWidget(ioWarning);
-
-    connect(m_readIOBtn, &QPushButton::clicked, this, &MainWindow::onReadIO);
-
-    return w;
-}
 
 QWidget* MainWindow::createLogTab()
 {
@@ -835,7 +754,7 @@ QWidget* MainWindow::createLogTab()
     m_timeoutSpin = new QSpinBox();
     m_timeoutSpin->setRange(200, 10000);
     m_timeoutSpin->setSingleStep(100);
-    m_timeoutSpin->setValue(1500);
+    m_timeoutSpin->setValue(3000);
     m_timeoutSpin->setSuffix(" ms");
     m_timeoutSpin->setStyleSheet("background:#0e1828; color:#60b8a0; border:1px solid #1a3050; padding:4px; font-size:12px;");
     connect(m_timeoutSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int val) {
@@ -868,46 +787,54 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
 {
     switch (state) {
     case ELM327Connection::ConnectionState::Disconnected:
-        m_connStatusLabel->setText("Status: Disconnected");
-        m_connStatusLabel->setStyleSheet("color: #e04040; font-weight: bold; font-size: 14px;");
+        m_connStatusLabel->setText("Disconnected");
+        m_connStatusLabel->setStyleSheet("color:#e04040;font-weight:bold;font-size:13px;padding:2px;");
         m_connectBtn->setEnabled(true);
+        m_btConnectBtn->setEnabled(true);
         m_disconnectBtn->setEnabled(false);
-        m_startSessionBtn->setEnabled(false);
+        for (auto *b : m_moduleButtons) { b->setEnabled(false); b->setChecked(false); }
+        m_moduleSessionActive = false;
         m_readDtcBtn->setEnabled(false);
         m_clearDtcBtn->setEnabled(false);
         m_startLiveBtn->setEnabled(false);
-        m_readIOBtn->setEnabled(false);
         if (m_batteryTimer) m_batteryTimer->stop();
+        updateActiveHeaderLabel();
         statusBar()->showMessage("Disconnected");
         break;
 
     case ELM327Connection::ConnectionState::Connecting:
-        m_connStatusLabel->setText("Status: Connecting...");
-        m_connStatusLabel->setStyleSheet("color: orange; font-weight: bold;");
+        m_connStatusLabel->setText("Connecting...");
+        m_connStatusLabel->setStyleSheet("color:orange;font-weight:bold;font-size:13px;padding:2px;");
+        m_connectBtn->setEnabled(false);
+        m_btConnectBtn->setEnabled(false);
         statusBar()->showMessage("Connecting...");
         break;
 
     case ELM327Connection::ConnectionState::Initializing:
-        m_connStatusLabel->setText("Status: Initializing ELM327...");
-        m_connStatusLabel->setStyleSheet("color: yellow; font-weight: bold;");
+        m_connStatusLabel->setText("Initializing ELM327...");
+        m_connStatusLabel->setStyleSheet("color:yellow;font-weight:bold;font-size:13px;padding:2px;");
         statusBar()->showMessage("Initializing ELM327...");
         break;
 
-    case ELM327Connection::ConnectionState::Ready:
-        m_connStatusLabel->setText("Status: Ready");
-        m_connStatusLabel->setStyleSheet("color: lime; font-weight: bold;");
+    case ELM327Connection::ConnectionState::Ready: {
+        QString devName = "ELM327";
+        if (m_btCombo && m_btCombo->count() > 0)
+            devName = m_btCombo->currentText().section('[', 0, 0).trimmed();
+        m_connStatusLabel->setText(devName + " — Ready");
+        m_connStatusLabel->setStyleSheet("color:lime;font-weight:bold;font-size:13px;padding:2px;");
         m_connectBtn->setEnabled(false);
+        m_btConnectBtn->setEnabled(false);
         m_disconnectBtn->setEnabled(true);
-        m_startSessionBtn->setEnabled(true);
-        // ELM327 version shown in log
-
-        statusBar()->showMessage("ELM327 ready - Start a diagnostic session");
+        for (auto *b : m_moduleButtons) b->setEnabled(true);
+        statusBar()->showMessage("Ready — Select a module");
         break;
+    }
 
     case ELM327Connection::ConnectionState::Error:
-        m_connStatusLabel->setText("Status: ERROR!");
-        m_connStatusLabel->setStyleSheet("color: #e04040; font-weight: bold; font-size: 14px;");
+        m_connStatusLabel->setText("Connection Error!");
+        m_connStatusLabel->setStyleSheet("color:#e04040;font-weight:bold;font-size:13px;padding:2px;");
         m_connectBtn->setEnabled(true);
+        m_btConnectBtn->setEnabled(true);
         m_disconnectBtn->setEnabled(true);
         statusBar()->showMessage("Connection error!");
         break;
@@ -1113,27 +1040,6 @@ void MainWindow::onECUDataUpdated(const TCMDiagnostics::ECUStatus &ecu)
     }
 }
 
-void MainWindow::onReadIO()
-{
-    m_readIOBtn->setEnabled(false);
-    statusBar()->showMessage("Reading I/O states...");
-
-    m_tcm->readIOStates([this](const QList<TCMDiagnostics::IOState> &states) {
-        for (int i = 0; i < states.size() && i < m_ioTable->rowCount(); ++i) {
-            QString statusStr = states[i].isActive ? "ACTIVE" : "Off";
-            m_ioTable->item(i, 1)->setText(statusStr);
-
-            if (states[i].isActive) {
-                m_ioTable->item(i, 1)->setBackground(QColor(20, 80, 20));
-            } else {
-                m_ioTable->item(i, 1)->setBackground(QColor(40, 40, 40));
-            }
-        }
-
-        m_readIOBtn->setEnabled(true);
-        statusBar()->showMessage("I/O states updated");
-    });
-}
 
 void MainWindow::onLogMessage(const QString &msg)
 {
@@ -1165,27 +1071,60 @@ void MainWindow::updateStatusLabels(const TCMDiagnostics::TCMStatus &st)
 
 void MainWindow::updateActiveHeaderLabel()
 {
-    QString text;
-    QString style;
-    if (m_tcmSessionActive && m_ecuSessionActive) {
-        text = "Active: TCM+ECU | Dual Mode";
-        style = "background:#2a3a2a;padding:4px;border-radius:4px;"
-                "color:#88ffaa;font-family:monospace;font-weight:bold;";
-    } else if (m_tcmSessionActive) {
-        text = "Active: TCM | J1850 VPW | ATSH2428xx";
-        style = "background:#1a3a5a;padding:4px;border-radius:4px;"
-                "color:#88ccff;font-family:monospace;font-weight:bold;";
-    } else if (m_ecuSessionActive) {
-        text = "Active: ECU | K-Line | ATSH8115F1";
-        style = "background:#3a3a1a;padding:4px;border-radius:4px;"
-                "color:#ffcc44;font-family:monospace;font-weight:bold;";
-    } else {
-        text = "---";
-        style = "background:#2a2a3a;padding:4px;border-radius:4px;"
-                "color:#aaaaaa;font-family:monospace;font-weight:bold;";
+    if (!m_moduleSessionActive) {
+        m_activeHeaderLabel->setText("---");
+        m_activeHeaderLabel->setStyleSheet(
+            "background:#0e1828;padding:4px;border-radius:4px;"
+            "color:#606870;font-family:monospace;font-weight:bold;font-size:10px;");
+        return;
     }
+    auto info = WJDiagnostics::moduleInfo(m_activeModId);
+    QString busStr = (info.bus == WJDiagnostics::BusType::KLine) ? "K-Line" : "J1850 VPW";
+    QString text = QString("Active: %1 | %2 | %3").arg(info.shortName, busStr, info.atshHeader);
     m_activeHeaderLabel->setText(text);
-    m_activeHeaderLabel->setStyleSheet(style);
+    m_activeHeaderLabel->setStyleSheet(
+        "background:#0a3830;padding:4px;border-radius:4px;"
+        "color:#00d4b4;font-family:monospace;font-weight:bold;font-size:10px;");
+}
+
+void MainWindow::updateLiveTableForModule()
+{
+    auto params = m_tcm->liveDataParams();
+
+    // TCM params: 0x01-0x30, ECU params: 0xF0-0xFF
+    QSet<uint8_t> tcmDefaults = {0x01, 0x10, 0x13, 0x14, 0x16, 0x17, 0x18, 0x20};
+    QSet<uint8_t> ecuDefaults = {0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8};
+
+    bool isTCM = (m_activeModId == WJDiagnostics::Module::KLineTCM);
+    bool isECU = (m_activeModId == WJDiagnostics::Module::MotorECU);
+
+    for (int i = 0; i < params.size() && i < m_liveTable->rowCount(); ++i) {
+        uint8_t id = params[i].localID;
+        bool isTcmParam = (id < 0xE0);
+        bool isEcuParam = (id >= 0xF0);
+
+        bool checked = false;
+        if (isTCM && isTcmParam)
+            checked = tcmDefaults.contains(id);
+        else if (isECU && isEcuParam)
+            checked = ecuDefaults.contains(id);
+
+        if (m_liveTable->item(i, 0))
+            m_liveTable->item(i, 0)->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
+
+        // Dim irrelevant params
+        QColor fg = checked ? QColor(200, 220, 240) :
+                    ((isTCM && isTcmParam) || (isECU && isEcuParam))
+                        ? QColor(140, 160, 180) : QColor(60, 70, 80);
+        for (int col = 0; col < 3; ++col) {
+            if (m_liveTable->item(i, col))
+                m_liveTable->item(i, col)->setForeground(fg);
+        }
+
+        // Reset value column
+        if (m_liveTable->item(i, 2))
+            m_liveTable->item(i, 2)->setText("---");
+    }
 }
 
 QString MainWindow::gearToString(TCMDiagnostics::Gear gear)
@@ -1222,7 +1161,7 @@ void MainWindow::onRawBusDump()
         m_rawDumpBtn->setText("Raw Data Read");
     };
 
-    m_logText->append("<font color='white'>========== TEST v7 ==========</font>");
+    m_logText->append("<font color='white'>========== TEST v8 ==========</font>");
 
     // --- Key candidates: EGS52 algorithm with different seed interpretations ---
     // TCM seed is always 68 24 89 (static!)
@@ -1232,27 +1171,11 @@ void MainWindow::onRawBusDump()
         uint8_t hi, lo;
     };
     QList<KeyCandidate> keys;
-    // M2: upper16 of seed (0x6824) - most likely for EGS52
-    keys.append({"EGS52-upper16(6824)", 0xCC, 0x21});
-    // M1: lower16 of seed (0x2489)
-    keys.append({"EGS52-lower16(2489)", 0xAC, 0x25});
-    // M3: XOR bytes (68^89=E1, 24) -> E124
-    keys.append({"EGS52-xor(E124)", 0x49, 0xD4});
-    // M6: full 3-byte as big-endian 24-bit, mod 0xFFFF
-    // 0x682489 -> swap = 0x892468 & 0xFFFF = 0x2468, XOR 0x5AA5 = 0x7ECD, *0x5AA5 & 0xFFFF
-    {
-        uint16_t s = 0x2468;
-        uint16_t r = ((s << 8) & 0xFFFF) | (s >> 8);
-        r ^= 0x5AA5; r = (uint16_t)((uint32_t)r * 0x5AA5 & 0xFFFF);
-        keys.append({"EGS52-swap24(2468)", (uint8_t)(r >> 8), (uint8_t)(r & 0xFF)});
-    }
-    // M7: simple constant from Chrysler - just try common keys
-    keys.append({"const-5AA5", 0x5A, 0xA5});
-    keys.append({"const-A55A", 0xA5, 0x5A});
+    // CONFIRMED: EGS52 algo, seed upper16 (0x6824) -> key CC 21
+    keys.append(KeyCandidate{"EGS52(6824)", 0xCC, 0x21});
 
-    // --- Phase 1: TCM Security Key Brute Force ---
-    log("#00ffcc", "--- Phase 1: TCM Security Key Deneme ---");
-    log("#ffff00", "Seed: 68 24 89 (static) | 6 key deneniyor");
+    // --- Phase 1: TCM Security Unlock ---
+    log("#00ffcc", "--- Phase 1: TCM Security (CC 21) ---");
 
     auto keyIdx = std::make_shared<int>(0);
     auto keyFound = std::make_shared<bool>(false);
@@ -1304,16 +1227,37 @@ void MainWindow::onRawBusDump()
                                 log("#00ff00", QString("*** KEY FOUND! %1 = %2 %3 ***")
                                     .arg(k.name).arg(k.hi, 2, 16, QChar('0')).arg(k.lo, 2, 16, QChar('0')));
                                 *keyFound = true;
-                                log("#00ffcc", "--- Security Unlocked! Reading protected data ---");
-                                m_elm->sendCommand("30 10 07 00 02", [this, log, tryKey](const QString &rio) {
-                                    log("#00ff88", "IOCtrl 30 10 07 00 02: " + rio.trimmed());
-                                    m_elm->sendCommand("21 62", [this, log, tryKey](const QString &r62) {
-                                        log("#00ff88", "Block 0x62: " + r62.trimmed());
-                                        m_elm->sendCommand("3B 90", [this, log, tryKey](const QString &r3b) {
-                                            log("#00ff88", "Adaptation 3B 90: " + r3b.trimmed());
-                                            (*tryKey)();
-                                        });
-                                    });
+                                log("#00ffcc", "--- Security Unlocked! Protected data ---");
+                                // IOControl variants
+                                m_elm->sendCommand("30 10 07 00 00", [this, log, tryKey](const QString &r1) {
+                                log("#00ff88", "IOCtrl 30 10 07 00 00 (reset): " + r1.trimmed());
+                                m_elm->sendCommand("30 10 07 00 02", [this, log, tryKey](const QString &r2) {
+                                log("#00ff88", "IOCtrl 30 10 07 00 02 (read): " + r2.trimmed());
+                                m_elm->sendCommand("30 10 07 04 00", [this, log, tryKey](const QString &r3) {
+                                log("#00ff88", "IOCtrl 30 10 07 04 00 (apk): " + r3.trimmed());
+                                // Adaptation read with wait for pending
+                                m_elm->sendCommand("3B 90", [this, log, tryKey](const QString &r4) {
+                                log("#00ff88", "Adapt 3B 90: " + r4.trimmed());
+                                // Block 0x62 (EGR/wastegate - was NRC 0x33 without security)
+                                m_elm->sendCommand("21 62", [this, log, tryKey](const QString &r5) {
+                                log("#00ff88", "Block 0x62: " + r5.trimmed());
+                                // ReadEcuId 1A 90 (VIN - needs security?)
+                                m_elm->sendCommand("1A 90", [this, log, tryKey](const QString &r6) {
+                                log("#00ff88", "EcuId 1A 90: " + r6.trimmed());
+                                // Routine 31 31 (from APK)
+                                m_elm->sendCommand("31 31", [this, log, tryKey](const QString &r7) {
+                                log("#00ff88", "Routine 31 31: " + r7.trimmed());
+                                // Routine 31 32
+                                m_elm->sendCommand("31 32", [this, log, tryKey](const QString &r8) {
+                                log("#00ff88", "Routine 31 32: " + r8.trimmed());
+                                (*tryKey)();
+                                });
+                                });
+                                });
+                                });
+                                });
+                                });
+                                });
                                 });
                             } else {
                                 QString nrc = "rejected";
@@ -1346,16 +1290,31 @@ void MainWindow::onRawBusDump()
                         log("#00ff00", QString("*** KEY FOUND! %1 = %2 %3 ***")
                             .arg(k.name).arg(k.hi, 2, 16, QChar('0')).arg(k.lo, 2, 16, QChar('0')));
                         *keyFound = true;
-                        log("#00ffcc", "--- Security Unlocked! Reading protected data ---");
-                        m_elm->sendCommand("30 10 07 00 02", [this, log, tryKey](const QString &rio) {
-                            log("#00ff88", "IOCtrl 30 10 07 00 02: " + rio.trimmed());
-                            m_elm->sendCommand("21 62", [this, log, tryKey](const QString &r62) {
-                                log("#00ff88", "Block 0x62: " + r62.trimmed());
-                                m_elm->sendCommand("3B 90", [this, log, tryKey](const QString &r3b) {
-                                    log("#00ff88", "Adaptation 3B 90: " + r3b.trimmed());
-                                    (*tryKey)();
-                                });
-                            });
+                        log("#00ffcc", "--- Security Unlocked! Protected data ---");
+                        m_elm->sendCommand("30 10 07 00 00", [this, log, tryKey](const QString &r1) {
+                        log("#00ff88", "IOCtrl 30 10 07 00 00 (reset): " + r1.trimmed());
+                        m_elm->sendCommand("30 10 07 00 02", [this, log, tryKey](const QString &r2) {
+                        log("#00ff88", "IOCtrl 30 10 07 00 02 (read): " + r2.trimmed());
+                        m_elm->sendCommand("30 10 07 04 00", [this, log, tryKey](const QString &r3) {
+                        log("#00ff88", "IOCtrl 30 10 07 04 00 (apk): " + r3.trimmed());
+                        m_elm->sendCommand("3B 90", [this, log, tryKey](const QString &r4) {
+                        log("#00ff88", "Adapt 3B 90: " + r4.trimmed());
+                        m_elm->sendCommand("21 62", [this, log, tryKey](const QString &r5) {
+                        log("#00ff88", "Block 0x62: " + r5.trimmed());
+                        m_elm->sendCommand("1A 90", [this, log, tryKey](const QString &r6) {
+                        log("#00ff88", "EcuId 1A 90: " + r6.trimmed());
+                        m_elm->sendCommand("31 31", [this, log, tryKey](const QString &r7) {
+                        log("#00ff88", "Routine 31 31: " + r7.trimmed());
+                        m_elm->sendCommand("31 32", [this, log, tryKey](const QString &r8) {
+                        log("#00ff88", "Routine 31 32: " + r8.trimmed());
+                        (*tryKey)();
+                        });
+                        });
+                        });
+                        });
+                        });
+                        });
+                        });
                         });
                     } else {
                         QString nrc = "rejected";
@@ -1461,6 +1420,108 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"", "j1850hdr:ATRA28"});
     steps->append(Step{"J1850 TCM", "j1850cmd:2E 00 00"});
 
+    // --- Phase 6: BCM (Body Computer 0x80) ---
+    steps->append(Step{"", "header:--- Phase 6: BCM (Body Computer 0x80) ---"});
+    steps->append(Step{"", "j1850hdr:ATSH248022"});
+    steps->append(Step{"", "j1850hdr:ATRA80"});
+    // DTC read attempts
+    steps->append(Step{"BCM DTC 00", "j1850cmd:20 00 00"});
+    steps->append(Step{"BCM DTC 01", "j1850cmd:20 01 00"});
+    steps->append(Step{"BCM DTC 37", "j1850cmd:20 37 00"});
+    // Module info / status
+    steps->append(Step{"BCM PID 02", "j1850cmd:20 02 00"});
+    steps->append(Step{"BCM PID 03", "j1850cmd:20 03 00"});
+    steps->append(Step{"BCM PID 04", "j1850cmd:20 04 00"});
+    steps->append(Step{"BCM PID 05", "j1850cmd:20 05 00"});
+    steps->append(Step{"BCM PID 06", "j1850cmd:20 06 00"});
+    steps->append(Step{"BCM PID 07", "j1850cmd:20 07 00"});
+    steps->append(Step{"BCM PID 08", "j1850cmd:20 08 00"});
+    // SCI-style probes (Chrysler diagnostic services)
+    steps->append(Step{"BCM svc 10", "j1850cmd:10 01 00"}); // DiagSession
+    steps->append(Step{"BCM svc 1A", "j1850cmd:1A 80 00"}); // ECU ID
+    steps->append(Step{"BCM svc 1A87", "j1850cmd:1A 87 00"});
+    steps->append(Step{"BCM svc 21", "j1850cmd:21 01 00"}); // ReadLocalData
+    steps->append(Step{"BCM svc 22", "j1850cmd:22 00 01"}); // ReadDataByID
+    steps->append(Step{"BCM svc 22 02", "j1850cmd:22 00 02"});
+    steps->append(Step{"BCM svc 22 03", "j1850cmd:22 00 03"});
+    steps->append(Step{"BCM svc 22 10", "j1850cmd:22 00 10"});
+    steps->append(Step{"BCM svc 22 20", "j1850cmd:22 00 20"});
+    // Actuator test probes (windows, locks, lights)
+    steps->append(Step{"BCM svc 30 01", "j1850cmd:30 01 00"}); // IOControl
+    steps->append(Step{"BCM svc 30 10", "j1850cmd:30 10 00"});
+    steps->append(Step{"BCM svc 30 20", "j1850cmd:30 20 00"});
+    steps->append(Step{"BCM svc 31 01", "j1850cmd:31 01 00"}); // RoutineControl
+    // Functional addressing probe (broadcast)
+    steps->append(Step{"", "header:BCM functional addr..."});
+    steps->append(Step{"", "j1850hdr:ATSH24FF22"});
+    steps->append(Step{"BCM func", "j1850cmd:3F 00 00"});
+    // Restore BCM physical
+    steps->append(Step{"", "j1850hdr:ATSH248022"});
+    steps->append(Step{"", "j1850hdr:ATRA80"});
+
+    // --- Phase 7: Instrument Cluster (0x90) ---
+    steps->append(Step{"", "header:--- Phase 7: Instrument Cluster (0x90) ---"});
+    steps->append(Step{"", "j1850hdr:ATSH249022"});
+    steps->append(Step{"", "j1850hdr:ATRA90"});
+    steps->append(Step{"Cluster DTC 00", "j1850cmd:30 00 00"});
+    steps->append(Step{"Cluster DTC 01", "j1850cmd:30 01 00"});
+    steps->append(Step{"Cluster DTC 37", "j1850cmd:30 37 00"});
+    steps->append(Step{"Cluster PID 02", "j1850cmd:30 02 00"});
+    steps->append(Step{"Cluster PID 03", "j1850cmd:30 03 00"});
+    steps->append(Step{"Cluster PID 04", "j1850cmd:30 04 00"});
+    steps->append(Step{"Cluster svc 1A", "j1850cmd:1A 80 00"});
+    steps->append(Step{"Cluster svc 1A87", "j1850cmd:1A 87 00"});
+    steps->append(Step{"Cluster svc 21", "j1850cmd:21 01 00"});
+    steps->append(Step{"Cluster svc 22", "j1850cmd:22 00 01"});
+    steps->append(Step{"Cluster svc 22 02", "j1850cmd:22 00 02"});
+
+    // --- Phase 8: Climate / HVAC (0x68) ---
+    steps->append(Step{"", "header:--- Phase 8: Climate HVAC (0x68) ---"});
+    steps->append(Step{"", "j1850hdr:ATSH246822"});
+    steps->append(Step{"", "j1850hdr:ATRA68"});
+    steps->append(Step{"HVAC DTC 00", "j1850cmd:28 00 00"});
+    steps->append(Step{"HVAC DTC 01", "j1850cmd:28 01 00"});
+    steps->append(Step{"HVAC DTC 37", "j1850cmd:28 37 00"});
+    steps->append(Step{"HVAC PID 02", "j1850cmd:28 02 00"});
+    steps->append(Step{"HVAC PID 03", "j1850cmd:28 03 00"});
+    steps->append(Step{"HVAC PID 04", "j1850cmd:28 04 00"});
+    steps->append(Step{"HVAC svc 1A", "j1850cmd:1A 80 00"});
+    steps->append(Step{"HVAC svc 21", "j1850cmd:21 01 00"});
+    steps->append(Step{"HVAC svc 22", "j1850cmd:22 00 01"});
+
+    // --- Phase 9: SKIM Immobilizer (0x62) ---
+    steps->append(Step{"", "header:--- Phase 9: SKIM (0x62) ---"});
+    steps->append(Step{"", "j1850hdr:ATSH246222"});
+    steps->append(Step{"", "j1850hdr:ATRA62"});
+    steps->append(Step{"SKIM DTC 00", "j1850cmd:22 00 00"});
+    steps->append(Step{"SKIM DTC 01", "j1850cmd:22 01 00"});
+    steps->append(Step{"SKIM DTC 37", "j1850cmd:22 37 00"});
+    steps->append(Step{"SKIM PID 02", "j1850cmd:22 02 00"});
+    steps->append(Step{"SKIM PID 03", "j1850cmd:22 03 00"});
+    steps->append(Step{"SKIM svc 1A", "j1850cmd:1A 80 00"});
+    steps->append(Step{"SKIM svc 1A87", "j1850cmd:1A 87 00"});
+    steps->append(Step{"SKIM svc 21", "j1850cmd:21 01 00"});
+    steps->append(Step{"SKIM svc 22", "j1850cmd:22 00 01"});
+
+    // --- Phase 10: Additional J1850 modules ---
+    steps->append(Step{"", "header:--- Phase 10: Other J1850 Modules ---"});
+    // Radio (0x87)
+    steps->append(Step{"", "j1850hdr:ATSH248722"});
+    steps->append(Step{"", "j1850hdr:ATRA87"});
+    steps->append(Step{"Radio probe", "j1850cmd:27 00 00"});
+    // EVIC / Overhead Console (0x2A)
+    steps->append(Step{"", "j1850hdr:ATSH242A22"});
+    steps->append(Step{"", "j1850hdr:ATRA2A"});
+    steps->append(Step{"EVIC probe", "j1850cmd:0A 00 00"});
+    // Memory Seat (0x98)
+    steps->append(Step{"", "j1850hdr:ATSH249822"});
+    steps->append(Step{"", "j1850hdr:ATRA98"});
+    steps->append(Step{"MemSeat probe", "j1850cmd:38 00 00"});
+    // Liftgate (0xA0)
+    steps->append(Step{"", "j1850hdr:ATSH24A022"});
+    steps->append(Step{"", "j1850hdr:ATRAA0"});
+    steps->append(Step{"Liftgate probe", "j1850cmd:40 00 00"});
+
     // --- Done ---
     steps->append(Step{"", "header:--- Battery ---"});
     steps->append(Step{"Battery", "cmd:ATRV"});
@@ -1470,7 +1531,7 @@ void MainWindow::runDiscoveryPhases(
 
     *run = [this, steps, idx, run, log, done]() {
         if (*idx >= steps->size()) {
-            m_logText->append("<font color='white'>========== TEST v7 BITTI ==========</font>");
+            m_logText->append("<font color='white'>========== TEST v8 BITTI ==========</font>");
             log("#ffff00", "COPY LOG ile kopyala!");
             done();
             return;
@@ -1502,57 +1563,178 @@ void MainWindow::runDiscoveryPhases(
         }
 
         if (step.action == "switch:ecu_sectest") {
-            // ECU security: get seed, compute EGS52 key, try it
-            m_tcm->switchToModule(WJDiagnostics::Module::MotorECU, [this, log, run](bool ok) {
-                if (!ok) { log("#ff3333", "ECU switch FAIL"); (*run)(); return; }
-                // Seed already received during switchToModule, extract from log
-                // Send 27 01 again to get fresh seed
-                m_elm->sendCommand("27 01", [this, log, run](const QString &seedResp) {
-                    log("#60b8a0", "ECU seed: " + seedResp.trimmed());
-                    // Parse seed bytes from "84 F1 15 67 01 XX YY ZZ"
+            // ECU security: try multiple key formats and security levels
+            // NRC 0x12 = format error, not wrong key! Must find correct format.
+            struct SecAttempt {
+                const char* label;
+                QString seedCmd;    // "27 01" or "27 03" or "27 41"
+                uint8_t keyLevel;   // 0x02, 0x04, 0x42
+                bool twoByteKey;    // true=send only KR1 (2-byte), false=KR1+KR2 (4-byte)
+                uint32_t xor1, xor2, magic;
+            };
+            auto attempts = std::make_shared<QVector<SecAttempt>>(QVector<SecAttempt>{
+                // Level 01/02, 2-byte key (like TCM!)
+                {"Lvl1 2B EDC16",    "27 01", 0x02, true,  0x1289, 0x0A22, 0x1C60020},
+                {"Lvl1 2B EDC15P",   "27 01", 0x02, true,  0xDA1C, 0xF781, 0x3800000},
+                {"Lvl1 2B EDC15V",   "27 01", 0x02, true,  0x508D, 0xA647, 0x3800000},
+                {"Lvl1 2B EDC15VM+", "27 01", 0x02, true,  0xF25E, 0x6533, 0x3800000},
+                // Level 01/02, 4-byte key
+                {"Lvl1 4B EDC16",    "27 01", 0x02, false, 0x1289, 0x0A22, 0x1C60020},
+                {"Lvl1 4B EDC15P",   "27 01", 0x02, false, 0xDA1C, 0xF781, 0x3800000},
+                // Level 03/04 (EDC16 flash read level)
+                {"Lvl3 2B EDC16",    "27 03", 0x04, true,  0x1289, 0x0A22, 0x1C60020},
+                {"Lvl3 4B EDC16",    "27 03", 0x04, false, 0x1289, 0x0A22, 0x1C60020},
+                // Level 41/42 (Bosch bootloader, EDC15 tool uses this)
+                {"Lvl41 4B EDC15P",  "27 41", 0x42, false, 0xDA1C, 0xF781, 0x3800000},
+                {"Lvl41 4B EDC15V",  "27 41", 0x42, false, 0x508D, 0xA647, 0x3800000},
+                {"Lvl41 4B EDC15VM+","27 41", 0x42, false, 0xF25E, 0x6533, 0x3800000},
+                {"Lvl41 4B EDC16",   "27 41", 0x42, false, 0x1289, 0x0A22, 0x1C60020},
+            });
+            auto aIdx = std::make_shared<int>(0);
+            auto tryAttempt = std::make_shared<std::function<void()>>();
+
+            *tryAttempt = [this, attempts, aIdx, tryAttempt, log, run]() {
+                if (*aIdx >= attempts->size()) {
+                    log("#ff8800", "ECU security: all attempts exhausted");
+                    (*run)();
+                    return;
+                }
+                auto &a = attempts->at(*aIdx);
+                log("#c0c0ff", QString("[%1/%2] %3 (seed=%4, keyLvl=0x%5)")
+                    .arg(*aIdx + 1).arg(attempts->size()).arg(a.label)
+                    .arg(a.seedCmd).arg(a.keyLevel, 2, 16, QChar('0')));
+
+                // Full reinit
+                m_elm->sendCommand("ATZ", [this, attempts, aIdx, tryAttempt, log, run, a](const QString &) {
+                QTimer::singleShot(500, this, [this, attempts, aIdx, tryAttempt, log, run, a]() {
+                m_elm->sendCommand("ATE1", [this, attempts, aIdx, tryAttempt, log, run, a](const QString &) {
+                m_elm->sendCommand("ATH1", [this, attempts, aIdx, tryAttempt, log, run, a](const QString &) {
+                m_elm->sendCommand("ATWM8115F13E", [this, attempts, aIdx, tryAttempt, log, run, a](const QString &) {
+                m_elm->sendCommand("ATSH8115F1", [this, attempts, aIdx, tryAttempt, log, run, a](const QString &) {
+                m_elm->sendCommand("ATSP5", [this, attempts, aIdx, tryAttempt, log, run, a](const QString &) {
+                m_elm->sendCommand("ATFI", [this, attempts, aIdx, tryAttempt, log, run, a](const QString &fi) {
+                    if (!fi.contains("OK")) {
+                        log("#ff8800", "ATFI fail: " + fi.trimmed());
+                        (*aIdx)++;
+                        QTimer::singleShot(2000, this, [tryAttempt]() { (*tryAttempt)(); });
+                        return;
+                    }
+                m_elm->sendCommand("81", [this, attempts, aIdx, tryAttempt, log, run, a](const QString &) {
+                m_elm->sendCommand(a.seedCmd, [this, attempts, aIdx, tryAttempt, log, run, a](const QString &seedResp) {
+                    log("#60b8a0", "Seed resp: " + seedResp.trimmed());
                     QStringList parts = seedResp.trimmed().split(' ');
-                    if (parts.size() >= 8 && parts[3] == "67") {
+                    // Check for positive response (0x67)
+                    bool hasSeed = false;
+                    int seedStart = -1;
+                    for (int i = 0; i < parts.size(); i++) {
+                        if (parts[i] == "67") { hasSeed = true; seedStart = i; break; }
+                    }
+                    if (hasSeed && seedStart + 3 < parts.size()) {
                         bool ok1, ok2;
-                        uint8_t s0 = parts[5].toUInt(&ok1, 16);
-                        uint8_t s1 = parts[6].toUInt(&ok2, 16);
+                        uint8_t s0 = parts[seedStart + 2].toUInt(&ok1, 16);
+                        uint8_t s1 = parts[seedStart + 3].toUInt(&ok2, 16);
                         if (ok1 && ok2) {
-                            uint16_t seed16 = (s0 << 8) | s1;
-                            uint16_t r = ((seed16 << 8) & 0xFFFF) | (seed16 >> 8);
-                            r ^= 0x5AA5;
-                            r = (uint16_t)((uint32_t)r * 0x5AA5 & 0xFFFF);
-                            QString keyCmd = QString("27 02 %1 %2")
-                                .arg((r >> 8), 2, 16, QChar('0'))
-                                .arg((r & 0xFF), 2, 16, QChar('0')).toUpper();
-                            log("#c080ff", QString("ECU key calc: seed=%1 -> key=%2")
-                                .arg(seed16, 4, 16, QChar('0'))
-                                .arg(r, 4, 16, QChar('0')));
-                            m_elm->sendCommand(keyCmd, [this, log, run](const QString &keyResp) {
-                                if (keyResp.contains("67 02", Qt::CaseInsensitive)) {
-                                    log("#00ff00", "*** ECU SECURITY UNLOCKED! ***");
-                                    // Read protected blocks
-                                    m_elm->sendCommand("21 62", [this, log, run](const QString &r62) {
-                                        log("#00ff88", "ECU 0x62 (protected): " + r62.trimmed());
-                                        m_elm->sendCommand("21 B0", [this, log, run](const QString &rB0) {
-                                            log("#00ff88", "ECU 0xB0 (protected): " + rB0.trimmed());
-                                            (*run)();
-                                        });
-                                    });
+                            // EDC15 ProcessKey algorithm
+                            uint32_t KR1 = (s0 << 8) | s1;
+                            uint32_t KR2 = 0;
+                            uint32_t Key3 = a.magic;
+                            for (int i = 0; i < 5; i++) {
+                                uint32_t KeyTemp = KR1 & 0x8000;
+                                KR1 = (KR1 << 1) & 0xFFFFFFFF;
+                                if ((KeyTemp & 0x0FFFF) == 0) {
+                                    uint32_t t2 = KR2 & 0xFFFF;
+                                    KeyTemp = t2 + (KeyTemp & 0xFFFF0000);
+                                    KR1 &= 0xFFFE;
+                                    t2 = (KeyTemp & 0xFFFF) >> 0x0F;
+                                    KeyTemp = (KeyTemp & 0xFFFF0000) + t2;
+                                    KR1 |= KeyTemp;
+                                    KR2 = (KR2 << 1) & 0xFFFFFFFF;
                                 } else {
-                                    log("#ff8800", "ECU key rejected: " + keyResp.trimmed());
-                                    (*run)();
+                                    KeyTemp = (KR2 + KR2) & 0xFFFFFFFF;
+                                    KR1 &= 0xFFFE;
+                                    uint32_t t2 = (KeyTemp & 0xFF) | 1;
+                                    Key3 = (t2 + (Key3 & 0xFFFFFF00)) & 0xFFFFFFFF;
+                                    Key3 = (Key3 & 0xFFFF00FF) | KeyTemp;
+                                    t2 = (KR2 & 0xFFFF) >> 0x0F;
+                                    KeyTemp = (t2 + (KeyTemp & 0xFFFF0000)) | KR1;
+                                    Key3 = (Key3 ^ a.xor1) & 0xFFFFFFFF;
+                                    KeyTemp = (KeyTemp ^ a.xor2) & 0xFFFFFFFF;
+                                    KR2 = Key3;
+                                    KR1 = KeyTemp;
                                 }
+                            }
+                            KR1 &= 0xFFFF;
+                            KR2 &= 0xFFFF;
+                            QString keyCmd;
+                            if (a.twoByteKey) {
+                                keyCmd = QString("27 %1 %2 %3")
+                                    .arg(a.keyLevel, 2, 16, QChar('0'))
+                                    .arg((KR1>>8)&0xFF, 2, 16, QChar('0'))
+                                    .arg(KR1&0xFF, 2, 16, QChar('0')).toUpper();
+                            } else {
+                                keyCmd = QString("27 %1 %2 %3 %4 %5")
+                                    .arg(a.keyLevel, 2, 16, QChar('0'))
+                                    .arg((KR1>>8)&0xFF, 2, 16, QChar('0'))
+                                    .arg(KR1&0xFF, 2, 16, QChar('0'))
+                                    .arg((KR2>>8)&0xFF, 2, 16, QChar('0'))
+                                    .arg(KR2&0xFF, 2, 16, QChar('0')).toUpper();
+                            }
+                            log("#c080ff", QString("seed=%1%2 -> %3")
+                                .arg(s0,2,16,QChar('0')).arg(s1,2,16,QChar('0')).arg(keyCmd));
+                            m_elm->sendCommand(keyCmd, [this, attempts, aIdx, tryAttempt, log, run](const QString &keyResp) {
+                                QString nrc;
+                                if (keyResp.contains("67", Qt::CaseInsensitive) &&
+                                    !keyResp.contains("7F", Qt::CaseInsensitive)) {
+                                    log("#00ff00", QString("*** ECU UNLOCKED with %1! ***")
+                                        .arg(attempts->at(*aIdx).label));
+                                    // Read protected blocks
+                                    m_elm->sendCommand("21 62", [this, log, run](const QString &r) {
+                                    log("#00ff88", "ECU 0x62: " + r.trimmed());
+                                    m_elm->sendCommand("21 B0", [this, log, run](const QString &r) {
+                                    log("#00ff88", "ECU 0xB0: " + r.trimmed());
+                                    m_elm->sendCommand("21 B1", [this, log, run](const QString &r) {
+                                    log("#00ff88", "ECU 0xB1: " + r.trimmed());
+                                    m_elm->sendCommand("21 B2", [this, log, run](const QString &r) {
+                                    log("#00ff88", "ECU 0xB2: " + r.trimmed());
+                                    m_elm->sendCommand("1A 90", [this, log, run](const QString &r) {
+                                    log("#00ff88", "ECU 1A 90: " + r.trimmed());
+                                    (*run)();
+                                    });});});});});
+                                    return;
+                                }
+                                // Extract NRC code for logging
+                                QStringList rp = keyResp.trimmed().split(' ');
+                                for (int i = 0; i < rp.size()-1; i++) {
+                                    if (rp[i] == "7F" && rp[i+1] == "27" && i+2 < rp.size())
+                                        nrc = rp[i+2];
+                                }
+                                log("#ff8800", QString("%1 -> NRC 0x%2: %3")
+                                    .arg(attempts->at(*aIdx).label).arg(nrc).arg(keyResp.trimmed()));
+                                (*aIdx)++;
+                                int delay = (nrc == "37") ? 10000 : 2000;
+                                QTimer::singleShot(delay, this, [tryAttempt]() { (*tryAttempt)(); });
                             });
-                        } else {
-                            log("#ff8800", "ECU seed parse fail");
-                            (*run)();
-                        }
+                        } else { log("#ff8800", "seed parse fail"); (*aIdx)++; QTimer::singleShot(1000, this, [tryAttempt]() { (*tryAttempt)(); }); }
                     } else {
-                        // Seed might be NRC 0x37 (already attempted during switchToModule)
-                        log("#ff8800", "ECU seed: " + seedResp.trimmed());
-                        (*run)();
+                        // No seed - level not supported, skip related attempts
+                        log("#ff8800", "No seed (level not supported): " + seedResp.trimmed());
+                        // Skip all attempts with same seedCmd
+                        QString skipCmd = a.seedCmd;
+                        while (*aIdx < attempts->size() && attempts->at(*aIdx).seedCmd == skipCmd) (*aIdx)++;
+                        QTimer::singleShot(1000, this, [tryAttempt]() { (*tryAttempt)(); });
                     }
                 });
-            });
+                });
+                });
+                });
+                });
+                });
+                });
+                });
+                });
+                });
+            };
+            (*tryAttempt)();
             return;
         }
 
@@ -1589,9 +1771,11 @@ void MainWindow::runDiscoveryPhases(
         if (step.action.startsWith("j1850cmd:")) {
             QString cmd = step.action.mid(9);
             m_elm->sendCommand(cmd, [this, log, run, step](const QString &resp) {
-                log("#60b8a0", step.label + ": " + resp.trimmed());
+                bool noData = resp.contains("NO DATA") || resp.contains("ERROR") ||
+                              resp.contains("UNABLE") || resp.contains("?") || resp.contains("TIMEOUT");
+                log(noData ? "#666666" : "#00ff88", step.label + ": " + resp.trimmed());
                 (*run)();
-            });
+            }, 1500); // shorter timeout for discovery probes
             return;
         }
 
@@ -1628,8 +1812,9 @@ void MainWindow::onRawSendCustom()
 
 void MainWindow::scanBluetoothDevices()
 {
-    m_btScanBtn->setText("Scanning...");
-    m_btScanBtn->setEnabled(false);
+    m_btConnectBtn->setEnabled(false);
+    m_connStatusLabel->setText("Scanning BLE...");
+    m_connStatusLabel->setStyleSheet("color:orange;font-weight:bold;font-size:13px;padding:2px;");
     m_elm->scanBluetooth();
 }
 

@@ -374,7 +374,7 @@ void ELM327Connection::onDataReady()
             m_currentCommand.callback(response);
 
         m_commandPending = false;
-        QTimer::singleShot(340, this, &ELM327Connection::processNextCommand);
+        QTimer::singleShot(50, this, &ELM327Connection::processNextCommand);
     }
 }
 

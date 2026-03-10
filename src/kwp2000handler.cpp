@@ -55,7 +55,7 @@ void KWP2000Handler::sendTesterPresent()
 
 void KWP2000Handler::readAllDTCs(std::function<void(const QList<DTCInfo>&)> callback)
 {
-    emit logMessage("Reading TCM fault codes...");
+    emit logMessage("Reading fault codes...");
 
     // KWP2000 ReadDTCByStatus
     // Mercedes NAG1: 18 02 FF 00 (4 bytes, APK verified)
@@ -102,7 +102,7 @@ void KWP2000Handler::readAllDTCs(std::function<void(const QList<DTCInfo>&)> call
 
 void KWP2000Handler::clearAllDTCs(std::function<void(bool)> callback)
 {
-    emit logMessage("Clearing TCM fault codes...");
+    emit logMessage("Clearing fault codes...");
 
     // ClearDiagnosticInformation (0x14)
     // Mercedes NAG1: 14 00 00 (APK verified, NOT FF FF)
@@ -110,34 +110,50 @@ void KWP2000Handler::clearAllDTCs(std::function<void(bool)> callback)
     data.append(static_cast<char>(0x00));
     data.append(static_cast<char>(0x00));
 
-    sendKWPRequest(ClearDTC, data, [this, callback](const QByteArray &resp) {
+    auto cbGuard = std::make_shared<bool>(false);
+    auto safeCb = [callback, cbGuard](bool ok) {
+        if (*cbGuard) return; // prevent double-call
+        *cbGuard = true;
+        if (callback) callback(ok);
+    };
+
+    sendKWPRequest(ClearDTC, data, [this, safeCb](const QByteArray &resp) {
+        if (resp.isEmpty()) {
+            emit logMessage("DTC clear: no response from ECU");
+            emit dtcCleared(false);
+            safeCb(false);
+            return;
+        }
+
         bool success = isPositiveResponse(resp, ClearDTC);
 
         if (success) {
             emit logMessage("Fault codes cleared!");
             emit dtcCleared(success);
-            if (callback) callback(success);
+            safeCb(success);
             return;
         }
 
         uint8_t nrc = 0;
         if (isNegativeResponse(resp, &nrc) && nrc == 0x78) {
-            // NRC 0x78 = Response Pending: TCM is processing, wait then assume success
+            // NRC 0x78 = Response Pending: ECU is processing, wait then assume success
             emit logMessage("DTC clear: Response Pending (0x78) - waiting...");
-            QTimer::singleShot(3000, this, [this, callback]() {
+            QTimer::singleShot(3000, this, [this, safeCb]() {
                 emit logMessage("DTC clear: assumed OK after pending");
                 emit dtcCleared(true);
-                if (callback) callback(true);
+                safeCb(true);
             });
             return;
         }
 
         if (nrc != 0) {
             emit logMessage("DTC clear failed: " + nrcToString(nrc));
+        } else {
+            emit logMessage("DTC clear: unexpected response");
         }
         emit dtcCleared(false);
-        if (callback) callback(false);
-    });
+        safeCb(false);
+    }, 10000);  // 10s timeout for clear (ECU may need time)
 }
 
 // --- ECU Bilgileri ---

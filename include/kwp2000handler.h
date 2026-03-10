@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QMap>
 #include <functional>
+#include <memory>
 #include "elm327connection.h"
 
 /**

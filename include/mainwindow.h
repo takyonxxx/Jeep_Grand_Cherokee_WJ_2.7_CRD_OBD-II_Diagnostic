@@ -8,6 +8,7 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QGroupBox>
+#include <QVBoxLayout>
 #include <QStatusBar>
 #include <QProgressBar>
 #include <QComboBox>
@@ -34,7 +35,6 @@ private slots:
     void onLiveDataUpdated(const QMap<uint8_t,double>&);
     void onFullStatusUpdated(const TCMDiagnostics::TCMStatus&);
     void onECUDataUpdated(const TCMDiagnostics::ECUStatus&);
-    void onReadIO();
     void onLogMessage(const QString&);
     void onRawBusDump();
     void onRawSendCustom();
@@ -53,11 +53,11 @@ private:
     QWidget* createConnectionTab();
     QWidget* createDTCTab();
     QWidget* createLiveDataTab();
-    QWidget* createIOTab();
     QWidget* createLogTab();
     void updateDashboardFromLiveData(const QMap<uint8_t,double>&);
     void updateStatusLabels(const TCMDiagnostics::TCMStatus&);
     void updateActiveHeaderLabel();
+    void updateLiveTableForModule();
     void setGaugeColor(QLabel*,const QString&);
     QString gearToString(TCMDiagnostics::Gear);
 #ifdef Q_OS_ANDROID
@@ -66,12 +66,15 @@ private:
     ELM327Connection *m_elm; TCMDiagnostics *m_tcm; LiveDataManager *m_liveData;
     QTabWidget *m_tabs;
     QLineEdit *m_hostEdit; QSpinBox *m_portSpin;
-    QPushButton *m_connectBtn,*m_disconnectBtn,*m_startSessionBtn,*m_startEcuBtn;
+    QPushButton *m_connectBtn,*m_disconnectBtn;
     QPushButton *m_btScanBtn,*m_btConnectBtn;
     QComboBox *m_btCombo;
     QLabel *m_activeHeaderLabel;
-    bool m_tcmSessionActive = false;
-    bool m_ecuSessionActive = false;
+    // Module system: single active module
+    WJDiagnostics::Module m_activeModId = WJDiagnostics::Module::KLineTCM;
+    bool m_moduleSessionActive = false;
+    QList<QPushButton*> m_moduleButtons;
+    QVBoxLayout *m_moduleListLayout = nullptr;
     QLabel *m_connStatusLabel;
     QTimer *m_batteryTimer = nullptr;  // ATRV periyodik okuma
     QString m_lastLogPath;
@@ -79,7 +82,6 @@ private:
     QPushButton *m_dtcTcmBtn=nullptr,*m_dtcEcuBtn=nullptr,*m_dtcAbsBtn=nullptr,*m_dtcAirbagBtn=nullptr;
     int m_dtcSourceIdx = 0; // 0=TCM, 1=ECU, 2=ABS, 3=Airbag
     QTableWidget *m_liveTable; QPushButton *m_startLiveBtn,*m_stopLiveBtn,*m_logBtn;
-    QComboBox *m_modeCombo;
     QLabel *m_dashGearVal,*m_dashGearUnit;
     QLabel *m_dashSpeedVal,*m_dashSpeedUnit;
     QLabel *m_dashRpmVal,*m_dashRpmUnit;
@@ -94,7 +96,6 @@ private:
     QLabel *m_dashMotMafVal,*m_dashMotMafUnit;
     QLabel *m_dashMotRailVal,*m_dashMotRailUnit;
     QProgressBar *m_throttleBar;
-    QTableWidget *m_ioTable; QPushButton *m_readIOBtn;
     // ABS tab
     QTableWidget *m_absDtcTable=nullptr;
     QPushButton *m_absReadDtcBtn=nullptr, *m_absClearDtcBtn=nullptr, *m_absLiveBtn=nullptr;

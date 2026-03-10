@@ -180,12 +180,76 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                             m_elm->sendCommand("81", [this, info, done, targetMod](const QString &sc) {
                                 emit logMessage("StartComm(81): " + sc);
 
-                                // SecurityAccess (27 01 -> seed, 27 02 CD46 -> key)
+                                // SecurityAccess: 27 01 -> seed, compute EGS52 key, 27 02 -> key
                                 m_elm->sendCommand("27 01", [this, done, targetMod](const QString &seed) {
                                     emit logMessage("Security seed: " + seed);
                                     if (seed.contains("67 01")) {
-                                        m_elm->sendCommand("27 02 CD 46", [this, done, targetMod](const QString &key) {
+                                        QStringList parts = seed.trimmed().split(' ');
+                                        QString keyCmd = "27 02 CC 21"; // TCM default
+                                        if (parts.size() >= 7) {
+                                            bool ok0, ok1, ok2;
+                                            uint8_t s0 = parts[5].toUInt(&ok0, 16);
+                                            uint8_t s1 = parts[6].toUInt(&ok1, 16);
+                                            uint8_t s2 = (parts.size() >= 8) ? parts[7].toUInt(&ok2, 16) : 0;
+
+                                            bool isTCM = (targetMod == Module::KLineTCM);
+
+                                            if (isTCM && ok0 && ok1) {
+                                                // EGS52: swap, XOR 0x5AA5, multiply 0x5AA5 (2-byte key)
+                                                uint16_t s16 = (s0 << 8) | s1;
+                                                uint16_t r = ((s16 << 8) & 0xFFFF) | (s16 >> 8);
+                                                r ^= 0x5AA5;
+                                                r = static_cast<uint16_t>(static_cast<uint32_t>(r) * 0x5AA5 & 0xFFFF);
+                                                keyCmd = QString("27 02 %1 %2")
+                                                    .arg(r >> 8, 2, 16, QChar('0'))
+                                                    .arg(r & 0xFF, 2, 16, QChar('0')).toUpper();
+                                                emit logMessage(QString("TCM EGS52 key: seed=%1 -> key=%2")
+                                                    .arg(s16, 4, 16, QChar('0')).arg(r, 4, 16, QChar('0')));
+                                            } else if (!isTCM && ok0 && ok1) {
+                                                // EDC15 LVL1Key: 2-byte seed, 4-byte key
+                                                uint32_t KR1 = (s0 << 8) | s1;
+                                                uint32_t KR2 = 0; // 2-byte seed, no lower word
+                                                uint32_t Mag = 0x1C60020;
+                                                for (int i = 0; i < 5; i++) {
+                                                    uint32_t ts = KR1 & 0x8000;
+                                                    KR1 = (KR1 << 1) & 0xFFFFFFFF;
+                                                    if ((ts & 0xFFFF) == 0) {
+                                                        uint32_t t2 = KR2 & 0xFFFF;
+                                                        uint32_t t3 = ts & 0xFFFF0000;
+                                                        ts = t2 + t3;
+                                                        KR1 = KR1 & 0xFFFE;
+                                                        t2 = (ts & 0xFFFF) >> 15;
+                                                        ts = (ts & 0xFFFF0000) + t2;
+                                                        KR1 = KR1 | ts;
+                                                        KR2 = (KR2 << 1) & 0xFFFFFFFF;
+                                                    } else {
+                                                        ts = (KR2 + KR2) & 0xFFFFFFFF;
+                                                        KR1 = KR1 & 0xFFFE;
+                                                        uint32_t t2 = (ts & 0xFF) | 1;
+                                                        Mag = (t2 + (Mag & 0xFFFFFF00)) & 0xFFFFFFFF;
+                                                        Mag = (Mag & 0xFFFF00FF) | ts;
+                                                        t2 = (KR2 & 0xFFFF) >> 15;
+                                                        ts = (t2 + (ts & 0xFFFF0000)) | KR1;
+                                                        Mag ^= 0x1289;
+                                                        ts ^= 0x0A22;
+                                                        KR2 = Mag;
+                                                        KR1 = ts;
+                                                    }
+                                                }
+                                                // 2-byte key (same format as TCM) - NRC 0x12 with 4-byte!
+                                                keyCmd = QString("27 02 %1 %2")
+                                                    .arg((KR1 >> 8) & 0xFF, 2, 16, QChar('0'))
+                                                    .arg(KR1 & 0xFF, 2, 16, QChar('0')).toUpper();
+                                                emit logMessage(QString("ECU EDC15 key: seed=%1%2 -> key=%3")
+                                                    .arg(s0,2,16,QChar('0')).arg(s1,2,16,QChar('0'))
+                                                    .arg(keyCmd.mid(6)));
+                                            }
+                                        }
+                                        m_elm->sendCommand(keyCmd, [this, done, targetMod](const QString &key) {
                                             emit logMessage("Security key: " + key);
+                                            bool unlocked = key.contains("67 02", Qt::CaseInsensitive);
+                                            if (unlocked)
+                                                emit logMessage("Security UNLOCKED!");
                                             emit logMessage("K-Line session active (ECU ready)");
                                             if (done) done(true);
                                         });
@@ -274,13 +338,19 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
             }, 7500);
         }
     } else {
-        // Same bus - check if K-Line needs full reinit
+        // Same bus
         if (newBus == BusType::KLine) {
-            // K-Line: ALWAYS needs full ATZ+ATWM+ATFI+81 sequence
-            // Session is lost when switching to another K-Line module and back
+            // K-Line: if SAME module already active, skip reinit entirely
+            if (targetMod == m_activeModule) {
+                // Session should still be alive from last read (<5s ago)
+                // Just continue without reinit
+                if (done) done(true);
+                return;
+            }
+            // Different K-Line module: full reinit required
             emit logMessage("K-Line: full reinit required");
-            m_activeBus = BusType::None; // Force different-bus path
-            switchToModule(mod, done);   // Recurse with bus mismatch
+            m_activeBus = BusType::None;
+            switchToModule(mod, done);
             return;
         }
         // J1850 same bus - just change header
@@ -482,12 +552,14 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
     auto step = std::make_shared<int>(0);
     auto doNext = std::make_shared<std::function<void()>>();
 
+    // Only read blocks that work without security: 0x12, 0x28, 0x20, 0x22
+    static const uint8_t ids[] = {0x12, 0x28, 0x20, 0x22};
+    static const int numBlocks = 4;
+
     *doNext = [this, ecu, step, doNext, cb]() {
-        uint8_t ids[] = {0x12, 0x28, 0x20, 0x22, 0x62, 0xB0, 0xB1, 0xB2};
-        if (*step >= 8) {
-            // Read battery voltage via ATRV after all ECU blocks
+        if (*step >= numBlocks) {
+            // Read battery voltage
             m_elm->sendCommand("ATRV", [this, ecu, cb](const QString &rv) {
-                // Parse "12.6V" or "13.8V"
                 QString v = rv.trimmed().remove('V').remove('v');
                 bool ok = false;
                 double volts = v.toDouble(&ok);
@@ -500,11 +572,10 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
         }
         m_kwp->readLocalData(ids[*step], [this, ecu, step, doNext](const QByteArray &data) {
             if (!data.isEmpty()) {
-                uint8_t ids2[] = {0x12, 0x28, 0x20, 0x22, 0x62};
-                parseECUBlock(ids2[*step], data, *ecu);
+                parseECUBlock(ids[*step], data, *ecu);
             }
             (*step)++;
-            QTimer::singleShot(340, *doNext);
+            (*doNext)(); // No delay between reads
         });
     };
 
@@ -1038,16 +1109,9 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
                     parseTCMBlock30(raw, *tcm);
                 }
             }
-            // Read battery voltage
-            m_elm->sendCommand("ATRV", [this, tcm, cb](const QString &rv) {
-                QString v = rv.trimmed().remove('V').remove('v');
-                bool ok2 = false;
-                double volts = v.toDouble(&ok2);
-                if (ok2 && volts > 0) tcm->batteryVoltage = volts;
-                m_lastTCM = *tcm;
-                emit tcmStatusUpdated(*tcm);
-                if (cb) cb(*tcm);
-            });
+            m_lastTCM = *tcm;
+            emit tcmStatusUpdated(*tcm);
+            if (cb) cb(*tcm);
         });
     });
 }

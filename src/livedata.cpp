@@ -91,31 +91,48 @@ void LiveDataManager::onPollTimer()
     if (!m_polling || m_readPending) return;
     m_readPending = true;
 
+    auto pollDone = [this]() {
+        m_readPending = false;
+        // Chain: immediately start next read (10ms for event loop)
+        if (m_polling)
+            QTimer::singleShot(10, this, &LiveDataManager::onPollTimer);
+    };
+
     switch (m_mode) {
     case TCM_ONLY:
-        pollTCM([this]() { m_readPending = false; });
+        pollTCM(pollDone);
         break;
     case ECU_ONLY:
-        pollECU([this]() { m_readPending = false; });
+        pollECU(pollDone);
         break;
     case DUAL:
-        // Once TCM oku, sonra ECU oku
-        pollTCM([this]() {
-            pollECU([this]() {
-                m_readPending = false;
-            });
+        pollTCM([this, pollDone]() {
+            pollECU(pollDone);
         });
         break;
     }
 }
 
-// === TCM Polling (J1850 VPW) ===
+// === TCM Polling (K-Line 0x20, block 0x30) ===
 
 void LiveDataManager::pollTCM(std::function<void()> then)
 {
-    // TCM live data is in a single block (0x30) - always read full block
     m_tcm->readAllLiveData([this, then](const TCMDiagnostics::TCMStatus &status) {
         emit fullStatusUpdated(status);
+
+        // Merge TCM values into map
+        QMap<uint8_t, double> vals;
+        vals[0x01] = status.actualGear;
+        vals[0x10] = status.turbineRPM;
+        vals[0x13] = status.outputRPM;
+        vals[0x14] = status.transTemp;
+        vals[0x18] = status.actualTCCslip;
+        vals[0x19] = status.desTCCslip;
+        vals[0x20] = status.vehicleSpeed;
+        for (auto it = vals.begin(); it != vals.end(); ++it)
+            m_lastValues[it.key()] = it.value();
+        emit dataUpdated(m_lastValues);
+
         logCurrentValues();
         if (then) then();
     });
