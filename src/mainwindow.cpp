@@ -693,72 +693,79 @@ QWidget* MainWindow::createLogTab()
 {
     QWidget *w = new QWidget();
     QVBoxLayout *layout = new QVBoxLayout(w);
+    layout->setSpacing(3);
+#if defined(Q_OS_IOS)
+    // iPhone safe area: extra bottom padding for home indicator
+    layout->setContentsMargins(2, 2, 2, 20);
+#elif defined(Q_OS_ANDROID)
+    layout->setContentsMargins(2, 2, 2, 4);
+#else
+    layout->setContentsMargins(4, 4, 4, 4);
+#endif
 
+    // Log text: create FIRST (buttons reference it)
     m_logText = new QTextEdit();
     m_logText->setReadOnly(true);
     m_logText->setFont(QFont("Consolas", 9));
-    m_logText->setStyleSheet("background: #0a1220; color: #60b8a0; font-size: 12px;");
+    m_logText->setStyleSheet(
+        "background: #0a1220; color: #60b8a0; font-size: 12px;"
+        "border: 1px solid #1a3050; border-radius: 4px;");
 
-    layout->addWidget(m_logText);
-
-    // --- Log butonlari: 2 satirlik grid ---
+    // --- Controls: 2 rows, compact, ABOVE log text ---
     QGridLayout *logGrid = new QGridLayout();
-    logGrid->setSpacing(4);
+    logGrid->setSpacing(3);
+    logGrid->setContentsMargins(0, 0, 0, 0);
 
-    // Row 0: Clear | Copy Log | Raw Data Read
+    // Row 0: Clear | Copy Log | Raw Data
     QPushButton *clearLogBtn = new QPushButton("Clear");
-    clearLogBtn->setStyleSheet("padding:8px 12px;");
+    clearLogBtn->setMinimumHeight(36);
     connect(clearLogBtn, &QPushButton::clicked, m_logText, &QTextEdit::clear);
     logGrid->addWidget(clearLogBtn, 0, 0);
 
     QPushButton *saveLogBtn = new QPushButton("Copy Log");
-    saveLogBtn->setStyleSheet("background:#0a2820; color:#00d4b4; font-weight:bold; padding:8px 12px; font-size:13px;");
+    saveLogBtn->setMinimumHeight(36);
+    saveLogBtn->setStyleSheet("background:#0a2820; color:#00d4b4; font-weight:bold;");
     connect(saveLogBtn, &QPushButton::clicked, this, [this]() {
         QString text = m_logText->toPlainText();
         if (text.isEmpty()) {
-            statusBar()->showMessage("Log empty - nothing to copy");
+            statusBar()->showMessage("Log empty");
             return;
         }
         QGuiApplication::clipboard()->setText(text);
-        statusBar()->showMessage(QString("Log copied (%1 lines) - paste to WhatsApp/Notes")
-            .arg(text.count('\n') + 1));
+        statusBar()->showMessage(QString("Copied %1 lines").arg(text.count('\n') + 1));
     });
     logGrid->addWidget(saveLogBtn, 0, 1);
 
     m_rawDumpBtn = new QPushButton("Raw Data");
-    m_rawDumpBtn->setStyleSheet("background:#2a4858; color:#00ffcc; font-weight:bold; padding:4px 6px;");
+    m_rawDumpBtn->setMinimumHeight(36);
+    m_rawDumpBtn->setStyleSheet("background:#2a4858; color:#00ffcc; font-weight:bold;");
     connect(m_rawDumpBtn, &QPushButton::clicked, this, &MainWindow::onRawBusDump);
     logGrid->addWidget(m_rawDumpBtn, 0, 2);
 
-    // Satir 1: Komut input + Gonder
+    // Row 1: Command input + Send
     m_rawCmdEdit = new QLineEdit();
-    m_rawCmdEdit->setPlaceholderText("21 01 veya ATRV");
-    m_rawCmdEdit->setStyleSheet("background:#0e1828; color:#60b8a0; border:1px solid #1a3050; padding:6px; font-size:13px;");
+    m_rawCmdEdit->setPlaceholderText("21 01 or ATRV");
+    m_rawCmdEdit->setMinimumHeight(36);
+    m_rawCmdEdit->setStyleSheet("background:#0e1828; color:#60b8a0; border:1px solid #1a3050; padding:4px;");
     logGrid->addWidget(m_rawCmdEdit, 1, 0, 1, 2);
 
     m_rawSendBtn = new QPushButton("Send");
-    m_rawSendBtn->setStyleSheet("background:#4a2858; color:#ff88ff; font-weight:bold; padding:4px 6px;");
+    m_rawSendBtn->setMinimumHeight(36);
+    m_rawSendBtn->setStyleSheet("background:#4a2858; color:#ff88ff; font-weight:bold;");
     connect(m_rawSendBtn, &QPushButton::clicked, this, &MainWindow::onRawSendCustom);
     connect(m_rawCmdEdit, &QLineEdit::returnPressed, this, &MainWindow::onRawSendCustom);
     logGrid->addWidget(m_rawSendBtn, 1, 2);
 
-    // Satir 2: Timeout ayari
-    QLabel *toLabel = new QLabel("Timeout:");
-    toLabel->setStyleSheet("color:#808890; font-size:11px;");
-    logGrid->addWidget(toLabel, 2, 0);
+    // Timeout spinner hidden - default 3000ms
     m_timeoutSpin = new QSpinBox();
     m_timeoutSpin->setRange(200, 10000);
-    m_timeoutSpin->setSingleStep(100);
     m_timeoutSpin->setValue(3000);
-    m_timeoutSpin->setSuffix(" ms");
-    m_timeoutSpin->setStyleSheet("background:#0e1828; color:#60b8a0; border:1px solid #1a3050; padding:4px; font-size:12px;");
-    connect(m_timeoutSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int val) {
-        m_elm->setDefaultTimeout(val);
-        statusBar()->showMessage(QString("Timeout: %1 ms").arg(val), 2000);
-    });
-    logGrid->addWidget(m_timeoutSpin, 2, 1, 1, 2);
+    m_timeoutSpin->setVisible(false);
 
     layout->addLayout(logGrid);
+
+    // Log text added below buttons - stretch=1 fills remaining space
+    layout->addWidget(m_logText, 1);
 
     return w;
 }
@@ -1053,7 +1060,8 @@ void MainWindow::onLogMessage(const QString &msg)
 {
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     m_logText->append(QString("[%1] %2").arg(timestamp, msg));
-    m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
+    m_logText->moveCursor(QTextCursor::End);
+    m_logText->ensureCursorVisible();
 }
 
 void MainWindow::updateStatusLabels(const TCMDiagnostics::TCMStatus &st)
@@ -1162,7 +1170,8 @@ void MainWindow::onRawBusDump()
     auto log = [this](const QString &color, const QString &msg) {
         QString ts = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
         m_logText->append(QString("<font color='%1'>[%2] %3</font>").arg(color, ts, msg));
-        m_logText->verticalScrollBar()->setValue(m_logText->verticalScrollBar()->maximum());
+        m_logText->moveCursor(QTextCursor::End);
+        m_logText->ensureCursorVisible();
     };
 
     auto done = [this]() {
