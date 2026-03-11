@@ -409,9 +409,9 @@ void MainWindow::updateDashboardFromLiveData(const QMap<uint8_t, double> &v)
     if(v.contains(0x15) && m_dashMotBoostVal && m_activeModId == WJDiagnostics::Module::KLineTCM){
         DASH_SET(m_dashMotBoostVal, QString::number(v[0x15],'f',0));
     }
-    // TCM: TCC slip -> m_dashMotMafVal (reused in TCM mode)
-    if(v.contains(0x17) && m_dashMotMafVal && m_activeModId == WJDiagnostics::Module::KLineTCM){
-        DASH_SET(m_dashMotMafVal, QString::number(v[0x17],'f',0));
+    // TCM: TCC slip actual -> m_dashMotMafVal (reused in TCM mode)
+    if(v.contains(0x18) && m_dashMotMafVal && m_activeModId == WJDiagnostics::Module::KLineTCM){
+        DASH_SET(m_dashMotMafVal, QString::number(v[0x18],'f',0));
     }
 
     // ECU data
@@ -438,7 +438,8 @@ QWidget* MainWindow::createConnectionTab()
 
     // WiFi row
     connGrid->addWidget(new QLabel("WiFi:"), 0, 0);
-    m_hostEdit = new QLineEdit("192.168.0.10");
+    //m_hostEdit = new QLineEdit("192.168.0.10");
+    m_hostEdit = new QLineEdit("192.168.1.116");
     connGrid->addWidget(m_hostEdit, 0, 1);
     m_portSpin = new QSpinBox();
     m_portSpin->setRange(1, 65535);

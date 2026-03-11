@@ -126,6 +126,8 @@ void LiveDataManager::pollTCM(std::function<void()> then)
         vals[0x10] = status.turbineRPM;
         vals[0x13] = status.outputRPM;
         vals[0x14] = status.transTemp;
+        vals[0x15] = status.linePressure;
+        vals[0x16] = status.solenoidSupply;
         vals[0x18] = status.actualTCCslip;
         vals[0x19] = status.desTCCslip;
         vals[0x20] = status.vehicleSpeed;

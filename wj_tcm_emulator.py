@@ -123,9 +123,17 @@ class VehicleState:
         self.coolant_temp = min(95, 20 + t * 0.05)
         self.iat = 18 + 2 * math.sin(t * 0.01)
         self.battery_voltage = 14.5 + random.uniform(-0.2, 0.2)
-        self.maf_actual = 420 + 20 * math.sin(t * 0.3)
-        self.maf_spec = 360 + 10 * math.sin(t * 0.2)
-        self.rail_actual = 290 + 10 * math.sin(t * 0.2)
+        # TPS follows engine RPM deviations from idle
+        rpm_delta = max(0, self.engine_rpm - 780)
+        if rpm_delta < 1:
+            self.tps = 0.0
+        else:
+            self.tps = min(95.0, rpm_delta * 0.05 + random.uniform(-0.5, 0.5))
+        self.map_actual = 900 + int(self.tps * 2.5) + random.randint(-10, 10)
+        self.aap = 928 + random.randint(-3, 3)
+        self.maf_actual = 420 + int(self.tps * 3.0) + random.randint(-10, 10)
+        self.maf_spec = 360 + int(self.tps * 1.5) + random.randint(-5, 5)
+        self.rail_actual = 290 + int(self.tps * 5.0) + random.randint(-5, 5)
         self.injection_qty = 12.5 + (self.engine_rpm - 750) * 0.012 + random.uniform(-0.5, 0.5)
 
 
@@ -226,7 +234,7 @@ class KWP2000Responder:
             if o == 0x86: return bytes([0x5A,0x86,0xCA,0x65,0x34,0x40,0x65,0x30,0x99,0x05,0xF2,0x03,0x14,0x14,0x14,0xFF,0xFF,0xFF])
             if o == 0x90:
                 if getattr(self.s, 'ecu_security_unlocked', False):
-                    return bytes([0x5A,0x90]) + b'1J8GW68J42C123456'
+                    return bytes([0x5A,0x90]) + b'1J8GWE82X2Y122006'
                 return bytes([0x7F, 0x1A, 0x33])
             if o == 0x91: return bytes([0x5A,0x91,0x05,0x10,0x06,0x05,0x02,0x0C,0x1F,0x0C,0x0A,0x10,0x16,0x06]) + b'  WCAAA '
             return bytes([0x7F, 0x1A, 0x12])
@@ -242,12 +250,22 @@ class KWP2000Responder:
     def _tcm_block(self, b):
         t = self.s
         if b == 0x30:
+            # Real vehicle TCM 0x30: 22 data bytes after "61 30"
+            # [0-1]=turbine_rpm [2-3]=engage_status [4-5]=output_rpm [6]=0x00
+            # [7]=gear_selector(P=8,R=7,N=6,D=5) [8]=config(04)
+            # [9-10]=line_pressure(signed) [11]=trans_temp_raw(raw-40=C)
+            # [12-13]=tcc_slip_actual(signed) [14-15]=tcc_slip_desired(signed)
+            # [16-17]=counter [18]=solenoid_mode [19]=status_flags
+            # [20]=shift_flags [21]=0x08
             rpm = max(0, int(t.turbine_rpm)) & 0xFFFF
             eng = t.engage_status & 0xFFFF; out = max(0, int(t.output_rpm)) & 0xFFFF
-            lp = t.line_pressure & 0xFFFF; sa = t.tcc_slip_actual & 0xFFFF; sd = t.tcc_slip_desired & 0xFFFF
+            lp = t.line_pressure & 0xFFFF
+            sa = t.tcc_slip_actual & 0xFFFF; sd = t.tcc_slip_desired & 0xFFFF
+            temp_raw = int(t.trans_temp + 40) & 0xFF
             return bytes([0x61,0x30,(rpm>>8),rpm&0xFF,(eng>>8),eng&0xFF,(out>>8),out&0xFF,
-                0x00,t.gear_selector&0xFF,0x04,(lp>>8)&0xFF,lp&0xFF,t.trans_temp&0xFF,
-                (sa>>8)&0xFF,sa&0xFF,(sd>>8)&0xFF,sd&0xFF,0x05,0xBF,t.solenoid_mode&0xFF,0x08,0x10,0x00,0x08])
+                0x00,t.gear_selector&0xFF,0x04,(lp>>8)&0xFF,lp&0xFF,temp_raw,
+                (sa>>8)&0xFF,sa&0xFF,(sd>>8)&0xFF,sd&0xFF,
+                0x00,0x00,t.solenoid_mode&0xFF,0x18,0x00,0x08])
         if b == 0x31: return bytes([0x61,0x31,0x01,0xBE,0x00,0x00,0x02,0xDD,0x02,0xEE]+[0]*14)
         if b == 0x32: return bytes([0x61,0x32]) + bytes(16)
         if b == 0x33: return bytes([0x61,0x33,0x00,0x24,0x07,0x85,0x05,0xDC,0x02,0xAE,0x02,0xAE,0x02,0xD9,0x02,0xD9,0x00,0x00])
@@ -270,19 +288,20 @@ class KWP2000Responder:
     def _ecu_block(self, b):
         t = self.s
         if b == 0x12:
-            # Real: A2 F1 15 61 12 [34 data bytes]
-            # Bytes: [0-1]=coolant, [2-3]=IAT, [4-7]=0x08B7x2, [8-9]=00 00,
-            #   [10-11]=TPS*100, [12-13]=00 00, [14-15]=MAP, [16-17]=0x038E,
-            #   [18-19]=rail*10, [20-21]=0x01DD, [22-23]=0x012A, [24-25]=???,
-            #   [26-27]=???, [28-29]=AAP, [30-31]=0x03A0, [32-33]=00 00
+            # Real vehicle verified (v14 log):
+            # Data[0-1]=coolant(*10+2731), [2-3]=IAT(*10+2731), [4-7]=08B7 08B7,
+            # [8-9]=0000, [10-11]=unknown(0403@idle,0519@gaz), [12-13]=TPS*100,
+            # [14-15]=MAP_actual, [16-17]=rail???, [18-19]=rail_actual*10,
+            # [20-21]=???, [22-23]=0x012A, [24-25]=???, [26-27]=AAP, [28-29]=0x03A0, [30-31]=static
             cr=int((t.coolant_temp+273.1)*10); ir=int((t.iat+273.1)*10)
             r = bytes([0x61,0x12])+cr.to_bytes(2,'big')+ir.to_bytes(2,'big')
             r += bytes([0x08,0xB7,0x08,0xB7,0x00,0x00])
-            r += int(t.tps*100).to_bytes(2,'big')+bytes([0x00,0x00])
-            r += int(t.map_actual).to_bytes(2,'big')+bytes([0x03,0x8E])
+            r += bytes([0x04,0x03])  # unknown field at [10-11]
+            r += int(t.tps*100).to_bytes(2,'big')  # TPS at [12-13]
+            r += int(t.map_actual).to_bytes(2,'big')+bytes([0x03,0x91])
             r += int(t.rail_actual*10).to_bytes(2,'big')
-            r += bytes([0x01,0xB1,0x01,0x2A,0x00,0x3D])
-            r += int(t.aap).to_bytes(2,'big')+bytes([0x03,0xA0,0x00,0x00])
+            r += bytes([0x02,0x24,0x01,0x2A,0x00,0x68])
+            r += int(t.aap).to_bytes(2,'big')+bytes([0x03,0xA0,0x00,0x0B])
             return r
         if b == 0x28:
             # Real: 9E F1 15 61 28 [30 data bytes]
@@ -327,9 +346,10 @@ class KWP2000Responder:
         if b == 0x48: return bytes([0x61,0x48,0x00,0x00,0x00,0x07,0x06,0xC8,0x00,0x06,0x00,0x00,0x00,0x00])
         if b in (0x62,0xB0,0xB1,0xB2):
             if getattr(t, 'ecu_security_unlocked', False):
-                # Real vehicle data format (verified 2025-03-11):
-                # 0x62: 4 data bytes — 86 F1 15 61 62 18 05 8C 84 [cs]
-                if b == 0x62: return bytes([0x61,0x62,0x18,0x05,0x8C,0x84])
+                # Real vehicle data (verified v14 log, 2026-03-11):
+                # 0x62: 4 data bytes — 86 F1 15 61 62 8A 79 8D 84 [cs]
+                # STATIC: never changes with RPM/load/temp — calibration constants
+                if b == 0x62: return bytes([0x61,0x62,0x8A,0x79,0x8D,0x84])
                 # 0xB0: 2 data bytes — 84 F1 15 61 B0 37 0F [cs]
                 if b == 0xB0: return bytes([0x61,0xB0,0x37,0x0F])
                 # 0xB1: 2 data bytes — 84 F1 15 61 B1 D2 15 [cs]

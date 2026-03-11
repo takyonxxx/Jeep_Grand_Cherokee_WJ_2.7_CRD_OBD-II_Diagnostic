@@ -157,10 +157,14 @@ NAG1 722.6 gear ratios: 1st=3.59, 2nd=2.19, 3rd=1.41, 4th=1.00, 5th=0.83.
 | 0x22 | 34 | Rail spec, MAP spec |
 | 0x28 | 30 | RPM, injection quantity (mg/stroke) |
 | 0x10 | 16 | Idle params, max RPM |
-| 0x62 | 4 | EGR, wastegate, + 2 unknown (security required) |
-| 0xB0 | 2 | Unknown — 0x37, 0x0F at idle (security required) |
-| 0xB1 | 2 | Unknown — 0xD2, 0x15 at idle (security required) |
-| 0xB2 | 2 | Unknown — 0xE0, 0x4B at idle (security required) |
+| 0x62 | 4 | Calibration constants (8A 79 8D 84) — static, does NOT change (security required) |
+| 0xB0 | 2 | EEPROM constant (37 0F) — static, never changes (security required) |
+| 0xB1 | 2 | EEPROM constant (D2 15) — static, never changes (security required) |
+| 0xB2 | 2 | EEPROM constant (E0 4B) — static, never changes (security required) |
+
+Note: Blocks 0x62, 0xB0, 0xB1, 0xB2 were tested under idle, acceleration, deceleration,
+engine braking, and full throttle — all values remain constant. These are EEPROM calibration
+parameters, NOT live data. Real-time EGR duty cycle and wastegate values are in block 0x12.
 
 ### Fuel consumption calculation
 

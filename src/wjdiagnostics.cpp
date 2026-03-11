@@ -816,20 +816,13 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         }
         break;
     case 0x62:
-        // Block 0x62: Real vehicle returns 4 data bytes after "61 62"
-        // Raw: 61 62 [0]=EGR [1]=wastegate [2][3]=???
-        if (n >= 4) {
-            ecu.egrDuty = u8(2);
-            ecu.wastegate = u8(3);
-            if (n >= 6) {
-                ecu.glowPlug1 = u8(4) != 0;
-                ecu.glowPlug2 = u8(5) != 0;
-            }
-            if (n >= 8) ecu.mafActual = u16(6);
-            if (n >= 9) ecu.alternatorDuty = u8(8);
-            emit logMessage(QString("ECU 2162: egr=%1 wg=%2 gp1=%3 gp2=%4")
-                .arg(ecu.egrDuty).arg(ecu.wastegate)
-                .arg(ecu.glowPlug1).arg(ecu.glowPlug2));
+        // Block 0x62: 4 data bytes after "61 62"
+        // STATIC calibration constants — NEVER changes with RPM/load/temp
+        // Real vehicle always: 8A 79 8D 84
+        if (n >= 6) {
+            emit logMessage(QString("ECU 2162: cal=[%1 %2 %3 %4] (static)")
+                .arg(u8(2),2,16,QChar('0')).arg(u8(3),2,16,QChar('0'))
+                .arg(u8(4),2,16,QChar('0')).arg(u8(5),2,16,QChar('0')));
         }
         break;
     case 0xB0:
