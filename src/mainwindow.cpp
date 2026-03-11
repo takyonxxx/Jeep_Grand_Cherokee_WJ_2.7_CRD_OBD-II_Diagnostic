@@ -156,6 +156,7 @@ void MainWindow::setupUI()
     m_tabs->addTab(createConnectionTab(), "Connect");
     m_tabs->addTab(createDTCTab(),        "Faults");
     m_tabs->addTab(createLiveDataTab(),   "Live Data");
+    m_tabs->addTab(createControlsTab(),   "Controls");
     m_tabs->addTab(createLogTab(),        "Log");
 
     mainLayout->addWidget(m_tabs);
@@ -438,8 +439,7 @@ QWidget* MainWindow::createConnectionTab()
 
     // WiFi row
     connGrid->addWidget(new QLabel("WiFi:"), 0, 0);
-    //m_hostEdit = new QLineEdit("192.168.0.10");
-    m_hostEdit = new QLineEdit("192.168.1.116");
+    m_hostEdit = new QLineEdit("192.168.0.10");
     connGrid->addWidget(m_hostEdit, 0, 1);
     m_portSpin = new QSpinBox();
     m_portSpin->setRange(1, 65535);
@@ -737,7 +737,7 @@ QWidget* MainWindow::createDTCTab()
     connect(m_dtcAbsBtn, &QPushButton::clicked, this, [=]() { selectDtcSource(2); });
     connect(m_dtcAirbagBtn, &QPushButton::clicked, this, [=]() { selectDtcSource(3); });
 
-    // === Butonlar ===
+    // === Buttons ===
     QHBoxLayout *btnLayout = new QHBoxLayout();
 
     m_readDtcBtn  = new QPushButton("Read DTC");
@@ -863,6 +863,158 @@ QWidget* MainWindow::createLiveDataTab()
         }
     });
 
+    return w;
+}
+
+
+// ================================================================
+// Controls Tab — Window relay controls via J1850 DriverDoor module
+// ================================================================
+// Chrysler WJ window control:
+//   J1850 VPW, DriverDoor module 0x40, mode 0x2F (IOControlByLocalIdentifier)
+//   Header: ATSH24402F, ATRA40
+//   Front Window UP:   38 07 01 (ON) / 38 07 00 (OFF)
+//   Front Window DOWN: 38 08 01 (ON) / 38 08 00 (OFF)
+//   Rear Window UP:    38 0C 02 (ON) / 38 0C 00 (OFF)
+//   Rear Window DOWN:  38 08 02 (ON) / 38 08 00 (OFF)
+//   Release all:       3A 02 FF
+
+void MainWindow::sendWindowCmd(const QString &label, const QString &relayCmd, bool on, const QString &hdr)
+{
+    if (!m_elm || !m_elm->isConnected()) {
+        if (m_ctrlStatusLabel) m_ctrlStatusLabel->setText("Not connected");
+        return;
+    }
+    if (m_ctrlStatusLabel) m_ctrlStatusLabel->setText(label + (on ? " ON..." : " OFF..."));
+
+    // Extract receive address from header: ATSH24XX2F -> ATRAXX
+    // hdr format: "ATSH24402F" -> target byte at pos 6..7 = "40"
+    QString targetHex = hdr.mid(6, 2);  // "40", "A0", "80"
+    QString atra = "ATRA" + targetHex;
+
+    // Set protocol, header, and receive filter — then send command
+    m_elm->sendCommand("ATSP2", [this, hdr, atra, label, relayCmd, on](const QString &) {
+    m_elm->sendCommand(hdr, [this, atra, label, relayCmd, on](const QString &) {
+    m_elm->sendCommand(atra, [this, label, relayCmd, on](const QString &) {
+        m_elm->sendCommand(relayCmd, [this, label, on](const QString &resp) {
+            bool ok = !resp.contains("NO DATA") && !resp.contains("ERROR");
+            QString status = label + (on ? " ON: " : " OFF: ") + (ok ? "OK" : "FAIL");
+            if (m_ctrlStatusLabel) m_ctrlStatusLabel->setText(status);
+            onLogMessage(status + " -> " + resp.trimmed());
+
+            if (!on) {
+                m_elm->sendCommand("3A 02 FF", [](const QString &) {});
+            }
+        }, 2000);
+    });});});
+}
+
+QWidget* MainWindow::createControlsTab()
+{
+    QWidget *w = new QWidget();
+    QVBoxLayout *lay = new QVBoxLayout(w);
+    lay->setContentsMargins(6,4,6,4);
+    lay->setSpacing(6);
+
+    m_ctrlStatusLabel = new QLabel("Ready");
+    m_ctrlStatusLabel->setAlignment(Qt::AlignCenter);
+    m_ctrlStatusLabel->setStyleSheet("color:#aaaaaa;font-size:11px;padding:2px;background:#0a1420;border-radius:4px;");
+    lay->addWidget(m_ctrlStatusLabel);
+
+    auto makeHoldBtn = [this](const QString &text, const QString &onCmd, const QString &offCmd,
+                              const QString &label, const QString &hdr) -> QPushButton* {
+        QPushButton *btn = new QPushButton(text);
+        btn->setMinimumHeight(60);
+        btn->setStyleSheet(
+            "QPushButton{background:#1a3050;color:#e0e0e0;border:1px solid #2a5070;"
+            "border-radius:8px;font-size:14px;font-weight:bold;padding:8px;}"
+            "QPushButton:pressed{background:#00806a;border-color:#00d4b4;}");
+        connect(btn, &QPushButton::pressed, this, [this, label, onCmd, hdr]() {
+            sendWindowCmd(label, onCmd, true, hdr);
+        });
+        connect(btn, &QPushButton::released, this, [this, label, offCmd, hdr]() {
+            sendWindowCmd(label, offCmd, false, hdr);
+        });
+        return btn;
+    };
+
+    // All actuators use DriverDoor 0x40 (mode 0x2F) — VERIFIED on real vehicle
+    QString hdrDD = "ATSH24402F";
+    QString hdrPD = "ATSH24A02F";
+    QString grpStyle = "QGroupBox{color:#5888a8;font-size:12px;border:1px solid #2a5070;"
+                       "border-radius:6px;margin-top:6px;padding-top:14px;}";
+
+    // ====== LEFT (DRIVER) WINDOW — DriverDoor 0x40 ======
+    QGroupBox *leftGrp = new QGroupBox("Left (Driver)");
+    leftGrp->setStyleSheet(grpStyle);
+    QVBoxLayout *leftLay = new QVBoxLayout(leftGrp);
+    leftLay->setSpacing(6); leftLay->setContentsMargins(4,4,4,4);
+    leftLay->addWidget(makeHoldBtn("LEFT UP",   "38 07 01", "38 07 00", "Left Window Up", hdrDD));
+    leftLay->addWidget(makeHoldBtn("LEFT DOWN", "38 08 01", "38 08 00", "Left Window Down", hdrDD));
+
+    // Express-down: 300ms pulse
+    QPushButton *autoDownBtn = new QPushButton("AUTO-DOWN");
+    autoDownBtn->setMinimumHeight(48);
+    autoDownBtn->setStyleSheet(
+        "QPushButton{background:#1a3050;color:#ffcc44;border:1px solid #806020;"
+        "border-radius:8px;font-size:13px;font-weight:bold;padding:6px;}"
+        "QPushButton:pressed{background:#604010;border-color:#ffcc44;}");
+    connect(autoDownBtn, &QPushButton::clicked, this, [this, hdrDD]() {
+        sendWindowCmd("Left Auto-Down", "38 08 01", true, hdrDD);
+        QTimer::singleShot(300, this, [this, hdrDD]() {
+            sendWindowCmd("Left Auto-Down", "38 08 00", false, hdrDD);
+        });
+    });
+    leftLay->addWidget(autoDownBtn);
+
+    // ====== RIGHT (PASSENGER) WINDOW — PassengerDoor 0xA0 ======
+    QGroupBox *rightGrp = new QGroupBox("Right (Passenger)");
+    rightGrp->setStyleSheet(grpStyle);
+    QVBoxLayout *rightLay = new QVBoxLayout(rightGrp);
+    rightLay->setSpacing(6); rightLay->setContentsMargins(4,4,4,4);
+    rightLay->addWidget(makeHoldBtn("RIGHT UP",   "38 01 12", "38 01 00", "Right Window Up", hdrPD));
+    rightLay->addWidget(makeHoldBtn("RIGHT DOWN", "38 00 12", "38 00 00", "Right Window Down", hdrPD));
+
+    QHBoxLayout *winRow = new QHBoxLayout();
+    winRow->setSpacing(6);
+    winRow->addWidget(leftGrp);
+    winRow->addWidget(rightGrp);
+    lay->addLayout(winRow);
+
+    // ====== DOOR LOCK — DriverDoor 0x40 (triggers hazard flash + horn chirp) ======
+    QGroupBox *lockGrp = new QGroupBox("Door Lock");
+    lockGrp->setStyleSheet(grpStyle);
+    QHBoxLayout *lockLay = new QHBoxLayout(lockGrp);
+    lockLay->setSpacing(6); lockLay->setContentsMargins(4,4,4,4);
+
+    QPushButton *lockBtn = new QPushButton("LOCK");
+    lockBtn->setMinimumHeight(60);
+    lockBtn->setStyleSheet(
+        "QPushButton{background:#1a3050;color:#ff8844;border:1px solid #804020;"
+        "border-radius:8px;font-size:14px;font-weight:bold;padding:8px;}"
+        "QPushButton:pressed{background:#804020;border-color:#ff8844;}");
+    connect(lockBtn, &QPushButton::clicked, this, [this, hdrDD]() {
+        sendWindowCmd("Lock", "38 06 02", true, hdrDD);
+        QTimer::singleShot(500, this, [this, hdrDD]() {
+            sendWindowCmd("Lock", "38 06 00", false, hdrDD);
+        });
+    });
+
+    QPushButton *unlockBtn = new QPushButton("UNLOCK");
+    unlockBtn->setMinimumHeight(60);
+    unlockBtn->setStyleSheet(
+        "QPushButton{background:#1a3050;color:#00d4b4;border:1px solid #006050;"
+        "border-radius:8px;font-size:14px;font-weight:bold;padding:8px;}"
+        "QPushButton:pressed{background:#006050;border-color:#00d4b4;}");
+    connect(unlockBtn, &QPushButton::clicked, this, [this, hdrDD]() {
+        sendWindowCmd("Unlock", "3A 02 FF", true, hdrDD);
+    });
+
+    lockLay->addWidget(lockBtn);
+    lockLay->addWidget(unlockBtn);
+    lay->addWidget(lockGrp);
+
+    lay->addStretch();
     return w;
 }
 
@@ -1437,20 +1589,27 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"", "header:=== Phase 4: J1850 Module Discovery ==="});
     steps->append(Step{"", "switch:j1850"});
 
-    // --- BCM (0x80) SID 0x2E ---
-    steps->append(Step{"", "header:--- BCM 0x80 ---"});
+    // --- BCM (0x80) — APK uses SID 0x32 and 0x36, NOT 0x2E ---
+    steps->append(Step{"", "header:--- BCM 0x80 (SID 0x32/0x36) ---"});
     steps->append(Step{"", "j1850hdr:ATSH248022"});
     steps->append(Step{"", "j1850hdr:ATRA80"});
-    steps->append(Step{"BCM 2E 00", "j1850cmd:2E 00 00"});
+    // SID 0x32 — primary BCM read (from APK BodyComputer init)
+    for (int pid : {0x00,0x02,0x04,0x05,0x14,0x15,0x16,0x17,0x18,0x21,0x26,0x27,0x28}) {
+        steps->append(Step{
+            QString("BCM 32 %1").arg(pid, 2, 16, QChar('0')).toUpper(),
+            QString("j1850cmd:32 %1 00").arg(pid, 2, 16, QChar('0')).toUpper()
+        });
+    }
+    // SID 0x36 — secondary BCM read
+    for (int pid : {0x00,0x02,0x03,0x0C,0x0D,0x0E,0x0F}) {
+        steps->append(Step{
+            QString("BCM 36 %1").arg(pid, 2, 16, QChar('0')).toUpper(),
+            QString("j1850cmd:36 %1 00").arg(pid, 2, 16, QChar('0')).toUpper()
+        });
+    }
+    // SID 0x2E (only 0x0D per APK)
     steps->append(Step{"BCM 2E 0D", "j1850cmd:2E 0D 00"});
     steps->append(Step{"BCM 1A 87", "j1850cmd:1A 87 00"});
-    steps->append(Step{"BCM 24 00", "j1850cmd:24 00 00"});
-    // Also uses mode 0x11 for clear — try 0x10 for functional read
-    steps->append(Step{"", "j1850hdr:ATSH248010"});
-    steps->append(Step{"BCM-10 2E 00", "j1850cmd:2E 00 00"});
-    // Mode 0x20 (request download in some Chrysler modules)
-    steps->append(Step{"", "j1850hdr:ATSH248020"});
-    steps->append(Step{"BCM-20 2E 00", "j1850cmd:2E 00 00"});
 
     // --- Cluster (0x90) SID 0x32 ---
     steps->append(Step{"", "header:--- Cluster 0x90 ---"});
@@ -1458,8 +1617,27 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"", "j1850hdr:ATRA90"});
     steps->append(Step{"Clust 32 00", "j1850cmd:32 00 00"});
     steps->append(Step{"Clust 1A 87", "j1850cmd:1A 87 00"});
-    steps->append(Step{"", "j1850hdr:ATSH249010"});
-    steps->append(Step{"Clust-10 32 00", "j1850cmd:32 00 00"});
+
+    // --- ABS (0x40) SID 0x36 — APK uses 36 xx for ABS live data ---
+    steps->append(Step{"", "header:--- ABS 0x40 (SID 0x36/0x32) ---"});
+    steps->append(Step{"", "j1850hdr:ATSH244022"});
+    steps->append(Step{"", "j1850hdr:ATRA40"});
+    // SID 0x36 — ABS switch/sensor data (from APK ABS init)
+    for (int pid : {0x00,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x10,0x11,0x12,0x13,0x14,0x15,0x16}) {
+        steps->append(Step{
+            QString("ABS 36 %1").arg(pid, 2, 16, QChar('0')).toUpper(),
+            QString("j1850cmd:36 %1 00").arg(pid, 2, 16, QChar('0')).toUpper()
+        });
+    }
+    // SID 0x32 — ABS pump voltage, wheel speeds
+    for (int pid : {0x00,0x10,0x11,0x13}) {
+        steps->append(Step{
+            QString("ABS 32 %1").arg(pid, 2, 16, QChar('0')).toUpper(),
+            QString("j1850cmd:32 %1 00").arg(pid, 2, 16, QChar('0')).toUpper()
+        });
+    }
+    // SID 0x24 — DTC read
+    steps->append(Step{"ABS 24 00", "j1850cmd:24 00 00"});
 
     // --- Overhead Console (0x28) SID 0x2A ---
     // Uses multiple mode bytes: A0, 10, 22, 20, A3, 14, 30
@@ -1576,6 +1754,97 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"", "j1850hdr:ATSH246833"});
     steps->append(Step{"HVAC-33 2E 02", "j1850cmd:2E 02 00"});
 
+    // =================================================================
+    // PHASE 5: Actuator Control Test (verified on real vehicle)
+    // =================================================================
+    steps->append(Step{"", "header:=== Phase 5: Actuator Control Test ==="});
+
+    // --- DriverDoor 0x40, mode 0x2F (ALL VERIFIED — positive responses) ---
+    steps->append(Step{"", "header:--- DriverDoor 0x40 (mode 0x2F) ---"});
+    steps->append(Step{"", "j1850hdr:ATSH24402F"});
+    steps->append(Step{"", "j1850hdr:ATRA40"});
+    steps->append(Step{"DD FrontWinDn ON",  "j1850cmd:38 08 01"});
+    steps->append(Step{"DD FrontWinDn OFF", "j1850cmd:38 08 00"});
+    steps->append(Step{"DD FrontWinUp ON",  "j1850cmd:38 07 01"});
+    steps->append(Step{"DD FrontWinUp OFF", "j1850cmd:38 07 00"});
+    steps->append(Step{"DD Lock ON",        "j1850cmd:38 06 02"});
+    steps->append(Step{"DD Lock OFF",       "j1850cmd:38 06 00"});
+    steps->append(Step{"DD MirrorDn ON",    "j1850cmd:38 02 01"});
+    steps->append(Step{"DD MirrorDn OFF",   "j1850cmd:38 02 00"});
+    steps->append(Step{"DD MirrorHeat ON",  "j1850cmd:38 06 08"});
+    steps->append(Step{"DD MirrorHeat OFF", "j1850cmd:38 06 00"});
+    steps->append(Step{"DD MirrorL ON",     "j1850cmd:38 06 10"});
+    steps->append(Step{"DD MirrorL OFF",    "j1850cmd:38 06 00"});
+    steps->append(Step{"DD MirrorR ON",     "j1850cmd:38 06 20"});
+    steps->append(Step{"DD MirrorR OFF",    "j1850cmd:38 06 00"});
+    steps->append(Step{"DD MirrorUp ON",    "j1850cmd:38 0C 02"});
+    steps->append(Step{"DD MirrorUp OFF",   "j1850cmd:38 0C 00"});
+    steps->append(Step{"DD RearWinDn ON",   "j1850cmd:38 08 02"});
+    steps->append(Step{"DD RearWinDn OFF",  "j1850cmd:38 08 00"});
+    steps->append(Step{"DD RearWinUp ON",   "j1850cmd:38 06 04"});
+    steps->append(Step{"DD RearWinUp OFF",  "j1850cmd:38 06 00"});
+    steps->append(Step{"DD Illum ON",       "j1850cmd:38 0D 01"});
+    steps->append(Step{"DD Illum OFF",      "j1850cmd:38 0D 00"});
+    steps->append(Step{"DD Unlock/Release", "j1850cmd:3A 02 FF"});
+
+    // --- PassengerDoor 0xA0, mode 0x2F (ALL VERIFIED) ---
+    steps->append(Step{"", "header:--- PassengerDoor 0xA0 (mode 0x2F) ---"});
+    steps->append(Step{"", "j1850hdr:ATSH24A02F"});
+    steps->append(Step{"", "j1850hdr:ATRAA0"});
+    steps->append(Step{"PD FrontWinDn ON",  "j1850cmd:38 00 12"});
+    steps->append(Step{"PD FrontWinDn OFF", "j1850cmd:38 00 00"});
+    steps->append(Step{"PD FrontWinUp ON",  "j1850cmd:38 01 12"});
+    steps->append(Step{"PD FrontWinUp OFF", "j1850cmd:38 01 00"});
+    steps->append(Step{"PD RearWinDn ON",   "j1850cmd:38 08 12"});
+    steps->append(Step{"PD RearWinDn OFF",  "j1850cmd:38 08 00"});
+    steps->append(Step{"PD RearWinUp ON",   "j1850cmd:38 09 12"});
+    steps->append(Step{"PD RearWinUp OFF",  "j1850cmd:38 09 00"});
+    steps->append(Step{"PD Release ALL",    "j1850cmd:3A 02 FF"});
+
+    // --- BCM 0x80 Header Discovery ---
+    // BCM 0x80 mode 0x2F returned NO DATA in v14 test.
+    // But relay clicks were heard during Controls button test (commands
+    // broadcast on bus without ATRA). Try alternative header formats.
+    steps->append(Step{"", "header:--- BCM 0x80 Header Discovery ---"});
+    // Standard mode 0x2F (failed before — confirm)
+    steps->append(Step{"", "j1850hdr:ATSH24802F"});
+    steps->append(Step{"", "j1850hdr:ATRA80"});
+    steps->append(Step{"BCM-2F Horn",       "j1850cmd:38 00 CC"});
+    steps->append(Step{"BCM-2F Horn OFF",   "j1850cmd:38 00 00"});
+    // Mode 0xB4 (APK uses this for some BCM relays)
+    steps->append(Step{"", "j1850hdr:ATSH2480B4"});
+    steps->append(Step{"BCM-B4 28 0D 01",   "j1850cmd:28 0D 01"});
+    steps->append(Step{"BCM-B4 38 02 02",   "j1850cmd:38 02 02"});
+    steps->append(Step{"BCM-B4 38 04 02",   "j1850cmd:38 04 02"});
+    steps->append(Step{"BCM-B4 38 00 CC",   "j1850cmd:38 00 CC"});
+    // Mode 0xA3 (found in Free APK — BCM wiper relay uses this)
+    steps->append(Step{"", "j1850hdr:ATSH2480A3"});
+    steps->append(Step{"BCM-A3 38 04 02",   "j1850cmd:38 04 02"});
+    steps->append(Step{"BCM-A3 38 00 CC",   "j1850cmd:38 00 CC"});
+    steps->append(Step{"BCM-A3 38 01 00",   "j1850cmd:38 01 00"});
+    // Try with no receive filter (ATAR to clear filter)
+    steps->append(Step{"", "j1850hdr:ATSH24802F"});
+    steps->append(Step{"", "j1850hdr:ATAR"});
+    steps->append(Step{"BCM-noRA Horn",     "j1850cmd:38 00 CC"});
+    steps->append(Step{"BCM-noRA Hazard",   "j1850cmd:38 01 00"});
+    steps->append(Step{"BCM-noRA Wiper",    "j1850cmd:38 04 02"});
+    // Try functional broadcast header (no target filter)
+    steps->append(Step{"", "j1850hdr:ATSH686AF1"});
+    steps->append(Step{"", "j1850hdr:ATAR"});
+    steps->append(Step{"FUNC 38 00 CC",     "j1850cmd:38 00 CC"});
+    steps->append(Step{"FUNC 38 01 00",     "j1850cmd:38 01 00"});
+    // Try mode 0x22 read first then 0x2F (session activation)
+    steps->append(Step{"", "j1850hdr:ATSH248022"});
+    steps->append(Step{"", "j1850hdr:ATAR"});
+    steps->append(Step{"BCM-22 28 0D 00",   "j1850cmd:28 0D 00"});
+    steps->append(Step{"BCM-22 2E 00 00",   "j1850cmd:2E 00 00"});
+    steps->append(Step{"", "j1850hdr:ATSH24802F"});
+    steps->append(Step{"BCM-sess Horn",     "j1850cmd:38 00 CC"});
+    steps->append(Step{"BCM-sess Hazard",   "j1850cmd:38 01 00"});
+
+    // NOTE: BCM 0x80 mode 0x2F returned NO DATA in v14 test
+    // Hazard flash + horn chirp triggered by DD Lock relay (38 06 02)
+
     // Final
     steps->append(Step{"", "header:--- Final ---"});
     steps->append(Step{"Battery", "cmd:ATRV"});
@@ -1588,8 +1857,8 @@ void MainWindow::runDiscoveryPhases(
 
     *run = [this, steps, idx, run, log, done]() {
         if (*idx >= steps->size()) {
-            m_logText->append("<font color='white'>========== TEST v14 BITTI ==========</font>");
-            log("#ffff00", "COPY LOG ile kopyala!");
+            m_logText->append("<font color='white'>========== TEST v14 COMPLETE ==========</font>");
+            log("#ffff00", "Use COPY LOG to copy results!");
             done();
             return;
         }

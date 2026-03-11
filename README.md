@@ -189,6 +189,28 @@ Verified values from real vehicle:
 
 When switching between ECU (0x15) and TCM (0x20) on the K-Line bus, the ELM327 must perform a full bus reinit (ATZ → ATWM → ATSH → ATSP5 → ATFI → 81 → 27). If the previous session has timed out (no communication for 3-5 seconds), the `3E` (TesterPresent) heartbeat will detect this and trigger a reinit. Response source address is validated: TCM responses contain `F1 20`, ECU responses contain `F1 15`.
 
+### Window & Door Control (Controls tab)
+
+Actuator relay control via J1850 VPW IOControlByLocalIdentifier.
+Header format: `ATSH24TTMM` where TT=target, MM=mode (0x2F).
+**ATRA filter required** — without `ATRAxx`, ELM327 returns NO DATA.
+
+```
+Left (DriverDoor 0x40): ATSH24402F, ATRA40
+  Window UP:    38 07 01 (ON) / 38 07 00 (OFF)   VERIFIED
+  Window DOWN:  38 08 01 (ON) / 38 08 00 (OFF)   VERIFIED
+  Auto-DOWN:    38 08 01 (300ms pulse)
+  Lock:         38 06 02 (ON) / 38 06 00 (OFF)   triggers hazard flash + horn
+  Unlock:       3A 02 FF                          release all relays
+
+Right (PassengerDoor 0xA0): ATSH24A02F, ATRAA0
+  Window UP:    38 01 12 (ON) / 38 01 00 (OFF)   VERIFIED
+  Window DOWN:  38 00 12 (ON) / 38 00 00 (OFF)   VERIFIED
+```
+
+BCM 0x80 mode 0x2F: **NO DATA** on EU-spec WJ (BCM not on J1850 bus).
+Hazard flash and horn chirp are triggered by DriverDoor Lock relay as confirmation signal.
+
 ## Architecture
 
 ```

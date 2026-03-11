@@ -56,6 +56,8 @@ private:
     QWidget* createDTCTab();
     QWidget* createLiveDataTab();
     QWidget* createLogTab();
+    QWidget* createControlsTab();
+    void sendWindowCmd(const QString &label, const QString &relayCmd, bool on, const QString &hdr);
     void updateDashboardFromLiveData(const QMap<uint8_t,double>&);
     void updateStatusLabels(const TCMDiagnostics::TCMStatus&);
     void updateActiveHeaderLabel();
@@ -118,6 +120,8 @@ private:
     QTableWidget *m_airbagDtcTable=nullptr;
     QPushButton *m_airbagReadDtcBtn=nullptr, *m_airbagClearDtcBtn=nullptr;
     QLabel *m_airbagDtcCountLabel=nullptr;
+    // Controls tab
+    QLabel *m_ctrlStatusLabel=nullptr;
     QTextEdit *m_logText;
     QPushButton *m_rawDumpBtn, *m_rawSendBtn;
     QLineEdit *m_rawCmdEdit;

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WJ Diag - ELM327 Emulator v13 (real vehicle verified)
+WJ Diag - ELM327 Emulator v14 (real vehicle verified)
 ==========================================================
 Jeep Grand Cherokee WJ 2.7 CRD — full J1850 + K-Line emulation.
 
@@ -402,6 +402,7 @@ class ELM327Emulator:
         if a.startswith("WM"): return "OK"
         if a == "FI": return "BUS INIT: OK" if self.protocol == 5 else "BUS INIT: ...ERROR"
         if a.startswith("RA"): return "OK"
+        if a == "AR": return "OK"  # ATAR = reset receive address filter
         return "OK"
 
     def _obd(self, h):
@@ -416,6 +417,61 @@ class ELM327Emulator:
         t = self.state.active_target
         mode = self.header_mode
         self.state.tick()
+
+        # IOControlByLocalIdentifier mode (0x2F) — Actuator relay control
+        # All responses from real vehicle log (2026-03-11 15:07)
+        if mode == 0x2F:
+            if t == 0x40:  # DriverDoor — ALL VERIFIED on real vehicle
+                if sid == 0x38:
+                    pid = data[0] if data else 0
+                    val = data[1] if len(data) > 1 else 0
+                    real = {
+                        (0x08,0x01): "26 40 6F 38 08 01 1D",
+                        (0x08,0x00): "26 40 6F 38 08 00 00",
+                        (0x07,0x01): "26 40 6F 38 07 01 BE",
+                        (0x07,0x00): "26 40 6F 38 07 00 A3",
+                        (0x06,0x02): "26 40 6F 38 06 02 D5",
+                        (0x06,0x00): "26 40 6F 38 06 00 EF",
+                        (0x02,0x01): "26 40 6F 38 02 01 DF",
+                        (0x02,0x00): "26 40 6F 38 02 00 C2",
+                        (0x06,0x08): "26 40 6F 38 06 08 07",
+                        (0x06,0x10): "26 40 6F 38 06 10 22",
+                        (0x06,0x20): "26 40 6F 38 06 20 68",
+                        (0x0C,0x02): "26 40 6F 38 0C 02 17",
+                        (0x0C,0x00): "26 40 6F 38 0C 00 2D",
+                        (0x08,0x02): "26 40 6F 38 08 02 3A",
+                        (0x06,0x04): "26 40 6F 38 06 04 9B",
+                        (0x0D,0x01): "26 40 6F 38 0D 01 7C",
+                        (0x0D,0x00): "26 40 6F 38 0D 00 61",
+                    }
+                    logging.info(f"DriverDoor relay: PID=0x{pid:02X} VAL=0x{val:02X}")
+                    return real.get((pid, val), f"26 40 6F 38 {pid:02X} {val:02X} 00")
+                if sid == 0x3A:
+                    logging.info("DriverDoor: Unlock/Release ALL")
+                    return "26 40 6F 3A 02 FF 05"
+                return "26 40 7F 2F 12 00 DD"
+            if t == 0xA0:  # PassengerDoor — ALL VERIFIED
+                if sid == 0x38:
+                    pid = data[0] if data else 0
+                    val = data[1] if len(data) > 1 else 0
+                    real = {
+                        (0x00,0x12): "26 A0 6F 38 00 12 D0",
+                        (0x00,0x00): "26 A0 6F 38 00 00 27",
+                        (0x01,0x12): "26 A0 6F 38 01 12 9C",
+                        (0x01,0x00): "26 A0 6F 38 01 00 6B",
+                        (0x08,0x12): "26 A0 6F 38 08 12 8A",
+                        (0x08,0x00): "26 A0 6F 38 08 00 7D",
+                        (0x09,0x12): "26 A0 6F 38 09 12 C6",
+                        (0x09,0x00): "26 A0 6F 38 09 00 31",
+                    }
+                    logging.info(f"PassengerDoor relay: PID=0x{pid:02X} VAL=0x{val:02X}")
+                    return real.get((pid, val), f"26 A0 6F 38 {pid:02X} {val:02X} 00")
+                if sid == 0x3A:
+                    return "26 A0 7F 2F 12 00 BC"
+                return "26 A0 7F 2F 12 00 BC"
+            if t == 0x80:  # BCM — NO DATA on EU-spec WJ
+                return "NO DATA"
+            return "NO DATA"
 
         # ECUReset mode (0x11) — DTC clear
         if mode == 0x11:
@@ -599,7 +655,7 @@ class ELM327Server:
     async def run(self):
         srv = await asyncio.start_server(self.handle_client, self.host, self.port)
         log.info("=" * 60)
-        log.info("  WJ Diag ELM327 Emulator v13")
+        log.info("  WJ Diag ELM327 Emulator v14")
         log.info("  K-Line: ECU(0x15) + TCM(0x20)")
         log.info("  J1850: ABS BCM Cluster Airbag HVAC Seat OHC Radio VTSS")
         log.info("  Host: %s  Port: %d", self.host, self.port)
