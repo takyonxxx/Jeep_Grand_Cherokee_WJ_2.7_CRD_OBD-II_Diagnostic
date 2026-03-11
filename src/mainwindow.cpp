@@ -1392,15 +1392,15 @@ void MainWindow::runDiscoveryPhases(
     // =================================================================
     steps->append(Step{"", "header:=== Phase 1: ECU ArvutaKoodi + blocks ==="});
     steps->append(Step{"", "switch:ecu_arvuta"});
-    // After ecu_arvuta, K-Line is on ECU with security unlocked
+    // After ecu_arvuta: K-Line on ECU, security unlocked, 0x62/B0/B1/B2/VIN already read
+    // Now read remaining standard blocks (no security needed)
     for (int b : {0x10,0x12,0x14,0x16,0x18,0x20,0x22,0x24,0x26,0x28,0x30,
-                  0x32,0x34,0x38,0x40,0x42,0x44,0x48,0x62,0xB0,0xB1,0xB2}) {
+                  0x32,0x34,0x38,0x40,0x42,0x44,0x48}) {
         steps->append(Step{
             QString("ECU 0x%1").arg(b, 2, 16, QChar('0')).toUpper(),
             QString("cmd:21 %1").arg(b, 2, 16, QChar('0')).toUpper()
         });
     }
-    steps->append(Step{"ECU VIN", "cmd:1A 90"});
     steps->append(Step{"ECU 1A 91", "cmd:1A 91"});
     steps->append(Step{"ECU 1A 86", "cmd:1A 86"});
     steps->append(Step{"ECU TesterPres", "cmd:3E"});
@@ -1663,15 +1663,53 @@ void MainWindow::runDiscoveryPhases(
                     if (kr.contains("67", Qt::CaseInsensitive) &&
                         !kr.contains("7F", Qt::CaseInsensitive)) {
                         log("#00ff00", "*** ECU UNLOCKED (ArvutaKoodi) ***");
-                        // Read protected blocks
+                        // Read protected blocks with parsed output
                         m_elm->sendCommand("21 62", [this, log, run](const QString &r) {
-                        log("#00ff88", "ECU 0x62: " + r.trimmed());
+                        QString raw = r.trimmed();
+                        log("#00ff88", "ECU 0x62: " + raw);
+                        // Parse: find "61 62" then 4 data bytes
+                        QStringList p62 = raw.split(' ');
+                        int si62 = -1;
+                        for (int i=0;i<p62.size();i++) if(p62[i]=="61"&&i+1<p62.size()&&p62[i+1]=="62"){si62=i+2;break;}
+                        if (si62>=0 && si62+3<p62.size()) {
+                            uint8_t egr=p62[si62].toUInt(nullptr,16), wg=p62[si62+1].toUInt(nullptr,16);
+                            uint8_t b2=p62[si62+2].toUInt(nullptr,16), b3=p62[si62+3].toUInt(nullptr,16);
+                            log("#80ffcc", QString("  -> EGR=%1% WG=%2% byte2=0x%3(%4) byte3=0x%5(%6)")
+                                .arg(egr).arg(wg).arg(b2,2,16,QChar('0')).arg(b2).arg(b3,2,16,QChar('0')).arg(b3));
+                        }
                         m_elm->sendCommand("21 B0", [this, log, run](const QString &r) {
-                        log("#00ff88", "ECU 0xB0: " + r.trimmed());
+                        QString raw = r.trimmed();
+                        log("#00ff88", "ECU 0xB0: " + raw);
+                        QStringList pb = raw.split(' ');
+                        int si=-1;
+                        for(int i=0;i<pb.size();i++) if(pb[i]=="61"&&i+1<pb.size()&&pb[i+1].compare("B0",Qt::CaseInsensitive)==0){si=i+2;break;}
+                        if(si>=0&&si+1<pb.size()) {
+                            uint8_t b0=pb[si].toUInt(nullptr,16), b1=pb[si+1].toUInt(nullptr,16);
+                            log("#80ffcc", QString("  -> B0: byte0=0x%1(%2) byte1=0x%3(%4)")
+                                .arg(b0,2,16,QChar('0')).arg(b0).arg(b1,2,16,QChar('0')).arg(b1));
+                        }
                         m_elm->sendCommand("21 B1", [this, log, run](const QString &r) {
                         log("#00ff88", "ECU 0xB1: " + r.trimmed());
+                        QStringList pb = r.trimmed().split(' ');
+                        int si=-1;
+                        for(int i=0;i<pb.size();i++) if(pb[i]=="61"&&i+1<pb.size()&&pb[i+1].compare("B1",Qt::CaseInsensitive)==0){si=i+2;break;}
+                        if(si>=0&&si+1<pb.size()) {
+                            uint8_t b0=pb[si].toUInt(nullptr,16), b1=pb[si+1].toUInt(nullptr,16);
+                            log("#80ffcc", QString("  -> B1: byte0=0x%1(%2) byte1=0x%3(%4)")
+                                .arg(b0,2,16,QChar('0')).arg(b0).arg(b1,2,16,QChar('0')).arg(b1));
+                        }
                         m_elm->sendCommand("21 B2", [this, log, run](const QString &r) {
                         log("#00ff88", "ECU 0xB2: " + r.trimmed());
+                        QStringList pb = r.trimmed().split(' ');
+                        int si=-1;
+                        for(int i=0;i<pb.size();i++) if(pb[i]=="61"&&i+1<pb.size()&&pb[i+1].compare("B2",Qt::CaseInsensitive)==0){si=i+2;break;}
+                        if(si>=0&&si+1<pb.size()) {
+                            uint8_t b0=pb[si].toUInt(nullptr,16), b1=pb[si+1].toUInt(nullptr,16);
+                            int16_t s16=((int16_t)b0<<8)|b1;
+                            log("#80ffcc", QString("  -> B2: byte0=0x%1(%2) byte1=0x%3(%4) s16=%5 /100=%6")
+                                .arg(b0,2,16,QChar('0')).arg(b0).arg(b1,2,16,QChar('0')).arg(b1)
+                                .arg(s16).arg(s16/100.0,0,'f',2));
+                        }
                         m_elm->sendCommand("1A 90", [this, log, run](const QString &r) {
                         log("#00ff88", "ECU VIN: " + r.trimmed());
                         (*run)();
