@@ -160,6 +160,7 @@ void MainWindow::setupUI()
     m_tabs->addTab(createControlsTab(),   "Controls");
     m_tabs->addTab(createLogTab(),        "Log");
 
+    m_tabs->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     mainLayout->addWidget(m_tabs);
 
     // Hide dashboard when Controls tab is active (index 3)
@@ -188,16 +189,16 @@ QFrame* MainWindow::createGaugeCard(const QString &title, const QString &initVal
     QFrame *card = new QFrame();
     card->setFrameShape(QFrame::StyledPanel);
     card->setStyleSheet("QFrame{background:#0e1828;border:1px solid #1a3050;border-radius:6px;padding:4px;}");
-    card->setMinimumWidth(70);
-    card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    
+    card->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     QVBoxLayout *lay = new QVBoxLayout(card);
     lay->setContentsMargins(2,1,2,1); lay->setSpacing(0);
     QLabel *tl = new QLabel(title);
-    tl->setStyleSheet("color:#5888a8;font-size:11px;border:none;background:transparent;");
+    tl->setStyleSheet("color:#5888a8;font-size:10px;border:none;background:transparent;");
     tl->setAlignment(Qt::AlignCenter); lay->addWidget(tl);
     QLabel *vl = new QLabel(initValue);
     vl->setAlignment(Qt::AlignCenter);
-    vl->setStyleSheet("color:#00d4b4;font-size:16px;font-weight:bold;"
+    vl->setStyleSheet("color:#00d4b4;font-size:15px;font-weight:bold;"
         "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;");
     lay->addWidget(vl);
     QLabel *ul = new QLabel(unit);
@@ -252,6 +253,7 @@ void MainWindow::rebuildDashboard()
                  || !m_moduleSessionActive;  // default = ECU layout
 
     QWidget *panel = new QWidget();
+    panel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     QGridLayout *g = new QGridLayout(panel);
     g->setContentsMargins(2,2,2,2);
     g->setSpacing(3);
@@ -269,7 +271,7 @@ void MainWindow::rebuildDashboard()
         gl->setContentsMargins(4,2,4,2); gl->setSpacing(0);
         QLabel *gt = new QLabel("GEAR");
         gt->setAlignment(Qt::AlignCenter);
-        gt->setStyleSheet("color:#5888a8;font-size:12px;border:none;background:transparent;");
+        gt->setStyleSheet("color:#5888a8;font-size:10px;border:none;background:transparent;");
         gl->addWidget(gt);
         m_dashGearVal = new QLabel("---");
         m_dashGearVal->setAlignment(Qt::AlignCenter);
@@ -314,7 +316,7 @@ void MainWindow::rebuildDashboard()
         fl->setContentsMargins(4,2,4,2); fl->setSpacing(0);
         QLabel *ft = new QLabel("FUEL");
         ft->setAlignment(Qt::AlignCenter);
-        ft->setStyleSheet("color:#5888a8;font-size:12px;border:none;background:transparent;");
+        ft->setStyleSheet("color:#5888a8;font-size:10px;border:none;background:transparent;");
         fl->addWidget(ft);
         m_dashFuelAdaptVal = new QLabel("---");
         m_dashFuelAdaptVal->setAlignment(Qt::AlignCenter);
@@ -442,6 +444,7 @@ QWidget* MainWindow::createConnectionTab()
     layout->setSpacing(6);
 
     QGroupBox *connBox = new QGroupBox("Connection");
+    connBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     connBox->setStyleSheet("QGroupBox{font-weight:bold;color:#70C8F0;font-size:14px;}");
     QGridLayout *connGrid = new QGridLayout(connBox);
     connGrid->setSpacing(4);
@@ -486,14 +489,14 @@ QWidget* MainWindow::createConnectionTab()
     // === Module List with scroll ===
     QGroupBox *modBox = new QGroupBox("Modules");
     modBox->setStyleSheet("QGroupBox{font-weight:bold;color:#70C8F0;font-size:14px;}");
-    modBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    modBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     QVBoxLayout *modBoxLayout = new QVBoxLayout(modBox);
     modBoxLayout->setContentsMargins(2,2,2,2);
     m_modScroll = new QScrollArea();
     m_modScroll->setWidgetResizable(true);
     m_modScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_modScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_modScroll->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    m_modScroll->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     m_modScroll->setStyleSheet("QScrollArea{border:none;background:transparent;}"
         "QScrollBar:vertical{background:#0a0e14;width:6px;border-radius:3px;}"
         "QScrollBar::handle:vertical{background:#1a4060;border-radius:3px;min-height:30px;}"
@@ -554,6 +557,7 @@ QWidget* MainWindow::createConnectionTab()
 
         // Two-line text: name + protocol detail
         btn->setText(me.label + "\n" + me.detail);
+        
         btn->setStyleSheet(QString(
             "QPushButton{text-align:left;padding:6px 12px;background:%1;color:%2;"
             "border:1px solid %3;border-radius:5px;font-size:12px;}"
@@ -974,8 +978,8 @@ QWidget* MainWindow::createControlsTab()
 {
     QWidget *w = new QWidget();
     QVBoxLayout *lay = new QVBoxLayout(w);
-    lay->setContentsMargins(6,4,6,4);
-    lay->setSpacing(4);
+    lay->setContentsMargins(3,2,3,2);
+    lay->setSpacing(2);
 
     // Scrollable area for all controls
     QScrollArea *scroll = new QScrollArea();
@@ -984,17 +988,17 @@ QWidget* MainWindow::createControlsTab()
     QWidget *inner = new QWidget();
     QVBoxLayout *innerLay = new QVBoxLayout(inner);
     innerLay->setContentsMargins(2,2,2,2);
-    innerLay->setSpacing(4);
+    innerLay->setSpacing(3);
 
 
     // --- Button factory: hold-to-activate ---
     auto makeHoldBtn = [this](const QString &text, const QString &onCmd, const QString &offCmd,
                               const QString &label, const QString &hdr) -> QPushButton* {
         QPushButton *btn = new QPushButton(text);
-        btn->setMinimumHeight(52);
+        btn->setMinimumHeight(50);
         btn->setStyleSheet(
             "QPushButton{background:#1a3050;color:#e0e0e0;border:1px solid #2a5070;"
-            "border-radius:8px;font-size:13px;font-weight:bold;padding:6px;}"
+            "border-radius:8px;font-size:12px;font-weight:bold;padding:4px;}"
             "QPushButton:pressed{background:#00806a;border-color:#00d4b4;}");
         connect(btn, &QPushButton::pressed, this, [this, label, onCmd, hdr]() {
             sendWindowCmd(label, onCmd, true, hdr);
@@ -1011,10 +1015,10 @@ QWidget* MainWindow::createControlsTab()
                                const QString &bgColor = "#1a3050",
                                const QString &fgColor = "#e0e0e0") -> QPushButton* {
         QPushButton *btn = new QPushButton(text);
-        btn->setMinimumHeight(52);
+        btn->setMinimumHeight(50);
         btn->setStyleSheet(QString(
             "QPushButton{background:%1;color:%2;border:1px solid #2a5070;"
-            "border-radius:8px;font-size:13px;font-weight:bold;padding:6px;}"
+            "border-radius:8px;font-size:12px;font-weight:bold;padding:4px;}"
             "QPushButton:pressed{background:#00806a;border-color:#00d4b4;}").arg(bgColor, fgColor));
         connect(btn, &QPushButton::clicked, this, [this, label, onCmd, offCmd, hdr]() {
             sendWindowCmd(label, onCmd, true, hdr);
@@ -1032,10 +1036,10 @@ QWidget* MainWindow::createControlsTab()
                              const QString &label, const QString &hdr) -> QPushButton* {
         QPushButton *btn = new QPushButton(text);
         btn->setCheckable(true);
-        btn->setMinimumHeight(52);
+        btn->setMinimumHeight(50);
         btn->setStyleSheet(
             "QPushButton{background:#1a2840;color:#d0d0d0;border:1px solid #304060;"
-            "border-radius:8px;font-size:12px;font-weight:bold;padding:6px;}"
+            "border-radius:8px;font-size:12px;font-weight:bold;padding:4px;}"
             "QPushButton:checked{background:#2a5030;color:#00ff88;border-color:#00aa66;}"
             "QPushButton:pressed{background:#00806a;border-color:#00d4b4;}");
         connect(btn, &QPushButton::toggled, this, [this, label, onCmd, offCmd, hdr](bool checked) {
@@ -1056,8 +1060,8 @@ QWidget* MainWindow::createControlsTab()
     QString hdrBCM  = "ATSH24802F";   // BCM 0x80 mode 0x2F
     QString hdrBCMB4 = "ATSH2480B4";  // BCM 0x80 mode 0xB4
 
-    QString grpStyle = "QGroupBox{color:#5888a8;font-size:12px;border:1px solid #2a5070;"
-                       "border-radius:6px;margin-top:6px;padding-top:14px;}";
+    QString grpStyle = "QGroupBox{color:#5888a8;font-size:10px;border:1px solid #2a5070;"
+                       "border-radius:5px;margin-top:3px;padding-top:12px;}";
 
     // ====== FRONT WINDOWS ======
     QGroupBox *frontGrp = new QGroupBox("Front Windows");
@@ -1067,8 +1071,8 @@ QWidget* MainWindow::createControlsTab()
 
     QLabel *flLbl = new QLabel("Left (0xA0)");
     QLabel *frLbl = new QLabel("Right (0x40)");
-    flLbl->setStyleSheet("color:#5888a8;font-size:11px;"); flLbl->setAlignment(Qt::AlignCenter);
-    frLbl->setStyleSheet("color:#5888a8;font-size:11px;"); frLbl->setAlignment(Qt::AlignCenter);
+    flLbl->setStyleSheet("color:#5888a8;font-size:10px;"); flLbl->setAlignment(Qt::AlignCenter);
+    frLbl->setStyleSheet("color:#5888a8;font-size:10px;"); frLbl->setAlignment(Qt::AlignCenter);
     frontLay->addWidget(flLbl, 0, 0);
     frontLay->addWidget(frLbl, 0, 1);
     // Left front: 0xA0 sequential
@@ -1087,8 +1091,8 @@ QWidget* MainWindow::createControlsTab()
 
     QLabel *rlLbl = new QLabel("Left (0xA0)");
     QLabel *rrLbl = new QLabel("Right (0x40)");
-    rlLbl->setStyleSheet("color:#5888a8;font-size:11px;"); rlLbl->setAlignment(Qt::AlignCenter);
-    rrLbl->setStyleSheet("color:#5888a8;font-size:11px;"); rrLbl->setAlignment(Qt::AlignCenter);
+    rlLbl->setStyleSheet("color:#5888a8;font-size:10px;"); rlLbl->setAlignment(Qt::AlignCenter);
+    rrLbl->setStyleSheet("color:#5888a8;font-size:10px;"); rrLbl->setAlignment(Qt::AlignCenter);
     rearLay->addWidget(rlLbl, 0, 0);
     rearLay->addWidget(rrLbl, 0, 1);
     // Left rear: 0xA0 sequential
@@ -1103,7 +1107,7 @@ QWidget* MainWindow::createControlsTab()
     QGroupBox *hazGrp = new QGroupBox("Hazard / Horn (BCM 0x80)");
     hazGrp->setStyleSheet(grpStyle);
     QHBoxLayout *hazLay = new QHBoxLayout(hazGrp);
-    hazLay->setSpacing(6); hazLay->setContentsMargins(4,4,4,4);
+    hazLay->setSpacing(4); hazLay->setContentsMargins(4,4,4,4);
     // Hazard INVERTED: ON=38 01 00, OFF=38 01 01
     hazLay->addWidget(makeBCMBtn("HAZARD", "38 01 00", "38 01 01", "Hazard", hdrBCM));
     // Horn: hold to honk
