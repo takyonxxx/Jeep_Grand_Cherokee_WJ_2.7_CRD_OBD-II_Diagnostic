@@ -108,6 +108,7 @@ private:
     QLabel *m_dashBoostAdaptVal=nullptr,*m_dashBoostAdaptUnit=nullptr;
     QLabel *m_dashOilPressVal=nullptr,*m_dashOilPressUnit=nullptr;
     // Dashboard container
+    QWidget *m_dashPanel=nullptr;
     QWidget *m_dashStack=nullptr;
     QVBoxLayout *m_dashLayout=nullptr;
     QProgressBar *m_throttleBar;
@@ -123,7 +124,6 @@ private:
     // Controls tab
     QLabel *m_ctrlStatusLabel=nullptr;
     QString m_ctrlActiveHdr;  // currently set J1850 header for controls
-    QTimer *m_ctrlRepeatTimer=nullptr;  // repeat ON command while held
     QTextEdit *m_logText;
     QPushButton *m_rawDumpBtn, *m_rawSendBtn;
     QLineEdit *m_rawCmdEdit;

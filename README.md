@@ -1,304 +1,75 @@
-# WJDiag — Jeep WJ 2.7 CRD Diagnostic App
-
-Qt6 C++ mobile diagnostic application for the Jeep Grand Cherokee WJ (2001-2004) with the 2.7 CRD diesel engine (Mercedes OM612) and NAG1 722.6 automatic transmission.
-
-## Features
-
-- **Multi-module diagnostics** across K-Line (ISO 9141-2) and J1850 VPW buses
-- **Live data** from engine ECU and transmission with real-time display
-- **DTC read/clear** for engine, transmission, ABS, airbag, HVAC, and more
-- **Security access** for both ECU and TCM protected data
-- **BLE and WiFi** ELM327 adapter support (Android/iOS)
-
-## Supported Modules
-
-### K-Line (ISO 9141-2, ATSP5)
-
-| Module | Address | Security | Status |
-|--------|---------|----------|--------|
-| Engine ECU (Bosch EDC15C2) | 0x15 | ArvutaKoodi (lookup table) | Full live data + protected blocks |
-| TCM (NAG1 722.6 EGS52) | 0x20 | EGS52 swap+XOR+MUL | Full live data + DTC |
-
-### J1850 VPW (SAE J1850, ATSP2)
-
-| Module | Address | SID | Status |
-|--------|---------|-----|--------|
-| ABS / ESP | 0x40 | 0x20/0x24 | DTC read/clear, live PIDs |
-| Airbag (ORC) | 0x60 | 0x28 | NRC 0x22 on SID 0x22; try mode 0xA0/0xA3 |
-| HVAC | 0x68 | 0x28 | PIDs 0x00-0x03 confirmed; try modes 0x31/0x33 |
-
-Note: BCM (0x80) and EVIC (0x2A) return NO DATA (confirmed from real vehicle PCAP 2026-03-12). Three new modules discovered from PCAP: ESP/Traction(0x58), Compass(0x61), Siren(0xA7). Airbag(0x60) returns NRC 0x22 always. ECU block 0x62 confirmed as live data (values change between sessions). See [RELAY_MAP.md](RELAY_MAP.md) for complete actuator command reference.
-
-### J1850 VPW Header Format
-
-The J1850 VPW header byte structure is `ATSH 24 XX YY` where:
-- `24` = priority byte (J1850 VPW standard)
-- `XX` = target module address
-- `YY` = mode byte (determines which service the module responds to)
-
-Known mode bytes per module (discovered through reverse engineering):
-
-| Module | Addr | Read(22) | Func(10) | Clear(11) | Sec(27) | Rtn(31) | Rtn2(33) | Alt(A0) | Alt2(A3) | DL(14) | DL2(20) | IO(30) | Spe(B4) |
-|--------|------|----------|----------|-----------|---------|---------|----------|---------|----------|--------|---------|--------|---------|
-| OHC | 0x28 | 22 | 10 | 11 | - | - | - | A0 | A3 | 14 | 20 | 30 | - |
-| ABS | 0x40 | 22 | - | 11 | - | - | - | A0 | - | - | - | - | - |
-| Airbag | 0x60 | 22 | - | 11 | 27 | 31 | - | A0 | A3 | - | - | - | - |
-| SKIM | 0x62 | 22 | - | - | - | - | - | - | - | - | - | - | - |
-| HVAC | 0x68 | 22 | - | 11 | - | 31 | 33 | - | - | - | - | - | - |
-| BCM | 0x80 | 22 | 10 | 11 | - | - | - | - | - | - | 20 | - | - |
-| Radio | 0x87 | 22 | - | - | - | - | - | - | - | - | - | - | - |
-| Cluster | 0x90 | 22 | 10 | - | - | - | - | - | - | - | - | - | - |
-| MemSeat | 0x98 | 22 | - | - | - | - | - | - | - | - | - | - | - |
-| Liftgate| 0xA0 | 22 | - | - | - | - | - | - | - | - | - | - | - |
-| 0xA1 | 0xA1 | 22 | - | - | - | 31 | 33 | - | - | - | - | - | - |
-| VTSS | 0xC0 | 22 | - | - | 27 | - | - | - | - | - | - | - | B4 |
-
-All testing was performed with engine running. The `ATRA` receive filter command is required for each module (`ATRAXX` where XX is the module address).
-
-### Possible causes for NO DATA on some modules
-
-1. **EU-spec WJ 2.7 CRD may not have all US-spec J1850 modules** — the PCI/CCD bus architecture differs between markets
-2. **BLE ELM327 adapter timing** — some modules may need longer response timeout than the BLE adapter provides
-3. **Mode byte mismatch** — some modules only respond on specific mode bytes (e.g., Overhead Console primarily uses mode 0xA0, not 0x22)
-
-## ECU Security Access
-
-The Bosch EDC15C2 in the WJ 2.7 CRD uses a **lookup-table based** seed-key algorithm — not the ProcessKey5 shift-XOR algorithm used by European EDC15 variants. This was discovered through extensive trial-and-error testing.
-
-### Algorithm: ArvutaKoodi
-
-The key is computed from the 2-byte seed using four 16-entry lookup tables:
-
-```
-Input: seed = [s0, s1]  (s0 = high byte, s1 = low byte)
-
-Step 1: v1 = (s1 + 0x0B) & 0xFF
-        keyLo = TABLE1[v1 >> 4] | TABLE2[v1 & 0xF]
-
-Step 2: cond = 1 if s1 > 0x34, else 0
-        v2 = (s0 + cond + 1) & 0xFF
-        keyHi = TABLE3[v2 >> 4] | TABLE4[v2 & 0xF]
-
-Output: key = [keyHi, keyLo]
-```
-
-Lookup tables:
-
-```
-TABLE1 (high nibble): C0 D0 E0 F0 00 10 20 30 40 50 60 70 80 90 A0 B0
-TABLE2 (low nibble):  02 03 00 01 06 07 04 05 0A 0B 08 09 0E 0F 0C 0D
-TABLE3 (high nibble): 90 80 F0 E0 D0 C0 30 20 10 00 70 60 50 40 B0 A0
-TABLE4 (low nibble):  0D 0C 0F 0E 09 08 0B 0A 05 04 07 06 01 00 03 02
-```
-
-### ECU characteristics
-
-- **Seed**: Dynamic (changes every session)
-- **Lockout**: 2 wrong attempts triggers NRC 0x36 (exceededNumberOfAttempts), requires full bus re-init + 3s wait
-- **Protected blocks** (NRC 0x33 without security, verified 2025-03-11):
-  - 0x62: 4 data bytes — EGR duty, wastegate duty, + 2 unknown bytes
-  - 0xB0: 2 data bytes — meaning TBD (0x37, 0x0F observed at idle)
-  - 0xB1: 2 data bytes — boost adaptation (s16/10 = mbar)
-  - 0xB2: 2 data bytes — fuel quantity adaptation (s16/100 = mg/stroke)
-  - 1A 90: VIN (17 ASCII chars)
-  - 1A 91: ECU identification (date, variant code)
-  - 1A 86: ECU hardware/calibration data
-
-### Verified ECU security session (real vehicle log)
-
-```
-→ 27 01
-← 84 F1 15 67 01 DF A0 71        (seed = DF A0)
-  ArvutaKoodi: key = BC 69
-→ 27 02 BC 69
-← 83 F1 15 67 02 34 26            (positive response)
-→ 21 62
-← 86 F1 15 61 62 18 05 8C 84 7C  (4 data bytes)
-→ 21 B0
-← 84 F1 15 61 B0 37 0F E1        (2 data bytes)
-→ 1A 90
-← 93 F1 15 5A 90 31 4A 38 47 57 45 38 32 58 32 59 31 32 32 30 30 36 91
-  VIN: 1J8GWE82X2Y122006
-```
-
-### TCM Security (EGS52)
-
-- **Seed**: Static `0x6824` (never changes)
-- **Algorithm**: `key = ((swap_bytes(seed) ^ 0x5AA5) * 0x5AA5) & 0xFFFF` = `0xCC21`
-
-## TCM Live Data — Block 0x30 Byte Map
-
-```
-[0-1]   N2 Sensor RPM (turbine input)
-[2-3]   Engage status (P/N: 0x1E, R/D: 0x3C)
-[4-5]   Output Shaft RPM
-[6]     Unknown
-[7]     Selector: P=8, R=7, N=6, D=5
-[8]     Config (usually 4)
-[9-10]  Line pressure
-[11]    Trans temp raw (raw - 40 = degC)
-[12-13] TCC slip actual (signed)
-[14-15] TCC slip desired (signed)
-[16-17] Unknown counter
-[18]    Solenoid mode bitmask
-[19]    Status flags
-[20]    Shift flags
-[21]    Always 0x08
-```
-
-NAG1 722.6 gear ratios: 1st=3.59, 2nd=2.19, 3rd=1.41, 4th=1.00, 5th=0.83.
-
-## ECU Live Data Blocks (verified from real vehicle)
-
-| Block | Data Bytes | Key Parameters |
-|-------|-----------|----------------|
-| 0x12 | 34 | Coolant temp, IAT, TPS, MAP, rail pressure, AAP |
-| 0x20 | 32 | MAF actual/spec |
-| 0x22 | 34 | Rail spec, MAP spec |
-| 0x28 | 30 | RPM, injection quantity (mg/stroke) |
-| 0x10 | 16 | Idle params, max RPM |
-| 0x62 | 4 | Calibration constants (8A 79 8D 84) — static, does NOT change (security required) |
-| 0xB0 | 2 | EEPROM constant (37 0F) — static, never changes (security required) |
-| 0xB1 | 2 | EEPROM constant (D2 15) — static, never changes (security required) |
-| 0xB2 | 2 | EEPROM constant (E0 4B) — static, never changes (security required) |
-
-Note: Blocks 0x62, 0xB0, 0xB1, 0xB2 were tested under idle, acceleration, deceleration,
-engine braking, and full throttle — all values remain constant. These are EEPROM calibration
-parameters, NOT live data. Real-time EGR duty cycle and wastegate values are in block 0x12.
-
-### Fuel consumption calculation
-
-Instantaneous fuel flow is calculated from block 0x28 data:
-
-```
-RPM       = block 0x28 [0-1] (unsigned 16-bit)
-InjQty    = block 0x28 [2-3] / 100.0 (mg/stroke)
-Cylinders = 5 (OM612)
-Density   = 832 g/L (diesel)
-
-fuelFlow_gs = RPM * InjQty * 5 / (2 * 1000 * 60)     [g/s]
-fuelFlow_lh = fuelFlow_gs * 3600 / 832                 [L/h]
-```
-
-Verified values from real vehicle:
-- Idle (750 RPM, 12.5 mg/str): **1.69 L/h**
-- Acceleration (2233 RPM, 28.0 mg/str): **11.27 L/h**
-- Deceleration (1339 RPM, 5.6 mg/str): **1.35 L/h**
-
-### Known issue: K-Line module switching
-
-When switching between ECU (0x15) and TCM (0x20) on the K-Line bus, the ELM327 must perform a full bus reinit (ATZ → ATWM → ATSH → ATSP5 → ATFI → 81 → 27). If the previous session has timed out (no communication for 3-5 seconds), the `3E` (TesterPresent) heartbeat will detect this and trigger a reinit. Response source address is validated: TCM responses contain `F1 20`, ECU responses contain `F1 15`.
-
-### Actuator Control (Controls tab)
-
-J1850 VPW IOControlByLocalIdentifier (mode 0x2F). See [RELAY_MAP.md](RELAY_MAP.md) for complete command reference.
-
-**EU WJ 2.7 CRD Module Map (VERIFIED on real vehicle):**
-- `0xA0` = Driver Door (LEFT side) — only door module on J1850
-- `0x40` = ABS only (NOT a door module on EU spec)
-- `0x80` = BCM — mode 0x2F (Horn, Hazard, Beams, ParkLamp) + mode 0xB4 (Fog, Wiper, Defog, VTSS, Chime)
-- `0xA1` = Liftgate — mode 0x2F
-- `0x90` = Cluster — mode 0x2F (gauge test) + SID 0x3A (self-test)
-- `0x87` = Radio — mode 0x2F (Mute, Volume, Bass)
-- Right door = no J1850 module (hardwired via master switch)
-
-**BCM mode 0xB4 requires pre-activation:**
-```
-  1. ATSH248022                  (read mode header)
-  2. ATRA80                      (receive filter)
-  3. 28 0D 00                    (read current state)
-  4. ATSH2480B4                  (switch to B4 mode)
-  5. 28 0D 01                    (activate extended actuators)
-  6. 38 PID VAL                  (relay command)
-```
-
-**BCM mode 0x2F has INVERTED controls:**
-- Hazard: ON=`38 01 00`, OFF=`38 01 01`
-- Park Lamp: ON=`38 09 00`, OFF=`38 09 01`
-
-**DiagnosticSession (mode 0x11) REQUIRED before IOControl.**
-Without `ATSH24A011` → `01 01 00`, relay commands return positive response
-but do NOT physically activate. This is a safety feature.
-
-```
-Full activation sequence:
-  1. ATSP2                       (J1850 VPW protocol)
-  2. ATSH24A011                  (DiagSession header for 0xA0)
-  3. ATRAA0                      (receive filter)
-  4. 01 01 00                    (activate diagnostic session)
-  5. ATSH24A02F                  (IOControl header)
-  6. 38 PID 12                   (relay ON — value 0x12)
-  ...repeat while holding button (400ms interval)...
-  7. 38 PID 00                   (relay OFF)
-```
-
-**Driver Door 0xA0 — Verified PID Map (real vehicle test):**
-```
-  PID  Function            ON         OFF
-  0x00 Front Window Down   38 00 12   38 00 00   ✓ verified
-  0x01 Front Window Up     38 01 12   38 01 00   ✓ verified
-  0x02 Door Lock           38 02 12   38 02 00
-  0x03 Mirror Down         38 03 12   38 03 00
-  0x04 Mirror Heater       38 04 12   38 04 00
-  0x05 Mirror Left         38 05 12   38 05 00
-  0x06 Mirror Right        38 06 12   38 06 00
-  0x07 Mirror Up           38 07 12   38 07 00
-  0x08 Rear Window Down    38 08 12   38 08 00
-  0x09 Rear Window Up      38 09 12   38 09 00
-  0x0A Switch Illumination 38 0A 12   38 0A 00
-  0x0B Door Unlock         38 0B 12   38 0B 00
-  0x0C Foldaway In         38 0C 12   38 0C 00
-  0x0D Foldaway Out        38 0D 12   38 0D 00
-  0x0E Unknown             38 0E 12   38 0E 00
-  0x0F Unknown             38 0F 12   38 0F 00
-```
-
-All 16 PIDs return positive response. Left side actuators confirmed working
-(front window, mirror, door light). Right side has no J1850 module.
-
-## Architecture
-
-```
-ELM327Connection (WiFi TCP + BLE GATT)
-  -> KWP2000Handler (K-Line framing, SID routing)
-      -> WJDiagnostics (module management, live data decode)
-          -> LiveDataManager (polling, gear detection)
-              -> MainWindow (Qt QML UI)
-```
-
-## Building
-
-Requires Qt 6.5+ with QtConnectivity (Bluetooth) module.
-
-```bash
-mkdir build && cd build
-cmake .. -DCMAKE_PREFIX_PATH=/path/to/qt6
-cmake --build .
-```
-
-For Android: Use Qt Creator with Android SDK/NDK configured.
-
-## Emulator
-
-`wj_tcm_emulator.py` provides a TCP server that emulates the ELM327 + vehicle bus for development without a real vehicle. Supports all modules, realistic timing, gear shift simulation, ECU/TCM security access, and **252 PCAP-verified responses** (Door 0xA0/0x40, BCM 0x80 mode 0x2F+0xB4, Cluster 0x90, Radio 0x87, Liftgate 0xA1).
-
-```bash
-python3 wj_tcm_emulator.py --port 35000
-```
-
-## File Structure
-
-```
-src/
-  mainwindow.cpp      UI, controls tab, test procedures
-  wjdiagnostics.cpp   Module management, security, live data decode
-  kwp2000handler.cpp  KWP2000 protocol framing
-  livedata.cpp        Live data polling and display
-  elm327connection.cpp ELM327 communication (WiFi/BLE)
-  main.cpp            Application entry point
-include/
-  *.h                 Headers for all source files
-wj_tcm_emulator.py   Development emulator (v15, all relay commands)
-RELAY_MAP.md          Complete actuator command reference
-README.md             This file
-```
+# WJDiag — Jeep Grand Cherokee WJ 2.7 CRD Diagnostic Tool
+
+## Vehicle: 2003 EU-spec WJ 2.7 CRD (OM612 / NAG1)
+
+Qt6 cross-platform diagnostic application communicating via ELM327 (Bluetooth/WiFi).
+Supports K-Line (ISO 14230) and J1850 VPW protocols.
+
+## Module Map — EU WJ 2.7 CRD
+
+| Addr | Module | Bus | Status |
+|------|--------|-----|--------|
+| 0x15 | Engine ECU (EDC15C2) | K-Line | Full data + security |
+| 0x20 | TCM (NAG1 722.6) | K-Line | Full data + security |
+| 0x28 | TCM (J1850) | J1850 | Read OK |
+| 0x40 | ABS / Door RIGHT | J1850 | Full read + relay |
+| 0x58 | ESP / Traction | J1850 | Read OK |
+| 0x60 | Airbag (ORC) | J1850 | NRC 0x22 (needs special conditions) |
+| 0x61 | Compass / Traveler | J1850 | Read + DTCs |
+| 0x68 | Climate (HVAC) | J1850 | Read OK |
+| 0x80 | BCM Body Computer | J1850 | Relay control only |
+| 0x98 | Memory Seat | J1850 | DTC read only |
+| 0xA0 | Door LEFT (Driver) | J1850 | Full read + 16 relay PIDs |
+| 0xA1 | Liftgate / HandsFree | J1850 | Read + relay |
+| 0xA7 | Siren / Security | J1850 | Read + DTCs |
+| 0xC0 | VTSS / Park Assist | J1850 | Read OK |
+| 0x2A | EVIC Overhead | J1850 | No response on EU vehicle |
+
+## Controls Tab
+
+- **Front Windows**: Left (0xA0) + Right (0x40) — hold to activate
+- **Rear Windows**: Left (0xA0) + Right (0x40) — hold to activate
+- **Hazard**: BCM 0x80 toggle (inverted: ON=0x00, OFF=0x01)
+- **Horn**: BCM 0x80 hold to honk
+- **BCM Lights**: Hi Beam, Low Beam, Park Lamp
+- **BCM Extended (0xB4)**: Rear Defog, Fog lights, Wiper, VTSS, Chime, EU Daylights
+
+Dashboard automatically hides when Controls tab is active.
+
+No DiagSession required for relay commands — direct header switch.
+
+## Live Data
+
+- **ECU**: RPM, Coolant, IAT, TPS, MAP, Rail Pressure, Injection Qty, Boost
+- **TCM**: Input/Output RPM, Gear, Torque, Shift data, Fluid temp
+
+Note: MAF reads 0 at idle — OM612 is MAP-based, this is normal.
+
+## ESP32-S2 Emulator
+
+WiFi AP emulator for development and testing without a real vehicle.
+
+- **Hardware**: SparkFun ESP32-S2 Thing Plus C
+- **WiFi**: AP "WiFi_OBDII", IP 192.168.0.10, TCP port 35000
+- **HTTP Dashboard**: http://192.168.0.10/ — live status with auto-refresh
+- **Serial**: 115200 baud USB CDC logging
+
+## Files
+
+| File | Description |
+|------|-------------|
+| `mainwindow.cpp/.h` | Qt UI — Controls, live data, raw test |
+| `wjdiagnostics.cpp/.h` | Module management, 15 modules |
+| `elm327_emu.cpp/.h` | ESP32 emulator core |
+| `main.cpp` | ESP32 WiFi AP, TCP server, HTTP dashboard |
+| `platformio.ini` | PlatformIO config |
+| `wj_tcm_emulator.py` | Python TCP emulator |
+| `RELAY_MAP.md` | Actuator command reference |
+
+## Protocol Notes
+
+- **CRC-16/MODBUS** (poly=0xA001, init=0xFFFF) — RS485 bus standard, never change
+- **J1850 VPW** — ATSP2, header format 24XXYY (XX=target, YY=mode)
+- **K-Line ISO 14230** — ATSP5, KWP2000 with length+address framing
+- **0xA0 = LEFT/Driver door** (US tools mislabel as "Passenger Door")
+- **Right door has no dedicated J1850 module** — controlled via 0x40
