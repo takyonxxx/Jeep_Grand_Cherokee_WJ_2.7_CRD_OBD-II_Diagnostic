@@ -26,6 +26,8 @@ Dead modules: 0x80 (NO DATA), 0x2A Overhead Console (NO DATA)
 
 ## Controls Tab
 
+Detailed command reference: [RELAY_MAP.md](RELAY_MAP.md)
+
 - **Front Windows**: Left (0xA0 sequential) + Right (0xA1 sequential) — hold to activate
 - **Rear Windows**: Left (0xA0) + Right (0xA1) — hold to activate
 - **Hazard / Horn**: Body Computer 0x40 — toggle/hold
