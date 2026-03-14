@@ -639,7 +639,7 @@ QWidget* MainWindow::createConnectionTab()
                         m_dtcSourceIdx = 1;
                     else if (me.id == WJDiagnostics::Module::ABS)
                         m_dtcSourceIdx = 2;
-                    else if (me.id == WJDiagnostics::Module::Airbag)
+                    else if (me.id == WJDiagnostics::Module::ESP_Module)
                         m_dtcSourceIdx = 3;
                     if (m_dtcTcmBtn) {
                         m_dtcTcmBtn->setChecked(m_dtcSourceIdx == 0);
@@ -1243,7 +1243,7 @@ QWidget* MainWindow::createControlsTab()
     hazLay->setSpacing(8); hazLay->setContentsMargins(8,8,8,8);
     hazLay->addWidget(makeBCMBtn("HAZARD", "38 06 20", "38 06 00", "Hazard", hdrBCM));
     hazLay->addWidget(makeHoldBtn("HORN", "38 0D 01", "38 0D 00", "Horn", hdrBCM));
-    hazLay->addWidget(makeHoldBtn("WIPER", "38 08 02", "38 08 00", "Wiper", hdrBCM));
+    hazLay->addWidget(makeHoldBtn("WIPER", "38 08 01", "38 08 00", "Wiper", hdrBCM));
     innerLay->addWidget(hazGrp);
 
     innerLay->addStretch();
@@ -1429,7 +1429,7 @@ void MainWindow::onReadDTCs()
     switch (srcIdx) {
     case 1:  mod = WJDiagnostics::Module::MotorECU; break;
     case 2:  mod = WJDiagnostics::Module::ABS; break;
-    case 3:  mod = WJDiagnostics::Module::Airbag; break;
+    case 3:  mod = WJDiagnostics::Module::ESP_Module; break;  // Airbag = 0x58
     default: mod = WJDiagnostics::Module::KLineTCM; break;
     }
 
@@ -1758,7 +1758,6 @@ void MainWindow::rebuildActuatorPanel()
     else if (addr == 0x40) {
         QString hdr = "ATSH24402F";
         acts = {
-            {"Viper Relay",    "38 08 01","38 08 00", hdr},
             {"VTSS Lamp",      "38 07 01","38 07 00", hdr},
             {"Front Fog Lamps","38 06 02","38 06 00", hdr},
             {"Chime",          "38 02 01","38 02 00", hdr},
@@ -1766,7 +1765,7 @@ void MainWindow::rebuildActuatorPanel()
             {"Rear Fog Lamp",  "38 06 10","38 06 00", hdr},
             {"Hazard Flashers","38 06 20","38 06 00", hdr},
             {"R Defog Relay",  "38 06 10","38 06 00", hdr},
-            {"HI LOW Wiper",   "38 08 02","38 08 00", hdr},
+            {"Wiper",          "38 08 01","38 08 00", hdr},
             {"Park Lamp Relay","38 06 04","38 06 00", hdr},
             {"Horn Relay",     "38 0D 01","38 0D 00", hdr},
             {"Low Beam",       "3A 02 FF","",         hdr},
@@ -2101,7 +2100,7 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"Hazard OFF",       "j1850cmd:38 06 00"});
     steps->append(Step{"Horn ON",          "j1850cmd:38 0D 01"});
     steps->append(Step{"Horn OFF",         "j1850cmd:38 0D 00"});
-    steps->append(Step{"Wiper ON",         "j1850cmd:38 08 02"});
+    steps->append(Step{"Wiper ON",         "j1850cmd:38 08 01"});
     steps->append(Step{"Wiper OFF",        "j1850cmd:38 08 00"});
     steps->append(Step{"", "j1850hdr:ATSH244018"});
     steps->append(Step{"", "j1850hdr:ATRA40"});

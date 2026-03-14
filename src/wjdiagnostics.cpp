@@ -491,8 +491,23 @@ void WJDiagnostics::readDTCs(Module mod, std::function<void(const QList<DTCEntry
             });
         } else {
             // J1850 DTC read: mode 0x18
-            // Header: ATSH24xx18, Filter: ATRAxx, Command: FF 00 00
             uint8_t modAddr = static_cast<uint8_t>(mod);
+
+            // J1850 modules: mode 0x18 DTC read problematic
+            // ABS(0x28): NRC + disturbs controller (ABS lamp!)
+            // ESP(0x58): NRC 7F 18 11
+            // 0x60: all NRC
+            // Others: WJDiag Pro doesn't use mode 0x18 for any J1850 module
+            // DTC CLEAR still works for all (mode 0x14)
+            {
+                emit logMessage(QString("%1: DTC read not available (mode 0x18 not supported)")
+                    .arg(moduleInfo(mod).shortName));
+                QList<DTCEntry> dtcs;
+                emit dtcListReady(mod, dtcs);
+                if (cb) cb(dtcs);
+                return;
+            }
+
             QString readHdr = QString("ATSH24%1%2")
                 .arg(modAddr, 2, 16, QChar('0')).arg("18").toUpper();
             QString atraCmd = QString("ATRA%1")
@@ -535,16 +550,21 @@ void WJDiagnostics::clearDTCs(Module mod, std::function<void(bool)> cb)
             m_kwp->clearAllDTCs(cb);
         } else {
             // J1850 DTC clear: mode 0x14
-            // Header: ATSH24xx14, Filter: ATRAxx, Command: FF 00 00
             uint8_t modAddr = static_cast<uint8_t>(mod);
+
+            // ESP(0x58): uses "01 00 00" for clear (PCAP verified)
+            // Others: use standard "FF 00 00"
+            QString clearCmd = (modAddr == 0x58) ? "01 00 00" : "FF 00 00";
+
+            // ABS(0x28): DTC clear can disturb module - use mode 0x14 carefully
             QString clearHdr = QString("ATSH24%1%2")
                 .arg(modAddr, 2, 16, QChar('0')).arg("14").toUpper();
             QString atraCmd = QString("ATRA%1")
                 .arg(modAddr, 2, 16, QChar('0')).toUpper();
 
-            m_elm->sendCommand(clearHdr, [this, mod, modAddr, atraCmd, cb](const QString&) {
-                m_elm->sendCommand(atraCmd, [this, mod, modAddr, cb](const QString&) {
-                    m_elm->sendCommand("FF 00 00", [this, mod, modAddr, cb](const QString &resp) {
+            m_elm->sendCommand(clearHdr, [this, mod, modAddr, atraCmd, clearCmd, cb](const QString&) {
+                m_elm->sendCommand(atraCmd, [this, mod, modAddr, clearCmd, cb](const QString&) {
+                    m_elm->sendCommand(clearCmd, [this, mod, modAddr, cb](const QString &resp) {
                         bool ok = resp.contains("54") && !resp.contains("7F");
                         emit logMessage(QString("%1 DTC clear (mode 0x14): %2")
                             .arg(moduleInfo(mod).shortName, ok ? "OK" : resp.trimmed()));
