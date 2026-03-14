@@ -2049,6 +2049,15 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"", "j1850hdr:ATSH242818"});
     steps->append(Step{"", "j1850hdr:ATRA28"});
     steps->append(Step{"ABS DTC Read",     "j1850cmd:FF 00 00"});
+    // --- ABS DTC PID Scan (mode 0x22, PID 2E series) ---
+    steps->append(Step{"", "j1850hdr:ATSH242822"});
+    steps->append(Step{"", "j1850hdr:ATRA28"});
+    steps->append(Step{"", "header:--- ABS DTC PID Scan ---"});
+    for (uint8_t p : {0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,
+                       0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x30}) {
+        steps->append(Step{QString("ABS DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
+            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
+    }
 
     // --- ESP 0x58 ---
     steps->append(Step{"", "header:===== PHASE 3b: ESP 0x58 ====="});
@@ -2063,6 +2072,22 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"", "j1850hdr:ATSH245818"});
     steps->append(Step{"", "j1850hdr:ATRA58"});
     steps->append(Step{"ESP DTC Read",     "j1850cmd:FF 00 00"});
+    // --- ESP DTC PID Scan (55 PIDs: 2E series + 2F series) ---
+    steps->append(Step{"", "j1850hdr:ATSH245822"});
+    steps->append(Step{"", "j1850hdr:ATRA58"});
+    steps->append(Step{"", "header:--- ESP DTC PID Scan (55 PIDs) ---"});
+    for (uint8_t p : {0x10,0x13,0x16,0x19,0x1C,0x1F,0x22,0x25,0x28,0x2B,0x2E,
+                       0x37,0x3A,0x3D,0x43,0x49,0x4C,0x4F,0x52,
+                       0x70,0x73,0x76,0x79,0x7C,0x7F,0x82,0x85,0x88,0x8B,0x8E,
+                       0x91,0x94,0x97,0xDC,0xDF,0xE2,0xE5,0xFA,0xFD}) {
+        steps->append(Step{QString("ESP 2E %1").arg(p,2,16,QChar('0')).toUpper(),
+            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
+    }
+    for (uint8_t p : {0x00,0x03,0x06,0x18,0x1B,0x1E,0x21,0x24,0x27,0x2A,0x2D,
+                       0x30,0x33,0x36,0x39,0x3C}) {
+        steps->append(Step{QString("ESP 2F %1").arg(p,2,16,QChar('0')).toUpper(),
+            QString("j1850cmd:2F %1 00").arg(p,2,16,QChar('0')).toUpper()});
+    }
 
     // --- Cluster 0x61 ---
     steps->append(Step{"", "header:===== PHASE 3c: Cluster 0x61 ====="});
@@ -2076,6 +2101,14 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"Speedo OFF",       "j1850cmd:3A 00 00"});
     steps->append(Step{"Tacho ON",         "j1850cmd:3A 00 40"});
     steps->append(Step{"Tacho OFF",        "j1850cmd:3A 00 00"});
+    // --- Cluster DTC PID Discovery (2E 00~2E 10) ---
+    steps->append(Step{"", "j1850hdr:ATSH246122"});
+    steps->append(Step{"", "j1850hdr:ATRA61"});
+    steps->append(Step{"", "header:--- Cluster DTC PID Discovery ---"});
+    for (uint8_t p : {0x00,0x01,0x02,0x03,0x05,0x08,0x0A,0x10}) {
+        steps->append(Step{QString("Clust DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
+            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
+    }
 
     // --- SKIM 0xC0 ---
     steps->append(Step{"", "header:===== PHASE 3d: SKIM 0xC0 ====="});
@@ -2085,6 +2118,9 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"SKIM 20 01",       "j1850cmd:20 01 00"});
     steps->append(Step{"SKIM 20 02",       "j1850cmd:20 02 00"});
     steps->append(Step{"SKIM 24 00",       "j1850cmd:24 00 00"});
+    // --- SKIM DTC PID Scan ---
+    steps->append(Step{"", "header:--- SKIM DTC PID Scan ---"});
+    steps->append(Step{"SKIM DTC 2E 00",   "j1850cmd:2E 00 00"});
 
     // --- Body 0x40 ---
     steps->append(Step{"", "header:===== PHASE 3e: Body 0x40 ====="});
@@ -2105,6 +2141,14 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"", "j1850hdr:ATSH244018"});
     steps->append(Step{"", "j1850hdr:ATRA40"});
     steps->append(Step{"Body DTC Read",    "j1850cmd:FF 00 00"});
+    // --- Body DTC PID Scan ---
+    steps->append(Step{"", "j1850hdr:ATSH244022"});
+    steps->append(Step{"", "j1850hdr:ATRA40"});
+    steps->append(Step{"", "header:--- Body DTC PID Scan ---"});
+    for (uint8_t p : {0x00,0x01,0x02,0x03,0x05,0x0D,0x12}) {
+        steps->append(Step{QString("Body DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
+            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
+    }
 
     // --- HVAC 0x98 ---
     steps->append(Step{"", "header:===== PHASE 3f: HVAC 0x98 ====="});
@@ -2118,6 +2162,14 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"", "j1850hdr:ATSH24982F"});
     steps->append(Step{"DrvBlend Hot",     "j1850cmd:38 03 00"});
     steps->append(Step{"DrvBlend Cold",    "j1850cmd:38 04 00"});
+    // --- HVAC DTC PID Scan ---
+    steps->append(Step{"", "j1850hdr:ATSH249822"});
+    steps->append(Step{"", "j1850hdr:ATRA98"});
+    steps->append(Step{"", "header:--- HVAC DTC PID Scan ---"});
+    for (uint8_t p : {0x03,0x04,0x05,0x06}) {
+        steps->append(Step{QString("HVAC DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
+            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
+    }
 
     // --- Driver Door 0xA0 ---
     steps->append(Step{"", "header:===== PHASE 3g: Driver Door 0xA0 ====="});
@@ -2137,6 +2189,14 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"Lock OFF",         "j1850cmd:38 05 00"});
     steps->append(Step{"Unlock ON",        "j1850cmd:38 06 12"});
     steps->append(Step{"Unlock OFF",       "j1850cmd:38 06 00"});
+    // --- DriverDoor DTC PID Discovery (2E 00~2E 10) ---
+    steps->append(Step{"", "j1850hdr:ATSH24A022"});
+    steps->append(Step{"", "j1850hdr:ATRAA0"});
+    steps->append(Step{"", "header:--- DriverDoor DTC PID Discovery ---"});
+    for (uint8_t p : {0x00,0x01,0x02,0x03,0x04,0x05,0x08,0x0A,0x10}) {
+        steps->append(Step{QString("DrvDr DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
+            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
+    }
 
     // --- Passenger Door 0xA1 ---
     steps->append(Step{"", "header:===== PHASE 3h: Passenger Door 0xA1 ====="});
@@ -2148,6 +2208,14 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"FrontWin OFF",     "j1850cmd:38 01 00"});
     steps->append(Step{"Lock ON",          "j1850cmd:38 05 12"});
     steps->append(Step{"Lock OFF",         "j1850cmd:38 05 00"});
+    // --- PassengerDoor DTC PID Discovery (2E 00~2E 10) ---
+    steps->append(Step{"", "j1850hdr:ATSH24A122"});
+    steps->append(Step{"", "j1850hdr:ATRAA1"});
+    steps->append(Step{"", "header:--- PassengerDoor DTC PID Discovery ---"});
+    for (uint8_t p : {0x00,0x01,0x02,0x03,0x04,0x05,0x08,0x0A,0x10}) {
+        steps->append(Step{QString("PasDr DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
+            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
+    }
 
     // --- Electro Mech Cluster 0x60 ---
     steps->append(Step{"", "header:===== PHASE 3i: ElecClust 0x60 ====="});
@@ -2168,6 +2236,14 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"OvHd SelfTest31",  "j1850cmd:01 00 00"});
     steps->append(Step{"", "j1850hdr:ATSH246833"});
     steps->append(Step{"OvHd SelfTest33",  "j1850cmd:01 00 00"});
+    // --- Overhead DTC PID Scan ---
+    steps->append(Step{"", "j1850hdr:ATSH246822"});
+    steps->append(Step{"", "j1850hdr:ATRA68"});
+    steps->append(Step{"", "header:--- Overhead DTC PID Scan ---"});
+    for (uint8_t p : {0x02,0x05,0x08}) {
+        steps->append(Step{QString("OvHd DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
+            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
+    }
 
     // --- Rain Sensor 0xA7 ---
     steps->append(Step{"", "header:===== PHASE 3k: Rain Sensor 0xA7 ====="});
@@ -2177,7 +2253,8 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"Rain 20 01",       "j1850cmd:20 01 00"});
     steps->append(Step{"Rain 20 02",       "j1850cmd:20 02 00"});
     steps->append(Step{"Rain 24 00",       "j1850cmd:24 00 00"});
-    steps->append(Step{"Rain 2E 10",       "j1850cmd:2E 10 00"});
+    steps->append(Step{"", "header:--- Rain DTC PID Scan ---"});
+    steps->append(Step{"Rain DTC 2E 10",   "j1850cmd:2E 10 00"});
 
     // --- Dead modules ---
     steps->append(Step{"", "header:===== PHASE 3l: Other Modules ====="});

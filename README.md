@@ -1,78 +1,78 @@
-# WJDiag — Jeep Grand Cherokee WJ 2.7 CRD Diagnostic Tool
+# WJDiag — Jeep WJ 2.7 CRD Diagnostics
 
-## Vehicle: 2003 EU-spec WJ 2.7 CRD (OM612 / NAG1)
+Qt6/C++ diagnostics application for Jeep Grand Cherokee WJ (2003 EU, 2.7 CRD OM612) with ESP32 ELM327 simulator.
 
-Qt6 cross-platform diagnostic application + ESP32-S2 ELM327 emulator.
-All commands and responses verified from real vehicle PCAP captures (11 PCAPs, 2025-03-11/12).
+## Supported Modules
 
-## Complete Module Address Map (Scan Order, PCAP-Verified)
+### K-Line (ISO 14230-4 KWP2000, ATSP5)
+| Address | Module | Features |
+|---------|--------|----------|
+| 0x15 | Bosch EDC15C2 (MotorECU) | Live data (20+ blocks), DTC read/clear, security access, actuator test |
+| 0x20 | NAG1 722.6 (KLineTCM) | Live data (block 0x30), DTC read/clear, gear display |
 
-| # | Addr | Bus | Module | Real Vehicle Response |
-|---|------|-----|--------|----------------------|
-| 1 | 0x15 | K-Line | Engine ECU (Bosch EDC15C2 OM612) | OK — 9 actuators + 14-block live data |
-| 2 | 0x20 | K-Line | Transmission (NAG1 722.6) | OK — 4 tests + 5-block live data |
-| 3 | 0x28 | J1850 | ABS | OK — read + 12 valve tests + DTC |
-| 4 | 0x58 | J1850 | ESP / Traction Control | OK — read + 50 live PIDs. DTC clear: NO DATA |
-| 5 | 0x61 | J1850 | Instrument Cluster | OK — 11 LED + gauge tests (SID 0x3A) |
-| 6 | 0xC0 | J1850 | SKIM / Immobilizer | OK — reset + VIN + key program |
-| 7 | 0x40 | J1850 | Body Computer | OK — 14 relays + mode 0xB4 config |
-| 8 | 0x98 | J1850 | HVAC / ATC / Memory Seat | OK — 10 motor tests |
-| 9 | 0xA0 | J1850 | Driver Door (left windows) | OK — 16 actuators |
-| 10 | 0xA1 | J1850 | Passenger Door (right windows) | OK — 15 actuators + RKE |
-| 11 | 0x60 | J1850 | Electro Mech Cluster | NRC 7F 22 22 on all commands |
-| 12 | 0x68 | J1850 | Overhead Console | OK — self test + reset |
-| 13 | 0x6D | J1850 | Navigation | `62 00 00 00` on all reads |
-| 14 | 0x80 | J1850 | Radio | NO DATA |
-| 15 | 0x81 | J1850 | CD Changer | `62 00 00 00` on all reads |
-| 16 | 0x62 | J1850 | Park Assist | `62 00 00 00` on all reads |
-| 17 | 0xA7 | J1850 | Rain Sensor | OK — read + DTC clear |
-| 18 | 0x2A | J1850 | Adjustable Pedal | NO DATA |
-| 19 | 0x87 | J1850 | Satellite Audio | `62 00 00 00` on all reads |
-| 20 | 0x90 | J1850 | Hands Free / Uconnect | `62 00 00 00` on all reads |
+### J1850 VPW (ATSP2)
+| Address | Module | DTC PIDs | Features |
+|---------|--------|----------|----------|
+| 0x28 | ABS/TCM | 17 (2E 10~2E 30) | Live data, DTC PID scan, valve test (mode 0x30/0xA0/0xA3) |
+| 0x58 | ESP/Traction | 55 (2E 10~2F 3C) | DTC PID scan, DTC clear (mode 0x14, cmd 01 00 00) |
+| 0x40 | Body Computer | 7 (2E 00~2E 12) | Live data, actuators (mode 0x2F), config (mode 0xB4), DTC PID scan |
+| 0x98 | HVAC/ATC | 4 (2E 03~2E 06) | Live data, self-test (mode 0x30), actuators (mode 0x2F), DTC PID scan |
+| 0x68 | Overhead Console | 3 (2E 02~2E 08) | Live data, self-test, DTC PID scan |
+| 0xA7 | Rain Sensor | 1 (2E 10) | Live data, DTC PID scan, DTC clear |
+| 0xC0 | SKIM/Immobilizer | 1 (2E 00) | Identification, DTC PID scan |
+| 0xA0 | Driver Door | — | Window control (mode 0x2F), live data |
+| 0xA1 | Passenger Door | — | Window control (mode 0x2F), live data |
+| 0x61 | Instrument Cluster | — | Gauge test, identification |
+| 0x60 | Airbag (ORC) | — | All NRC on real vehicle |
 
-20 modules total. All connectable.
+### Dead Modules (NO DATA on EU spec)
+0x80 (Radio), 0x81 (CD Changer), 0x62 (Park Assist), 0x6D (Navigation), 0x87 (Sat Audio), 0x90 (Hands Free), 0x2A (EVIC)
 
-## Real Vehicle PCAP Findings
+## J1850 DTC Read — PID Scan Method
 
-- ABS 0x28 PID `20 00 00`: Valid response `62 56 04 00`, NOT NRC
-- ESP 0x58: Background bus traffic (`B8 58 02 2B`, `2D 58 00 40`, `A3 58 00 89`)
-- ESP 0x58 DTC Clear (mode 0x14): Returns NO DATA
-- ECU Block 0x62: Values vary between sessions
-- ECU DTC: 1 DTC (0x0702)
-- TCM DTC Clear: First attempt returns `7F 14 78`, retry needed
-- 0x60: ALL commands return NRC `7F 22 22`
+WJDiag Pro and this app read J1850 DTCs via **PID scanning**, not mode 0x18 (which returns NRC on all WJ modules).
 
-## Controls Tab
+**How it works:**
+1. Switch to module's read header: `ATSH24xx22` + `ATRAxx`
+2. Send each DTC PID: `2E xx 00` (or `2F xx 00` for ESP extended range)
+3. Parse response: `26 <src> 62 <D0> <D1> <D2> <CRC>`
+4. If D0:D1 != 0x0000 and != 0xFFFF → DTC is active at that PID slot
+5. DTC code is mapped from the PID number via a lookup table
 
-See [RELAY_MAP.md](RELAY_MAP.md) for full command reference.
+**Response patterns:**
+- `00 00 00` or `00 00 FF` → No fault (cleared)
+- `00 FF FF` → Unlearned (slot never had a fault or was cleared)
+- `00 8F 00` → Active fault, occurrence count = 0x8F
+- `7F 22 21` → NRC (PID not supported by this module)
 
-### Windows
-Both doors: `38 PID 12` ON, `38 PID 00` OFF.
-PID 0x01=Front Up, 0x02=Front Down, 0x03=Rear Up, 0x04=Rear Down.
+**DTC clear** uses mode 0x14:
+- ESP 0x58: `ATSH245814` + `01 00 00` (may need multiple retries, NO DATA is normal)
+- Others: `ATSH24xx14` + `FF 00 00`
 
-### Body Computer 0x40
-Hazard: `38 06 20`, Horn: `38 0D 01`, Hi Beam: `38 06 08`, Park: `38 06 04`
+## Protocol Details
 
-### Cluster 0x61 Gauge Test
-SID 0x3A: `3A 00 80`=Speedo, `3A 00 40`=Tacho, `3A 00 08`=Fuel, `3A 00 04`=Temp
+- **CRC-16/MODBUS**: poly=0xA001, init=0xFFFF (K-Line only, immutable)
+- **J1850 VPW**: Header format `24 <target> <mode>`, ATRA filter required
+- **ELM327**: ATH1 mode (headers on), WiFi TCP port 35000
+- **DiagSession**: Some modules (0x98 HVAC, 0x28 ABS) need `ATSH24xx11` + `01 01 00` before data reads
 
-## ECU Security — ArvutaKoodi
+## ESP32 Simulator
 
-4-table lookup: T1-T4 (16 bytes each). See RELAY_MAP.md for algorithm.
-TCM: Static seed `68 24 89` -> Key `CC 21`
+PlatformIO project in `elm327_esp32/` — SparkFun ESP32-S2 Thing Plus C.
+All J1850 responses are PCAP-verified against real vehicle captures (2026-03-14).
 
-## Live Data
+## Build
 
-ECU: 14 blocks + 4 security + ATRV per cycle
-TCM: 5 blocks + ATRV per cycle
-See RELAY_MAP.md for byte offset/formula tables.
+```
+qmake && make   # Qt6, requires BLE module for iOS/macOS
+```
 
-## DTC
+## File Structure
 
-K-Line: `18 02 00 00` read, `14 00 00` clear
-J1850: `ATSH24xx18` + `FF 00 00` read, `ATSH24xx14` + `FF 00 00` clear
-ESP 0x58 DTC clear: NO DATA
-
-## ESP32-S2 Emulator
-
-WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000. All responses matched to real vehicle PCAPs.
+- `src/wjdiagnostics.cpp` — Multi-protocol diagnostics engine, DTC PID scan
+- `src/mainwindow.cpp` — UI: tabs (Conn|DTC|Live|Ctrl|Acts|Log)
+- `src/livedata.cpp` — Live data parameter definitions
+- `src/kwp2000handler.cpp` — K-Line KWP2000 protocol handler
+- `src/elm327connection.cpp` — ELM327 BLE/WiFi/Serial transport
+- `elm327_esp32/src/elm327_emu.cpp` — ESP32 simulator (PCAP-verified)
+- `include/` — Headers

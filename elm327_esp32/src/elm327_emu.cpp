@@ -181,21 +181,21 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "24 00 00") return "26 28 62 08 02 00 8C";
             if (cmdStr == "28 01 00") return "26 28 62 20 02 00 B0";
             if (cmdStr == "2E 10 00") return "26 28 62 00 00 FF DC";
-            if (cmdStr == "2E 11 00") return "26 28 62 00 FF FF 9D";
+            if (cmdStr == "2E 11 00") return "26 28 62 00 FF FF 9D";  // both PCAPs: unlearned
             if (cmdStr == "2E 12 00") return "26 28 62 00 00 00 18";
             if (cmdStr == "2E 13 00") return "26 28 62 00 FF FF 9D";
             if (cmdStr == "2E 14 00") return "26 28 62 00 00 00 18";
             if (cmdStr == "2E 15 00") return "26 28 62 00 00 00 18";
-            if (cmdStr == "2E 16 00") return "26 28 7F 22 21 00 78";
+            if (cmdStr == "2E 16 00") return "26 28 62 00 FF FF 9D";  // PCAP verified
             if (cmdStr == "2E 17 00") return "26 28 62 00 FF FF 9D";
-            if (cmdStr == "2E 20 00") return "26 28 7F 22 21 00 78";
+            if (cmdStr == "2E 20 00") return "26 28 62 00 00 00 18";  // PCAP verified
             if (cmdStr == "2E 21 00") return "26 28 62 00 8F 00 72";
             if (cmdStr == "2E 22 00") return "26 28 62 00 00 00 18";
             if (cmdStr == "2E 23 00") return "26 28 62 00 8E 99 20";
             if (cmdStr == "2E 24 00") return "26 28 62 00 FF FF 9D";
             if (cmdStr == "2E 25 00") return "26 28 62 00 00 00 18";
             if (cmdStr == "2E 26 00") return "26 28 62 00 FF FF 9D";
-            if (cmdStr == "2E 27 00") return "26 28 7F 22 21 00 78";
+            if (cmdStr == "2E 27 00") return "26 28 62 00 00 00 18";  // PCAP verified
             if (cmdStr == "2E 30 00") return "26 28 62 00 FF FF 9D";
         }
     }
@@ -216,11 +216,11 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "20 02 00") return "26 40 62 41 43 00 E0";
             if (cmdStr == "20 06 00") return "26 40 62 02 00 00 32";
             // Live data PIDs (real vehicle)
-            if (cmdStr == "2E 00 00") return "26 40 62 08 00 00 3D";
+            if (cmdStr == "2E 00 00") return "26 40 62 00 00 00 31";  // PCAP verified clean
             if (cmdStr == "2E 12 00") return "26 40 62 00 00 00 31";
             if (cmdStr == "2E 02 00") return "26 40 62 00 00 00 31";
             if (cmdStr == "2E 01 00") return "26 40 62 00 00 00 31";
-            if (cmdStr == "2E 03 00") return "26 40 62 00 80 00 F8";
+            if (cmdStr == "2E 03 00") return "26 40 62 00 00 00 31";  // PCAP verified clean
             if (cmdStr == "2E 05 00") return "26 40 62 00 00 00 31";
             if (cmdStr == "28 04 00") return "26 40 62 00 00 00 31";
             if (cmdStr == "2E 0D 00") return "26 40 62 00 00 00 31";
@@ -245,7 +245,6 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "28 02 00") return "26 40 62 20 03 00 D5";
             if (cmdStr == "28 04 00") return "26 40 62 00 00 00 31";
             if (cmdStr == "28 07 00") return "26 40 62 14 00 00 2F";
-            if (cmdStr == "2E 0D 00") return "26 40 62 00 40 00 DB";
             if (cmdStr == "32 02 00") return "26 40 62 A7 00 00 4B";
             if (cmdStr == "32 04 00") return "26 40 62 AE 00 00 C8";
             if (cmdStr == "32 05 00") return "26 40 62 E2 00 00 A2";
@@ -891,32 +890,28 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                 0x00,0x00};
             return kwpWrap(r, 18);
         }
-        // Block 0x16: Battery/alternator (real vehicle: 40 bytes)
+        // Block 0x16: Battery/alternator
         if (blk == 0x16) {
             uint16_t batV = (uint16_t)(14.2f * 100);    // Battery Voltage
             uint16_t batT = (uint16_t)(28.0f * 10);     // Battery Temp
             uint16_t batTV = (uint16_t)(2.5f * 1000);   // Battery Temp Voltage
             uint16_t altField = (uint16_t)(3.2f * 100);  // Alternator Field
             uint16_t altDuty = (uint16_t)(45.0f * 10);   // Alternator Duty Cycle
-            uint8_t r[42] = {0x61,0x16,
+            uint8_t r[] = {0x61,0x16,
                 (uint8_t)(batV>>8),(uint8_t)(batV&0xFF),
                 (uint8_t)(batT>>8),(uint8_t)(batT&0xFF),
                 (uint8_t)(batTV>>8),(uint8_t)(batTV&0xFF),
                 (uint8_t)(altField>>8),(uint8_t)(altField&0xFF),
                 (uint8_t)(altDuty>>8),(uint8_t)(altDuty&0xFF),
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 42);
+            return kwpWrap(r, 18);
         }
-        // Block 0x32: Vehicle speed (real vehicle: 34 bytes)
+        // Block 0x32: Vehicle speed
         if (blk == 0x32) {
             uint16_t vspd = 0;     // Vehicle Speed (stopped)
             uint16_t vspdSet = 0;  // Speed Setpoint
             uint16_t cruiseV = (uint16_t)(0.5f * 1000);
-            uint8_t r[36] = {0x61,0x32,
+            uint8_t r[] = {0x61,0x32,
                 (uint8_t)(vspd>>8),(uint8_t)(vspd&0xFF),
                 (uint8_t)(vspdSet>>8),(uint8_t)(vspdSet&0xFF),
                 (uint8_t)(cruiseV>>8),(uint8_t)(cruiseV&0xFF),
@@ -925,13 +920,13 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 36);
+            return kwpWrap(r, 18);
         }
-        // Block 0x37: EGR/wastegate (real vehicle: 36 bytes)
+        // Block 0x37: EGR/wastegate
         if (blk == 0x37) {
             uint16_t mafEgr = (uint16_t)(350.0f);       // MAF for EGR Setpoint
             uint16_t wastegate = (uint16_t)(25.0f * 10); // Wastegate Solenoid %
-            uint8_t r[38] = {0x61,0x37,
+            uint8_t r[] = {0x61,0x37,
                 (uint8_t)(mafEgr>>8),(uint8_t)(mafEgr&0xFF),
                 (uint8_t)(wastegate>>8),(uint8_t)(wastegate&0xFF),
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
@@ -940,15 +935,15 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00};
-            return kwpWrap(r, 38);
+            return kwpWrap(r, 18);
         }
-        // Block 0x13: AC system / oil pressure (real vehicle: 28 bytes)
+        // Block 0x13: AC system / oil pressure
         if (blk == 0x13) {
             uint16_t oilP = (uint16_t)(3.5f * 100);     // Oil Pressure Sensor bar
             uint16_t oilPV = (uint16_t)(2.1f * 1000);   // Oil Pressure Voltage mV
             uint16_t acP = (uint16_t)(12.0f * 100);      // AC System Pressure
             uint16_t acPV = (uint16_t)(1.8f * 1000);     // AC System Pressure Voltage
-            uint8_t r[30] = {0x61,0x13,
+            uint8_t r[] = {0x61,0x13,
                 (uint8_t)(oilP>>8),(uint8_t)(oilP&0xFF),
                 (uint8_t)(oilPV>>8),(uint8_t)(oilPV&0xFF),
                 (uint8_t)(acP>>8),(uint8_t)(acP&0xFF),
@@ -957,9 +952,9 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 30);
+            return kwpWrap(r, 18);
         }
-        // Block 0x36: Pedal position sensors (real vehicle: 40 bytes)
+        // Block 0x36: Pedal position sensors
         if (blk == 0x36) {
             tick();
             float tps = (engineRpm > 850.0f) ? (engineRpm - 850.0f) * 0.05f : 0.0f;
@@ -969,7 +964,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             uint16_t ped2V = (uint16_t)((0.4f + tps * 0.02f) * 1000);
             uint16_t fuelPed = (uint16_t)((8.0f + tps * 0.3f) * 100);
             uint16_t fuelCru = 0;
-            uint8_t r[42] = {0x61,0x36,
+            uint8_t r[] = {0x61,0x36,
                 (uint8_t)(ped1>>8),(uint8_t)(ped1&0xFF),
                 (uint8_t)(ped2>>8),(uint8_t)(ped2&0xFF),
                 (uint8_t)(ped1V>>8),(uint8_t)(ped1V&0xFF),
@@ -981,16 +976,16 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 42);
+            return kwpWrap(r, 18);
         }
-        // Block 0x26: Fuel level / pressure regulator (real vehicle: 32 bytes)
+        // Block 0x26: Fuel level / pressure regulator
         if (blk == 0x26) {
             uint16_t fuelLvl = (uint16_t)(65.0f * 10);      // Fuel Level %
             uint16_t fuelLvlV = (uint16_t)(3.2f * 1000);    // Fuel Level Sensor Voltage
             uint16_t fuelRegOut = (uint16_t)(50.0f * 10);    // Fuel Pressure Regulator Output
             uint16_t fuelRailV = (uint16_t)(2.8f * 1000);    // Fuel Pressure Volts
             uint16_t fuelPSet = (uint16_t)(290.0f * 10);     // Fuel Pressure Setpoint
-            uint8_t r[34] = {0x61,0x26,
+            uint8_t r[] = {0x61,0x26,
                 (uint8_t)(fuelLvl>>8),(uint8_t)(fuelLvl&0xFF),
                 (uint8_t)(fuelLvlV>>8),(uint8_t)(fuelLvlV&0xFF),
                 (uint8_t)(fuelRegOut>>8),(uint8_t)(fuelRegOut&0xFF),
@@ -1000,14 +995,14 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00};
-            return kwpWrap(r, 34);
+            return kwpWrap(r, 18);
         }
-        // Block 0x34: Transfer case, cam sync, injector bank (real vehicle: 36 bytes)
+        // Block 0x34: Transfer case, cam sync, injector bank
         if (blk == 0x34) {
             uint16_t tcaseV = (uint16_t)(2.5f * 1000);      // Transfer Case Position Voltage
             uint8_t camSync = 1;                              // Cam/Crank Sync (1=OK)
             uint16_t injCap = (uint16_t)(85.0f * 10);        // Injector Bank 1 Capacitor V
-            uint8_t r[38] = {0x61,0x34,
+            uint8_t r[] = {0x61,0x34,
                 (uint8_t)(tcaseV>>8),(uint8_t)(tcaseV&0xFF),
                 camSync, 0x00,
                 (uint8_t)(injCap>>8),(uint8_t)(injCap&0xFF),
@@ -1016,7 +1011,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 38);
+            return kwpWrap(r, 18);
         }
         // Generic ECU block
         uint8_t r[18] = {0x61, blk};
