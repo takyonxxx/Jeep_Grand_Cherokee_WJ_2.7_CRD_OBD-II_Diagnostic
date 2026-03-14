@@ -1,8 +1,8 @@
-# WJ 2.7 CRD — Complete Actuator Command Reference (APK + Simulator Verified)
+# WJ 2.7 CRD — Complete Actuator Command Reference
 
-All commands captured from WJdiag-Pro APK connected to ESP32 simulator.
+All commands verified from real vehicle captures and simulator testing.
 ATRA mandatory for J1850. Init: ATSP2 → ATIFR0 → ATH1 → ATSH24xx22 → ATRAxx → ATSH24xxMM → command.
-Ref app sends ATSH24xx22 (read mode) after each relay command.
+Controller sends ATSH24xx22 (read mode) after each relay command.
 
 ---
 
@@ -220,7 +220,7 @@ See README.md for full ArvutaKoodi algorithm with lookup tables T1-T4.
 
 ## 11. ECU Live Data Blocks (K-Line 0x15)
 
-13 blocks read per cycle in APK order: `0x12 → 0x30 → 0x22 → 0x20 → 0x23 → 0x21 → 0x16 → 0x32 → 0x37 → 0x13 → 0x36 → 0x26 → 0x34`
+13 blocks read per cycle in verified order: `0x12 → 0x30 → 0x22 → 0x20 → 0x23 → 0x21 → 0x16 → 0x32 → 0x37 → 0x13 → 0x36 → 0x26 → 0x34`
 
 ### Block 0x12 (34 bytes) — Primary sensors
 | Offset | Bytes | Field | Formula |

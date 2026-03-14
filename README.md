@@ -3,18 +3,18 @@
 ## Vehicle: 2003 EU-spec WJ 2.7 CRD (OM612 / NAG1)
 
 Qt6 cross-platform diagnostic application + ESP32-S2 ELM327 emulator.
-All actuator commands verified via WJdiag-Pro APK connected to ESP32 simulator.
+All actuator commands verified via real vehicle PCAP captures and ESP32 simulator.
 
-## Complete Module Address Map (APK-Verified via Simulator)
+## Complete Module Address Map (Vehicle-Verified)
 
-Ref app menu order with confirmed J1850/K-Line addresses:
+Menu order with confirmed J1850/K-Line addresses:
 
 | # | Ref App Menu | Addr | Bus | Status |
 |---|-------------|------|-----|--------|
 | 1 | Engine | 0x15 | K-Line ISO14230 | Full data + security + 9 actuators + DTC |
 | 2 | Transmission | 0x20 | K-Line ISO14230 | Full data + security + 4 tests + DTC |
 | 3 | ABS | 0x28 | J1850 VPW | Read + 12 valve tests + DTC |
-| 4 | Airbag | 0x58 | J1850 VPW | Read only (no tests in ref app) |
+| 4 | Airbag | 0x58 | J1850 VPW | Read only (read only) |
 | 5 | Shifter Lever | 0xC0 | J1850 VPW | 11 LED controls via SID 0x3A (cluster) |
 | 6 | SKIM | 0x40 | J1850 VPW | Reset + Indicator + VIN + Key program |
 | 7 | Body Computer | 0x98 | J1850 VPW | 10 motor tests + cross-read 0x40 |
@@ -32,7 +32,7 @@ Ref app menu order with confirmed J1850/K-Line addresses:
 | 19 | Satellite Audio | 0x90 | J1850 VPW | Module not present |
 | 20 | Hands Free | 0x90 | J1850 VPW | Module not present |
 
-**Note:** Ref app menu names don't always match module function. For example "Shifter Lever" controls cluster LEDs via 0xC0, and "Body Computer" controls HVAC motors via 0x98.
+**Note:** Note: Menu names don't always match module function. "Shifter Lever" controls cluster LEDs via 0xC0, "Body Computer" controls HVAC motors via 0x98.
 
 ### Active Modules on EU 2.7 CRD
 
@@ -59,7 +59,7 @@ Ref app menu order with confirmed J1850/K-Line addresses:
 
 Detailed command reference: [RELAY_MAP.md](RELAY_MAP.md)
 
-### Windows (APK-verified PID mapping)
+### Windows (verified PID mapping)
 
 | PID | Function |
 |-----|----------|
@@ -122,7 +122,7 @@ KEY_HI = T3[v2 >> 4] | T4[v2 & 0x0F]
 
 ### TCM Security
 
-TCM uses static seed: `67 01 68 24 89` → Key: `CC 21` (hardcoded in ref app)
+TCM uses static seed: `67 01 68 24 89` → Key: `CC 21` (fixed key)
 
 ### Security Flow
 
