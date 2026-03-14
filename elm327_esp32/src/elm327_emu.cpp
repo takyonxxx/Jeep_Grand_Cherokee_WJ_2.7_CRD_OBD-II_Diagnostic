@@ -118,14 +118,14 @@ String ELM327Emu::j1850_generic(uint8_t t, uint8_t m, uint8_t sid, const uint8_t
             return "26 " + hex8(t) + " 58 00";
         }
         // Per-module DTC data
-        if (t == 0x40) return "26 40 58 01 08 20 20 DD";    // Body: 1 DTC
-        if (t == 0x28) return "26 28 58 01 22 10 20 DD";    // ABS: 1 DTC
+        if (t == 0x40) return "26 40 7F 18 11 00 B7";    // Body: NRC serviceNotSupported (real vehicle)
+        if (t == 0x28) return "26 28 7F 18 22 00 8B";    // ABS: NRC conditionsNotCorrect (real vehicle)
         if (t == 0xA7) return "26 A7 58 01 05 11 20 DD";    // Rain Sensor: 1 DTC
-        if (t == 0x58) return "26 58 58 01 50 10 20 DD";    // ESP: 1 DTC
+        if (t == 0x58) return "26 58 7F 18 11 00 2E";    // ESP: NRC serviceNotSupported (real vehicle)
         if (t == 0x60) return "26 60 58 02 60 10 20 60 15 20 DD"; // Airbag: 2 DTCs
         if (t == 0x61) return "26 61 58 01 61 30 20 DD";    // Cluster: 1 DTC
-        if (t == 0x68) return "26 68 58 01 68 20 20 DD";    // HVAC: 1 DTC
-        if (t == 0x98) return "26 98 58 01 98 10 20 DD";    // Mem Seat: 1 DTC
+        // 0x68 Overhead: DTC clear handled in pcap_lookup (NO DATA)
+        // 0x98 HVAC DTC clear OK (generic handler covers it)
         if (t == 0xA0) return "26 A0 58 01 A0 11 20 DD";    // Driver Door: 1 DTC
         if (t == 0xA1) return "26 A1 58 01 A1 11 20 DD";    // Passenger Door: 1 DTC
         if (t == 0xC0) return "26 C0 58 01 C0 10 20 DD";    // Park Assist: 1 DTC
@@ -163,6 +163,14 @@ String ELM327Emu::j1850_generic(uint8_t t, uint8_t m, uint8_t sid, const uint8_t
 String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) {
     // Lookup exact match from real vehicle captures
     if (t == 0x28) {
+        // Mode 0x30 valve test (real vehicle)
+        if (m == 0x30) {
+            return "26 28 70 " + hex8(sid) + " " + hex8(pid) + " " + hex8(val) + " DD";
+        }
+        // Mode 0xA3 (real vehicle)
+        if (m == 0xA3) return "26 28 E3 02 EE 00 0A DD";
+        // Mode 0xA0 (real vehicle)
+        if (m == 0xA0) return "26 28 E0 " + hex8(sid) + " " + hex8(pid) + " " + hex8(val) + " DD";
         if (m == 0x22) {
             if (cmdStr == "20 00 00") return "26 28 62 56 04 00 48";  // real vehicle
             if (cmdStr == "20 01 00") return "26 28 62 18 21 00 35";
@@ -196,11 +204,41 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
         }
     }
     if (t == 0x40) {
+        // Mode 0xB4 config (real vehicle)
+        if (m == 0xB4) {
+            if (cmdStr == "28 3F 00") return "26 40 F4 28 3F 00 16";
+            return "26 40 F4 " + hex8(sid) + " 00 00 DD";
+        }
         if (m == 0x22) {
             if (cmdStr == "20 00 00") return "26 40 62 05 08 00 E2";
             if (cmdStr == "20 01 00") return "26 40 62 38 92 00 F0";
             if (cmdStr == "20 02 00") return "26 40 62 41 43 00 E0";
             if (cmdStr == "20 06 00") return "26 40 62 02 00 00 32";
+            // Live data PIDs (real vehicle)
+            if (cmdStr == "2E 00 00") return "26 40 62 08 00 00 3D";
+            if (cmdStr == "2E 12 00") return "26 40 62 00 00 00 31";
+            if (cmdStr == "2E 02 00") return "26 40 62 00 00 00 31";
+            if (cmdStr == "2E 01 00") return "26 40 62 00 00 00 31";
+            if (cmdStr == "2E 03 00") return "26 40 62 00 80 00 F8";
+            if (cmdStr == "2E 05 00") return "26 40 62 00 00 00 31";
+            if (cmdStr == "28 04 00") return "26 40 62 00 00 00 31";
+            if (cmdStr == "2E 0D 00") return "26 40 62 00 00 00 31";
+            // Config/adaptation PIDs
+            if (cmdStr == "32 02 00") return "26 40 62 E1 00 00 2E";
+            if (cmdStr == "32 04 00") return "26 40 62 B1 00 00 56";
+            if (cmdStr == "32 05 00") return "26 40 62 E3 00 00 2D";
+            if (cmdStr == "32 14 00") return "26 40 62 DF 00 00 0F";
+            if (cmdStr == "32 15 00") return "26 40 62 1A 00 00 26";
+            if (cmdStr == "32 16 00") return "26 40 62 1B 00 00 A9";
+            if (cmdStr == "32 17 00") return "26 40 62 C3 00 00 1D";
+            if (cmdStr == "32 18 00") return "26 40 62 C3 00 00 1D";
+            if (cmdStr == "32 21 00") return "26 40 62 51 00 00 C6";
+            if (cmdStr == "32 26 00") return "26 40 62 68 00 00 6D";
+            if (cmdStr == "32 27 00") return "26 40 62 FF 00 00 3F";
+            if (cmdStr == "32 28 00") return "26 40 62 E5 00 00 28";
+            if (cmdStr == "36 00 00") return "26 40 62 7F 00 00 FF";
+            if (cmdStr == "36 03 00") return "26 40 62 00 00 00 31";
+            if (cmdStr == "36 0E 00") return "26 40 62 00 00 00 31";
             if (cmdStr == "24 00 00") return "26 40 62 43 00 00 DD";
             if (cmdStr == "28 00 00") return "26 40 62 0D 00 00 B4";
             if (cmdStr == "28 02 00") return "26 40 62 20 03 00 D5";
@@ -317,8 +355,10 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "2F 3C 00") return "26 58 62 00 00 00 A8";
         }
     }
-    // 0x60: ALL NRC on real vehicle (PCAP confirmed, pcap_lookup)
+    // 0x60: ALL NRC on real vehicle (PCAP confirmed)
     if (t == 0x60) return "26 60 7F 22 22 00 44";
+    // These modules return NO DATA on real vehicle
+    if (t == 0x81 || t == 0x62 || t == 0x6D || t == 0x87 || t == 0x90) return "NO DATA";
     if (t == 0x61) {
         if (m == 0x22) {
             if (cmdStr == "20 00 00") return "26 61 62 52 10 00 55";
@@ -331,7 +371,7 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "3A 00 80") return "26 61 62 3A 00 80 9B";
             if (cmdStr == "3A 00 40") return "26 61 62 3A 00 40 AE";
             if (cmdStr == "3A 00 20") return "26 61 62 3A 00 20 3A";
-            if (cmdStr == "3A 00 10") return "26 61 62 3A 00 10 DD";
+            if (cmdStr == "3A 00 10") return "26 61 62 3A 00 10 70";
             if (cmdStr == "3A 00 08") return "26 61 62 3A 00 08 55";
             if (cmdStr == "3A 00 04") return "26 61 62 3A 00 04 C9";
             if (cmdStr == "3A 00 02") return "26 61 62 3A 00 02 87";
@@ -344,6 +384,14 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
         }
     }
     if (t == 0x68) {
+        // Mode 0x31 SelfTest - real vehicle
+        if (m == 0x31 && cmdStr == "01 00 00") return "26 68 71 01 00 E1 38";
+        // Mode 0x33 SelfTest - real vehicle
+        if (m == 0x33 && cmdStr == "01 00 00") return "26 68 73 01 00 E4 76";
+        // Mode 0x14 DTC clear - real vehicle returns NO DATA
+        if (m == 0x14) return "NO DATA";
+        // Mode 0x11 Reset - real vehicle returns NO DATA
+        if (m == 0x11) return "NO DATA";
         if (m == 0x22) {
             if (cmdStr == "20 00 00") return "26 68 62 56 00 00 FA";
             if (cmdStr == "20 01 00") return "26 68 62 04 00 00 81";
@@ -351,6 +399,12 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "20 03 00") return "26 68 62 54 00 00 F9";
             if (cmdStr == "20 04 00") return "26 68 62 01 00 00 08";
             if (cmdStr == "20 05 00") return "26 68 62 08 00 00 8B";
+            if (cmdStr == "20 06 00") return "26 68 62 01 00 00 08";
+            if (cmdStr == "28 10 00") return "26 68 62 0A 00 00 88";
+            if (cmdStr == "2E 02 00") return "26 68 62 00 00 00 87";
+            if (cmdStr == "2E 05 00") return "26 68 62 00 00 00 87";
+            if (cmdStr == "2E 08 00") return "26 68 62 00 00 00 87";
+            if (cmdStr == "28 00 00") return "26 68 62 47 00 00 6D";
             if (cmdStr == "20 06 00") return "26 68 62 01 00 00 08";
             if (cmdStr == "24 00 00") return "26 68 62 35 00 00 26";
             if (cmdStr == "28 00 00") return "26 68 62 47 00 00 6D";
@@ -366,8 +420,22 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
         }
     }
     if (t == 0x98) {
+        // Mode 0x30 (SelfTest/MTR) - real vehicle responses
+        if (m == 0x30) {
+            if (cmdStr == "01 FF FF") return "26 98 70 01 0A E0 E9";
+            if (cmdStr == "02 FF FF") return "26 98 70 02 0A E0 65";
+            if (cmdStr == "03 FF FF") return "26 98 70 03 0A E0 EA";
+        }
         if (m == 0x22) {
             if (cmdStr == "24 00 00") return "26 98 62 11 04 00 AE";
+            if (cmdStr == "2E 03 00") return "26 98 62 00 00 00 14";
+            if (cmdStr == "2E 04 00") return "26 98 62 00 00 00 14";
+            if (cmdStr == "2E 05 00") return "26 98 62 00 00 00 14";
+            if (cmdStr == "2E 06 00") return "26 98 62 00 00 00 14";
+            // 20 01/02 = NRC on real vehicle
+            if (cmdStr == "20 01 00") return "26 98 7F 22 12 00 61";
+            if (cmdStr == "20 02 00") return "26 98 7F 22 12 00 61";
+            if (cmdStr == "20 00 00") return "26 98 62 02 00 00 17";
         }
     }
     if (t == 0xA0) {
@@ -377,6 +445,11 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "20 02 00") return "26 A0 62 41 43 00 9D";
             if (cmdStr == "24 00 00") return "26 A0 62 34 00 00 62";
             if (cmdStr == "28 00 00") return "26 A0 62 00 00 00 4C";
+            if (cmdStr == "32 00 00") return "26 A0 62 00 00 00 4C";
+            if (cmdStr == "32 01 00") return "26 A0 62 00 00 00 4C";
+            if (cmdStr == "32 02 00") return "26 A0 62 90 00 00 94";
+            if (cmdStr == "32 03 00") return "26 A0 62 FF 00 00 42";
+            if (cmdStr == "32 04 00") return "26 A0 62 FF 00 00 42";
             if (cmdStr == "32 00 00") return "26 A0 62 00 00 00 4C";
             if (cmdStr == "32 01 00") return "26 A0 62 00 00 00 4C";
             if (cmdStr == "32 02 00") return "26 A0 62 94 00 00 92";
@@ -459,6 +532,10 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "32 01 00") return "26 A1 62 00 00 00 26";
             if (cmdStr == "32 02 00") return "26 A1 62 FF 00 00 28";
             if (cmdStr == "32 03 00") return "26 A1 62 FF 00 00 28";
+            if (cmdStr == "32 00 00") return "26 A1 62 00 00 00 26";
+            if (cmdStr == "32 01 00") return "26 A1 62 00 00 00 26";
+            if (cmdStr == "32 02 00") return "26 A1 62 FF 00 00 28";
+            if (cmdStr == "32 03 00") return "26 A1 62 FF 00 00 28";
         }
         if (m == 0x2F) {
             if (cmdStr == "38 01 12") return "26 A1 6F 38 01 12 F6";
@@ -492,6 +569,7 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "20 01 00") return "26 C0 62 66 65 00 B9";
             if (cmdStr == "20 02 00") return "26 C0 62 41 43 00 C3";
             if (cmdStr == "24 00 00") return "26 C0 62 D1 00 00 25";
+            if (cmdStr == "2E 00 00") return "26 C0 62 00 00 00 12";
         }
     }
     return ""; // not found in PCAP database
@@ -982,14 +1060,17 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         uint8_t r[] = {0x54, 0x00, 0x00};
         return kwpWrap(r, 3);
     }
-    // SID 0x30 IOControl (ECU actuators) — positive response = echo SID+PID
+    // SID 0x30 IOControl (ECU/TCM actuators)
     if (sid == 0x30) {
-        if (dlen >= 2) {
-            uint8_t r[] = {0x70, data[0], data[1]};
+        if (klTarget == 0x20) {
+            // TCM: 7F 30 22 (conditionsNotCorrect) - real vehicle confirmed
+            uint8_t r[] = {0x7F, 0x30, 0x22};
             return kwpWrap(r, 3);
         }
-        uint8_t r[] = {0x70, 0x00};
-        return kwpWrap(r, 2);
+        // ECU: full parameter echo (real vehicle: 70 PID 07 PARAM1 PARAM2)
+        uint8_t r[6]; r[0] = 0x70;
+        for (int i = 0; i < dlen && i < 5; i++) r[i+1] = data[i];
+        return kwpWrap(r, 1 + (dlen < 5 ? dlen : 5));
     }
     // SID 0x31 RoutineControl (TCM reset/store adaptives)
     if (sid == 0x31) {

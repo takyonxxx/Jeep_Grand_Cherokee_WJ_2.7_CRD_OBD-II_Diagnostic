@@ -922,6 +922,41 @@ QWidget* MainWindow::createLiveDataTab()
 
 
 // ================================================================
+// Actuator tab: Module already connected via switchToModule.
+// Just set mode header and send command — no full reinit needed.
+void MainWindow::sendActuatorCmd(const QString &label, const QString &cmd, bool on, const QString &hdr)
+{
+    if (!m_elm || !m_elm->isConnected()) return;
+
+    // K-Line: command goes directly (module already initialized with security)
+    if (hdr.isEmpty()) {
+        m_elm->sendCommand(cmd, [this, label, on](const QString &resp) {
+            bool ok = !resp.contains("NO DATA") && !resp.contains("ERROR") && !resp.contains("7F");
+            onLogMessage(label + (on ? " ON: " : " OFF: ") + (ok ? "OK" : "FAIL") + " -> " + resp.trimmed());
+        }, 3000);
+        return;
+    }
+
+    // J1850: if header already active, send directly
+    if (m_actHdrActive == hdr) {
+        m_elm->sendCommand(cmd, [this, label, on](const QString &resp) {
+            bool ok = !resp.contains("NO DATA") && !resp.contains("ERROR") && !resp.contains("7F");
+            onLogMessage(label + (on ? " ON: " : " OFF: ") + (ok ? "OK" : "FAIL") + " -> " + resp.trimmed());
+        }, 2000);
+        return;
+    }
+
+    // First time or different header: set header then send
+    // Module already has ATRA set from switchToModule, just need ATSH for mode
+    m_actHdrActive = hdr;
+    m_elm->sendCommand(hdr, [this, cmd, label, on](const QString &) {
+        m_elm->sendCommand(cmd, [this, label, on](const QString &resp) {
+            bool ok = !resp.contains("NO DATA") && !resp.contains("ERROR") && !resp.contains("7F");
+            onLogMessage(label + (on ? " ON: " : " OFF: ") + (ok ? "OK" : "FAIL") + " -> " + resp.trimmed());
+        }, 2000);
+    });
+}
+
 // Controls Tab — Actuator relay controls via J1850 VPW
 // ================================================================
 // PCAP-verified relay sequence (from real vehicle 2026-03-12):
@@ -1208,7 +1243,7 @@ QWidget* MainWindow::createControlsTab()
     hazLay->setSpacing(8); hazLay->setContentsMargins(8,8,8,8);
     hazLay->addWidget(makeBCMBtn("HAZARD", "38 06 20", "38 06 00", "Hazard", hdrBCM));
     hazLay->addWidget(makeHoldBtn("HORN", "38 0D 01", "38 0D 00", "Horn", hdrBCM));
-    hazLay->addWidget(makeBCMBtn("WIPER", "38 08 02", "38 08 00", "Wiper", hdrBCM));
+    hazLay->addWidget(makeHoldBtn("WIPER", "38 08 02", "38 08 00", "Wiper", hdrBCM));
     innerLay->addWidget(hazGrp);
 
     innerLay->addStretch();
@@ -1657,6 +1692,10 @@ void MainWindow::updateActiveHeaderLabel()
 void MainWindow::rebuildActuatorPanel()
 {
     if (!m_actuatorLayout) return;
+    // Reset controls header cache so actuators reinit properly
+    m_ctrlActiveHdr.clear();
+    m_ctrlInitBusy = false;
+    m_actHdrActive.clear();
     // Clear old widgets
     QLayoutItem *item;
     while ((item = m_actuatorLayout->takeAt(0))) {
@@ -1822,15 +1861,15 @@ void MainWindow::rebuildActuatorPanel()
         if (a.offCmd.isEmpty()) {
             // Pulse: click = send ON only
             connect(btn, &QPushButton::clicked, this, [this, a]() {
-                sendWindowCmd(a.name, a.onCmd, true, a.hdr);
+                sendActuatorCmd(a.name, a.onCmd, true, a.hdr);
             });
         } else {
             // Hold: press = ON, release = OFF
             connect(btn, &QPushButton::pressed, this, [this, a]() {
-                sendWindowCmd(a.name, a.onCmd, true, a.hdr);
+                sendActuatorCmd(a.name, a.onCmd, true, a.hdr);
             });
             connect(btn, &QPushButton::released, this, [this, a]() {
-                sendWindowCmd(a.name, a.offCmd, false, a.hdr);
+                sendActuatorCmd(a.name, a.offCmd, false, a.hdr);
             });
         }
         m_actuatorLayout->addWidget(btn);

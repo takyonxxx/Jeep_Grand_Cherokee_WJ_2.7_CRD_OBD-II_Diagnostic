@@ -90,6 +90,8 @@ private:
     QLabel *m_actuatorTitleLabel = nullptr;
     QVBoxLayout *m_actuatorLayout = nullptr;
     void rebuildActuatorPanel();
+    void sendActuatorCmd(const QString &label, const QString &cmd, bool on, const QString &hdr);
+    QString m_actHdrActive;
     QWidget* createActuatorTab();
     QTableWidget *m_liveTable; QPushButton *m_startLiveBtn,*m_stopLiveBtn,*m_logBtn;
     QLabel *m_dashGearVal,*m_dashGearUnit;
