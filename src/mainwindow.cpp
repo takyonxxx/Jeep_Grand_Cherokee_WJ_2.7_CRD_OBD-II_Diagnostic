@@ -1036,11 +1036,12 @@ QWidget* MainWindow::createControlsTab()
     auto makeHoldBtn = [this](const QString &text, const QString &onCmd, const QString &offCmd,
                               const QString &label, const QString &hdr) -> QPushButton* {
         QPushButton *btn = new QPushButton(text);
-        btn->setMinimumHeight(50);
+        btn->setMinimumHeight(64);
+        btn->setMinimumWidth(100);
         btn->setStyleSheet(
             "QPushButton{background:#1a3050;color:#e0e0e0;border:1px solid #2a5070;"
-            "border-radius:8px;font-size:12px;font-weight:bold;padding:4px;}"
-            "QPushButton:pressed{background:#00806a;border-color:#00d4b4;}");
+            "border-radius:10px;font-size:16px;font-weight:bold;padding:12px 16px;}"
+            "QPushButton:pressed{background:#00806a;border-color:#00d4b4;color:white;}");
         connect(btn, &QPushButton::pressed, this, [this, label, onCmd, hdr]() {
             sendWindowCmd(label, onCmd, true, hdr);
         });
@@ -1056,11 +1057,12 @@ QWidget* MainWindow::createControlsTab()
                                const QString &bgColor = "#1a3050",
                                const QString &fgColor = "#e0e0e0") -> QPushButton* {
         QPushButton *btn = new QPushButton(text);
-        btn->setMinimumHeight(50);
+        btn->setMinimumHeight(64);
+        btn->setMinimumWidth(100);
         btn->setStyleSheet(QString(
             "QPushButton{background:%1;color:%2;border:1px solid #2a5070;"
-            "border-radius:8px;font-size:12px;font-weight:bold;padding:4px;}"
-            "QPushButton:pressed{background:#00806a;border-color:#00d4b4;}").arg(bgColor, fgColor));
+            "border-radius:10px;font-size:16px;font-weight:bold;padding:12px 16px;}"
+            "QPushButton:pressed{background:#00806a;border-color:#00d4b4;color:white;}").arg(bgColor, fgColor));
         connect(btn, &QPushButton::clicked, this, [this, label, onCmd, offCmd, hdr]() {
             sendWindowCmd(label, onCmd, true, hdr);
             if (!offCmd.isEmpty()) {
@@ -1077,10 +1079,11 @@ QWidget* MainWindow::createControlsTab()
                              const QString &label, const QString &hdr) -> QPushButton* {
         QPushButton *btn = new QPushButton(text);
         btn->setCheckable(true);
-        btn->setMinimumHeight(50);
+        btn->setMinimumHeight(64);
+        btn->setMinimumWidth(100);
         btn->setStyleSheet(
             "QPushButton{background:#1a2840;color:#d0d0d0;border:1px solid #304060;"
-            "border-radius:8px;font-size:12px;font-weight:bold;padding:4px;}"
+            "border-radius:10px;font-size:16px;font-weight:bold;padding:12px 16px;}"
             "QPushButton:checked{background:#2a5030;color:#00ff88;border-color:#00aa66;}"
             "QPushButton:pressed{background:#00806a;border-color:#00d4b4;}");
         connect(btn, &QPushButton::toggled, this, [this, label, onCmd, offCmd, hdr](bool checked) {
@@ -1099,19 +1102,19 @@ QWidget* MainWindow::createControlsTab()
     QString hdrL    = "ATSH24A02F";   // Driver Door 0xA0 mode 0x2F
     QString hdrR    = "ATSH24A12F";   // Passenger Door 0xA1 mode 0x2F
 
-    QString grpStyle = "QGroupBox{color:#5888a8;font-size:10px;border:1px solid #2a5070;"
+    QString grpStyle = "QGroupBox{color:#5888a8;font-size:14px;font-weight:bold;border:1px solid #2a5070;"
                        "border-radius:5px;margin-top:3px;padding-top:12px;}";
 
     // ====== FRONT WINDOWS ======
     QGroupBox *frontGrp = new QGroupBox("Front Windows");
     frontGrp->setStyleSheet(grpStyle);
     QGridLayout *frontLay = new QGridLayout(frontGrp);
-    frontLay->setSpacing(4); frontLay->setContentsMargins(4,4,4,4);
+    frontLay->setSpacing(8); frontLay->setContentsMargins(8,8,8,8);
 
     QLabel *flLbl = new QLabel("Left (0xA0)");
     QLabel *frLbl = new QLabel("Right (0xA1)");
-    flLbl->setStyleSheet("color:#5888a8;font-size:10px;"); flLbl->setAlignment(Qt::AlignCenter);
-    frLbl->setStyleSheet("color:#5888a8;font-size:10px;"); frLbl->setAlignment(Qt::AlignCenter);
+    flLbl->setStyleSheet("color:#5888a8;font-size:14px;"); flLbl->setAlignment(Qt::AlignCenter);
+    frLbl->setStyleSheet("color:#5888a8;font-size:14px;"); frLbl->setAlignment(Qt::AlignCenter);
     frontLay->addWidget(flLbl, 0, 0);
     frontLay->addWidget(frLbl, 0, 1);
     // Left front: 0xA0 sequential
@@ -1126,12 +1129,12 @@ QWidget* MainWindow::createControlsTab()
     QGroupBox *rearGrp = new QGroupBox("Rear Windows");
     rearGrp->setStyleSheet(grpStyle);
     QGridLayout *rearLay = new QGridLayout(rearGrp);
-    rearLay->setSpacing(4); rearLay->setContentsMargins(4,4,4,4);
+    rearLay->setSpacing(8); rearLay->setContentsMargins(8,8,8,8);
 
     QLabel *rlLbl = new QLabel("Left (0xA0)");
     QLabel *rrLbl = new QLabel("Right (0xA1)");
-    rlLbl->setStyleSheet("color:#5888a8;font-size:10px;"); rlLbl->setAlignment(Qt::AlignCenter);
-    rrLbl->setStyleSheet("color:#5888a8;font-size:10px;"); rrLbl->setAlignment(Qt::AlignCenter);
+    rlLbl->setStyleSheet("color:#5888a8;font-size:14px;"); rlLbl->setAlignment(Qt::AlignCenter);
+    rrLbl->setStyleSheet("color:#5888a8;font-size:14px;"); rrLbl->setAlignment(Qt::AlignCenter);
     rearLay->addWidget(rlLbl, 0, 0);
     rearLay->addWidget(rrLbl, 0, 1);
     // Left rear: 0xA0 sequential
@@ -1142,32 +1145,16 @@ QWidget* MainWindow::createControlsTab()
     rearLay->addWidget(makeHoldBtn("R DOWN", "38 04 12", "38 04 00", "R-Rear Down", hdrR), 2, 1);
     innerLay->addWidget(rearGrp);
 
-    // ====== HAZARD & HORN (BCM 0x80 mode 0x2F) ======
+    // ====== HAZARD / HORN / WIPER (Body 0x40 mode 0x2F) ======
     QString hdrBCM = "ATSH24402F";   // Body Computer 0x40 mode 0x2F
-    QGroupBox *hazGrp = new QGroupBox("Hazard / Horn (Body 0x40)");
+    QGroupBox *hazGrp = new QGroupBox("Body Computer (0x40)");
     hazGrp->setStyleSheet(grpStyle);
     QHBoxLayout *hazLay = new QHBoxLayout(hazGrp);
-    hazLay->setSpacing(4); hazLay->setContentsMargins(4,4,4,4);
+    hazLay->setSpacing(8); hazLay->setContentsMargins(8,8,8,8);
     hazLay->addWidget(makeBCMBtn("HAZARD", "38 06 20", "38 06 00", "Hazard", hdrBCM));
     hazLay->addWidget(makeHoldBtn("HORN", "38 0D 01", "38 0D 00", "Horn", hdrBCM));
+    hazLay->addWidget(makeBCMBtn("WIPER", "38 08 02", "38 08 00", "Wiper", hdrBCM));
     innerLay->addWidget(hazGrp);
-
-    // ====== INSTRUMENT CLUSTER 0x61 — Gauge Test ======
-    QString hdrClust = "ATSH246122";  // Cluster 0x61 mode 0x22 (SID 0x3A)
-    QGroupBox *clustGrp = new QGroupBox("Cluster Gauge Test (0x61)");
-    clustGrp->setStyleSheet(grpStyle);
-    QGridLayout *clustLay = new QGridLayout(clustGrp);
-    clustLay->setSpacing(4); clustLay->setContentsMargins(4,4,4,4);
-    // SID 0x3A gauge commands — verified from modules_activation.pcap
-    clustLay->addWidget(makeBCMBtn("Speedo",   "3A 00 80", "3A 00 00", "Speedo",  hdrClust), 0, 0);
-    clustLay->addWidget(makeBCMBtn("Tacho",    "3A 00 40", "3A 00 00", "Tacho",   hdrClust), 0, 1);
-    clustLay->addWidget(makeBCMBtn("Oil Lamp", "3A 01 01", "3A 01 00", "OilLamp", hdrClust), 0, 2);
-    clustLay->addWidget(makeBCMBtn("CE Lamp",  "3A 01 04", "3A 01 00", "CELamp",  hdrClust), 1, 0);
-    clustLay->addWidget(makeBCMBtn("Fuel",     "3A 00 08", "3A 00 00", "FuelGauge", hdrClust), 1, 1);
-    clustLay->addWidget(makeBCMBtn("Temp",     "3A 00 04", "3A 00 00", "TempGauge", hdrClust), 1, 2);
-    innerLay->addWidget(clustGrp);
-
-
 
     innerLay->addStretch();
     scroll->setWidget(inner);
