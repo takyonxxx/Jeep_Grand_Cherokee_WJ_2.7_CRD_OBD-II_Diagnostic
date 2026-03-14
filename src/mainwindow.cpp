@@ -1927,120 +1927,246 @@ void MainWindow::runDiscoveryPhases(
     auto steps = std::make_shared<QList<Step>>();
 
     // =================================================================
-    // RAW TEST — Real vehicle verification
-    // All J1850 commands MUST have ATRA set (NO DATA without it)
+    // RAW TEST — Full vehicle verification
+    // Tests: Module read, DTC, Actuators, Live data blocks
     // =================================================================
+
+    // ===== PHASE 1: K-Line ECU 0x15 =====
+    steps->append(Step{"", "header:===== PHASE 1: ECU 0x15 (K-Line) ====="});
+    steps->append(Step{"", "switch:ecu_arvuta"});
+    // After unlock, read identification + DTC
+    steps->append(Step{"ECU 1A 86",        "kwpcmd:1A 86"});
+    steps->append(Step{"ECU 1A 91",        "kwpcmd:1A 91"});
+    steps->append(Step{"ECU DTC Read",     "kwpcmd:18 02 00 00"});
+    // Live data blocks (all 14)
+    steps->append(Step{"", "header:--- ECU Live Data Blocks ---"});
+    steps->append(Step{"ECU Blk 0x12",     "kwpcmd:21 12"});
+    steps->append(Step{"ECU Blk 0x30",     "kwpcmd:21 30"});
+    steps->append(Step{"ECU Blk 0x22",     "kwpcmd:21 22"});
+    steps->append(Step{"ECU Blk 0x20",     "kwpcmd:21 20"});
+    steps->append(Step{"ECU Blk 0x23",     "kwpcmd:21 23"});
+    steps->append(Step{"ECU Blk 0x21",     "kwpcmd:21 21"});
+    steps->append(Step{"ECU Blk 0x16",     "kwpcmd:21 16"});
+    steps->append(Step{"ECU Blk 0x32",     "kwpcmd:21 32"});
+    steps->append(Step{"ECU Blk 0x37",     "kwpcmd:21 37"});
+    steps->append(Step{"ECU Blk 0x13",     "kwpcmd:21 13"});
+    steps->append(Step{"ECU Blk 0x36",     "kwpcmd:21 36"});
+    steps->append(Step{"ECU Blk 0x26",     "kwpcmd:21 26"});
+    steps->append(Step{"ECU Blk 0x34",     "kwpcmd:21 34"});
+    steps->append(Step{"ECU Blk 0x28",     "kwpcmd:21 28"});
+    // Actuators
+    steps->append(Step{"", "header:--- ECU Actuators (SID 0x30) ---"});
+    steps->append(Step{"EGR ON",           "kwpcmd:30 11 07 13 88"});
+    steps->append(Step{"EGR OFF",          "kwpcmd:30 11 07 00 00"});
+    steps->append(Step{"Cabin Htr ON",     "kwpcmd:30 1C 07 27 10"});
+    steps->append(Step{"Cabin Htr OFF",    "kwpcmd:30 1C 07 00 00"});
+    steps->append(Step{"Glow1 ON",         "kwpcmd:30 16 07 27 10"});
+    steps->append(Step{"Glow1 OFF",        "kwpcmd:30 16 07 00 00"});
+    steps->append(Step{"Glow2 ON",         "kwpcmd:30 17 07 27 10"});
+    steps->append(Step{"Glow2 OFF",        "kwpcmd:30 17 07 00 00"});
+    steps->append(Step{"A/C ON",           "kwpcmd:30 14 07 27 10"});
+    steps->append(Step{"A/C OFF",          "kwpcmd:30 14 07 00 00"});
+    steps->append(Step{"SWIRL ON",         "kwpcmd:30 1A 07 13 88"});
+    steps->append(Step{"SWIRL OFF",        "kwpcmd:30 1A 07 00 00"});
+    steps->append(Step{"Boost ON",         "kwpcmd:30 12 07 00 10"});
+    steps->append(Step{"Boost OFF",        "kwpcmd:30 12 07 00 00"});
+    steps->append(Step{"Fan Low ON",       "kwpcmd:30 18 07 08 34"});
+    steps->append(Step{"Fan Low OFF",      "kwpcmd:30 18 07 00 00"});
+    steps->append(Step{"Fan Full ON",      "kwpcmd:30 18 07 21 34"});
+    steps->append(Step{"Fan Full OFF",     "kwpcmd:30 18 07 00 00"});
+
+    // ===== PHASE 2: K-Line TCM 0x20 =====
+    steps->append(Step{"", "header:===== PHASE 2: TCM 0x20 (K-Line) ====="});
+    steps->append(Step{"", "switch:tcm"});
+    steps->append(Step{"TCM 1A 90",        "kwpcmd:1A 90"});
+    steps->append(Step{"TCM 1A 86",        "kwpcmd:1A 86"});
+    steps->append(Step{"TCM DTC Read",     "kwpcmd:18 02 FF 00"});
+    steps->append(Step{"", "header:--- TCM Live Data Blocks ---"});
+    steps->append(Step{"TCM Blk 0x30",     "kwpcmd:21 30"});
+    steps->append(Step{"TCM Blk 0x31",     "kwpcmd:21 31"});
+    steps->append(Step{"TCM Blk 0x34",     "kwpcmd:21 34"});
+    steps->append(Step{"TCM Blk 0x33",     "kwpcmd:21 33"});
+    steps->append(Step{"TCM Blk 0x32",     "kwpcmd:21 32"});
+    steps->append(Step{"", "header:--- TCM Actuators ---"});
+    steps->append(Step{"TCM Reset Adapt",  "kwpcmd:31 31"});
+    steps->append(Step{"TCM Store Adapt",  "kwpcmd:31 32"});
+    steps->append(Step{"TCM Sol Test ON",  "kwpcmd:30 10 07 00 02"});
+    steps->append(Step{"TCM Sol Test OFF", "kwpcmd:30 10 07 00 00"});
+    steps->append(Step{"TCM ParkLock",     "kwpcmd:30 10 07 04 00"});
+
+    // ===== PHASE 3: J1850 Modules =====
     steps->append(Step{"", "switch:j1850"});
 
-    // --- 1. Driver Door 0xA0 windows ---
-    steps->append(Step{"", "header:=== Driver Door 0xA0 Windows ==="});
-    steps->append(Step{"", "j1850hdr:ATSH24A022"});
-    steps->append(Step{"", "j1850hdr:ATRAA0"});
-    steps->append(Step{"", "j1850hdr:ATSH24A02F"});
-    steps->append(Step{"L-FrontUp ON",      "j1850cmd:38 01 12"});
-    steps->append(Step{"L-FrontUp ON",      "j1850cmd:38 01 12"});
-    steps->append(Step{"L-FrontUp ON",      "j1850cmd:38 01 12"});
-    steps->append(Step{"L-FrontUp OFF",     "j1850cmd:38 01 00"});
-    steps->append(Step{"L-FrontDn ON",      "j1850cmd:38 02 12"});
-    steps->append(Step{"L-FrontDn ON",      "j1850cmd:38 02 12"});
-    steps->append(Step{"L-FrontDn ON",      "j1850cmd:38 02 12"});
-    steps->append(Step{"L-FrontDn OFF",     "j1850cmd:38 02 00"});
-    steps->append(Step{"L-RearUp ON",       "j1850cmd:38 03 12"});
-    steps->append(Step{"L-RearUp ON",       "j1850cmd:38 03 12"});
-    steps->append(Step{"L-RearUp OFF",      "j1850cmd:38 03 00"});
-    steps->append(Step{"L-RearDn ON",       "j1850cmd:38 04 12"});
-    steps->append(Step{"L-RearDn ON",       "j1850cmd:38 04 12"});
-    steps->append(Step{"L-RearDn OFF",      "j1850cmd:38 04 00"});
+    // --- ABS 0x28 ---
+    steps->append(Step{"", "header:===== PHASE 3a: ABS 0x28 ====="});
+    steps->append(Step{"", "j1850hdr:ATSH242822"});
+    steps->append(Step{"", "j1850hdr:ATRA28"});
+    steps->append(Step{"ABS 20 00",        "j1850cmd:20 00 00"});
+    steps->append(Step{"ABS 20 01",        "j1850cmd:20 01 00"});
+    steps->append(Step{"ABS 20 02",        "j1850cmd:20 02 00"});
+    steps->append(Step{"ABS 24 00",        "j1850cmd:24 00 00"});
+    steps->append(Step{"ABS 28 01",        "j1850cmd:28 01 00"});
+    steps->append(Step{"ABS 20 07",        "j1850cmd:20 07 00"});
+    steps->append(Step{"ABS 20 08",        "j1850cmd:20 08 00"});
+    steps->append(Step{"", "j1850hdr:ATSH242818"});
+    steps->append(Step{"", "j1850hdr:ATRA28"});
+    steps->append(Step{"ABS DTC Read",     "j1850cmd:FF 00 00"});
 
-    // --- 2. Passenger Door 0xA1 windows (same sequential pattern) ---
-    steps->append(Step{"", "header:=== Passenger Door 0xA1 Windows ==="});
-    steps->append(Step{"", "j1850hdr:ATSH24A122"});
-    steps->append(Step{"", "j1850hdr:ATRAA1"});
-    steps->append(Step{"", "j1850hdr:ATSH24A12F"});
-    steps->append(Step{"R-FrontUp ON",      "j1850cmd:38 01 12"});
-    steps->append(Step{"R-FrontUp ON",      "j1850cmd:38 01 12"});
-    steps->append(Step{"R-FrontUp ON",      "j1850cmd:38 01 12"});
-    steps->append(Step{"R-FrontUp OFF",     "j1850cmd:38 01 00"});
-    steps->append(Step{"R-FrontDn ON",      "j1850cmd:38 02 12"});
-    steps->append(Step{"R-FrontDn ON",      "j1850cmd:38 02 12"});
-    steps->append(Step{"R-FrontDn ON",      "j1850cmd:38 02 12"});
-    steps->append(Step{"R-FrontDn OFF",     "j1850cmd:38 02 00"});
-    steps->append(Step{"R-RearUp ON",       "j1850cmd:38 03 12"});
-    steps->append(Step{"R-RearUp ON",       "j1850cmd:38 03 12"});
-    steps->append(Step{"R-RearUp OFF",      "j1850cmd:38 03 00"});
-    steps->append(Step{"R-RearDn ON",       "j1850cmd:38 04 12"});
-    steps->append(Step{"R-RearDn ON",       "j1850cmd:38 04 12"});
-    steps->append(Step{"R-RearDn OFF",      "j1850cmd:38 04 00"});
+    // --- ESP 0x58 ---
+    steps->append(Step{"", "header:===== PHASE 3b: ESP 0x58 ====="});
+    steps->append(Step{"", "j1850hdr:ATSH245822"});
+    steps->append(Step{"", "j1850hdr:ATRA58"});
+    steps->append(Step{"ESP 20 00",        "j1850cmd:20 00 00"});
+    steps->append(Step{"ESP 20 01",        "j1850cmd:20 01 00"});
+    steps->append(Step{"ESP 20 02",        "j1850cmd:20 02 00"});
+    steps->append(Step{"ESP 24 00",        "j1850cmd:24 00 00"});
+    steps->append(Step{"ESP 28 00",        "j1850cmd:28 00 00"});
+    steps->append(Step{"ESP 20 07",        "j1850cmd:20 07 00"});
+    steps->append(Step{"", "j1850hdr:ATSH245818"});
+    steps->append(Step{"", "j1850hdr:ATRA58"});
+    steps->append(Step{"ESP DTC Read",     "j1850cmd:FF 00 00"});
 
-    // --- 3. Body Computer 0x40 mode 0x2F (APK-verified) ---
-    steps->append(Step{"", "header:=== Body Computer 0x40 Relay ==="});
+    // --- Cluster 0x61 ---
+    steps->append(Step{"", "header:===== PHASE 3c: Cluster 0x61 ====="});
+    steps->append(Step{"", "j1850hdr:ATSH246122"});
+    steps->append(Step{"", "j1850hdr:ATRA61"});
+    steps->append(Step{"Clust 20 00",      "j1850cmd:20 00 00"});
+    steps->append(Step{"Clust 20 01",      "j1850cmd:20 01 00"});
+    steps->append(Step{"Clust 20 02",      "j1850cmd:20 02 00"});
+    steps->append(Step{"Clust 24 00",      "j1850cmd:24 00 00"});
+    steps->append(Step{"Speedo ON",        "j1850cmd:3A 00 80"});
+    steps->append(Step{"Speedo OFF",       "j1850cmd:3A 00 00"});
+    steps->append(Step{"Tacho ON",         "j1850cmd:3A 00 40"});
+    steps->append(Step{"Tacho OFF",        "j1850cmd:3A 00 00"});
+
+    // --- SKIM 0xC0 ---
+    steps->append(Step{"", "header:===== PHASE 3d: SKIM 0xC0 ====="});
+    steps->append(Step{"", "j1850hdr:ATSH24C022"});
+    steps->append(Step{"", "j1850hdr:ATRAC0"});
+    steps->append(Step{"SKIM 20 00",       "j1850cmd:20 00 00"});
+    steps->append(Step{"SKIM 20 01",       "j1850cmd:20 01 00"});
+    steps->append(Step{"SKIM 20 02",       "j1850cmd:20 02 00"});
+    steps->append(Step{"SKIM 24 00",       "j1850cmd:24 00 00"});
+
+    // --- Body 0x40 ---
+    steps->append(Step{"", "header:===== PHASE 3e: Body 0x40 ====="});
     steps->append(Step{"", "j1850hdr:ATSH244022"});
     steps->append(Step{"", "j1850hdr:ATRA40"});
+    steps->append(Step{"Body 20 00",       "j1850cmd:20 00 00"});
+    steps->append(Step{"Body 20 01",       "j1850cmd:20 01 00"});
+    steps->append(Step{"Body 20 02",       "j1850cmd:20 02 00"});
+    steps->append(Step{"Body 24 00",       "j1850cmd:24 00 00"});
+    steps->append(Step{"Body 28 00",       "j1850cmd:28 00 00"});
     steps->append(Step{"", "j1850hdr:ATSH24402F"});
-    steps->append(Step{"Viper ON",          "j1850cmd:38 08 01"});
-    steps->append(Step{"Viper OFF",         "j1850cmd:38 08 00"});
-    steps->append(Step{"VTSS lamp ON",      "j1850cmd:38 07 01"});
-    steps->append(Step{"VTSS lamp OFF",     "j1850cmd:38 07 00"});
-    steps->append(Step{"FrontFog ON",       "j1850cmd:38 06 02"});
-    steps->append(Step{"FrontFog OFF",      "j1850cmd:38 06 00"});
-    steps->append(Step{"Chime ON",          "j1850cmd:38 02 01"});
-    steps->append(Step{"Chime OFF",         "j1850cmd:38 02 00"});
-    steps->append(Step{"HiBeam ON",         "j1850cmd:38 06 08"});
-    steps->append(Step{"HiBeam OFF",        "j1850cmd:38 06 00"});
-    steps->append(Step{"RearFog ON",        "j1850cmd:38 06 10"});
-    steps->append(Step{"RearFog OFF",       "j1850cmd:38 06 00"});
-    steps->append(Step{"Hazard ON",         "j1850cmd:38 06 20"});
-    steps->append(Step{"Hazard OFF",        "j1850cmd:38 06 00"});
-    steps->append(Step{"R Defog ON",        "j1850cmd:38 06 10"});
-    steps->append(Step{"R Defog OFF",       "j1850cmd:38 06 00"});
-    steps->append(Step{"Wiper ON",          "j1850cmd:38 08 02"});
-    steps->append(Step{"Wiper OFF",         "j1850cmd:38 08 00"});
-    steps->append(Step{"ParkLamp ON",       "j1850cmd:38 06 04"});
-    steps->append(Step{"ParkLamp OFF",      "j1850cmd:38 06 00"});
-    steps->append(Step{"Horn ON",           "j1850cmd:38 0D 01"});
-    steps->append(Step{"Horn OFF",          "j1850cmd:38 0D 00"});
-    steps->append(Step{"LowBeam ON",        "j1850cmd:3A 02 FF"});
-    steps->append(Step{"Illum ON",          "j1850cmd:38 0D 01"});
-    steps->append(Step{"Illum OFF",         "j1850cmd:38 0D 00"});
-    steps->append(Step{"Release All",       "j1850cmd:3A 02 FF"});
-
-    // --- 4. DTC Clear (mode 0x14) ---
-    steps->append(Step{"", "header:=== DTC Clear (mode 0x14) ==="});
-    steps->append(Step{"", "j1850hdr:ATSH244014"});
+    steps->append(Step{"Hazard ON",        "j1850cmd:38 06 20"});
+    steps->append(Step{"Hazard OFF",       "j1850cmd:38 06 00"});
+    steps->append(Step{"Horn ON",          "j1850cmd:38 0D 01"});
+    steps->append(Step{"Horn OFF",         "j1850cmd:38 0D 00"});
+    steps->append(Step{"Wiper ON",         "j1850cmd:38 08 02"});
+    steps->append(Step{"Wiper OFF",        "j1850cmd:38 08 00"});
+    steps->append(Step{"", "j1850hdr:ATSH244018"});
     steps->append(Step{"", "j1850hdr:ATRA40"});
-    steps->append(Step{"Body DTC Clear",    "j1850cmd:FF 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH242814"});
-    steps->append(Step{"", "j1850hdr:ATRA28"});
-    steps->append(Step{"ABS DTC Clear",     "j1850cmd:FF 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH24A714"});
-    steps->append(Step{"", "j1850hdr:ATRAA7"});
-    steps->append(Step{"RainSens DTC Clear","j1850cmd:FF 00 00"});
+    steps->append(Step{"Body DTC Read",    "j1850cmd:FF 00 00"});
 
-    // --- 5. ECU SID 0x30 actuators (K-Line) ---
-    steps->append(Step{"", "header:=== ECU 0x15 SID 0x30 actuators ==="});
-    steps->append(Step{"", "switch:kline"});
-    steps->append(Step{"", "header:ECU security unlock required first"});
-    steps->append(Step{"EGR Solenoid ON",     "kwpcmd:30 11 07 13 88"});
-    steps->append(Step{"EGR Solenoid OFF",    "kwpcmd:30 11 07 00 00"});
-    steps->append(Step{"Cabin Heater ON",     "kwpcmd:30 1C 07 27 10"});
-    steps->append(Step{"Cabin Heater OFF",    "kwpcmd:30 1C 07 00 00"});
-    steps->append(Step{"Glow Plug 1 ON",      "kwpcmd:30 16 07 27 10"});
-    steps->append(Step{"Glow Plug 1 OFF",     "kwpcmd:30 16 07 00 00"});
-    steps->append(Step{"Glow Plug 2 ON",      "kwpcmd:30 17 07 27 10"});
-    steps->append(Step{"Glow Plug 2 OFF",     "kwpcmd:30 17 07 00 00"});
-    steps->append(Step{"A/C Control ON",      "kwpcmd:30 14 07 27 10"});
-    steps->append(Step{"A/C Control OFF",     "kwpcmd:30 14 07 00 00"});
-    steps->append(Step{"SWIRL Solenoid ON",   "kwpcmd:30 1A 07 13 88"});
-    steps->append(Step{"SWIRL Solenoid OFF",  "kwpcmd:30 1A 07 00 00"});
-    steps->append(Step{"Boost Pressure ON",   "kwpcmd:30 12 07 00 10"});
-    steps->append(Step{"Boost Pressure OFF",  "kwpcmd:30 12 07 00 00"});
-    steps->append(Step{"Fan Low Speed ON",    "kwpcmd:30 18 07 08 34"});
-    steps->append(Step{"Fan Low Speed OFF",   "kwpcmd:30 18 07 00 00"});
-    steps->append(Step{"Fan Full Speed ON",   "kwpcmd:30 18 07 21 34"});
-    steps->append(Step{"Fan Full Speed OFF",  "kwpcmd:30 18 07 00 00"});
+    // --- HVAC 0x98 ---
+    steps->append(Step{"", "header:===== PHASE 3f: HVAC 0x98 ====="});
+    steps->append(Step{"", "j1850hdr:ATSH249822"});
+    steps->append(Step{"", "j1850hdr:ATRA98"});
+    steps->append(Step{"HVAC 24 00",       "j1850cmd:24 00 00"});
+    steps->append(Step{"", "j1850hdr:ATSH249830"});
+    steps->append(Step{"HVAC SelfTest",    "j1850cmd:01 FF FF"});
+    steps->append(Step{"HVAC MTR Def",     "j1850cmd:02 FF FF"});
+    steps->append(Step{"HVAC MTR Panel",   "j1850cmd:03 FF FF"});
+    steps->append(Step{"", "j1850hdr:ATSH24982F"});
+    steps->append(Step{"DrvBlend Hot",     "j1850cmd:38 03 00"});
+    steps->append(Step{"DrvBlend Cold",    "j1850cmd:38 04 00"});
+
+    // --- Driver Door 0xA0 ---
+    steps->append(Step{"", "header:===== PHASE 3g: Driver Door 0xA0 ====="});
+    steps->append(Step{"", "j1850hdr:ATSH24A022"});
+    steps->append(Step{"", "j1850hdr:ATRAA0"});
+    steps->append(Step{"DrvDr 20 00",      "j1850cmd:20 00 00"});
+    steps->append(Step{"DrvDr 20 01",      "j1850cmd:20 01 00"});
+    steps->append(Step{"DrvDr 20 02",      "j1850cmd:20 02 00"});
+    steps->append(Step{"", "j1850hdr:ATSH24A02F"});
+    steps->append(Step{"Courtesy ON",      "j1850cmd:38 00 12"});
+    steps->append(Step{"Courtesy OFF",     "j1850cmd:38 00 00"});
+    steps->append(Step{"FrontWin UP",      "j1850cmd:38 01 12"});
+    steps->append(Step{"FrontWin OFF",     "j1850cmd:38 01 00"});
+    steps->append(Step{"FrontWin DN",      "j1850cmd:38 02 12"});
+    steps->append(Step{"FrontWin OFF",     "j1850cmd:38 02 00"});
+    steps->append(Step{"Lock ON",          "j1850cmd:38 05 12"});
+    steps->append(Step{"Lock OFF",         "j1850cmd:38 05 00"});
+    steps->append(Step{"Unlock ON",        "j1850cmd:38 06 12"});
+    steps->append(Step{"Unlock OFF",       "j1850cmd:38 06 00"});
+
+    // --- Passenger Door 0xA1 ---
+    steps->append(Step{"", "header:===== PHASE 3h: Passenger Door 0xA1 ====="});
+    steps->append(Step{"", "j1850hdr:ATSH24A122"});
+    steps->append(Step{"", "j1850hdr:ATRAA1"});
+    steps->append(Step{"PasDr 20 00",      "j1850cmd:20 00 00"});
+    steps->append(Step{"", "j1850hdr:ATSH24A12F"});
+    steps->append(Step{"FrontWin UP",      "j1850cmd:38 01 12"});
+    steps->append(Step{"FrontWin OFF",     "j1850cmd:38 01 00"});
+    steps->append(Step{"Lock ON",          "j1850cmd:38 05 12"});
+    steps->append(Step{"Lock OFF",         "j1850cmd:38 05 00"});
+
+    // --- Electro Mech Cluster 0x60 ---
+    steps->append(Step{"", "header:===== PHASE 3i: ElecClust 0x60 ====="});
+    steps->append(Step{"", "j1850hdr:ATSH246022"});
+    steps->append(Step{"", "j1850hdr:ATRA60"});
+    steps->append(Step{"0x60 20 00",       "j1850cmd:20 00 00"});
+    steps->append(Step{"0x60 20 0B",       "j1850cmd:20 0B 00"});
+
+    // --- Overhead 0x68 ---
+    steps->append(Step{"", "header:===== PHASE 3j: Overhead 0x68 ====="});
+    steps->append(Step{"", "j1850hdr:ATSH246822"});
+    steps->append(Step{"", "j1850hdr:ATRA68"});
+    steps->append(Step{"OvHd 20 00",       "j1850cmd:20 00 00"});
+    steps->append(Step{"OvHd 20 01",       "j1850cmd:20 01 00"});
+    steps->append(Step{"OvHd 20 02",       "j1850cmd:20 02 00"});
+    steps->append(Step{"OvHd 24 00",       "j1850cmd:24 00 00"});
+    steps->append(Step{"", "j1850hdr:ATSH246831"});
+    steps->append(Step{"OvHd SelfTest31",  "j1850cmd:01 00 00"});
+    steps->append(Step{"", "j1850hdr:ATSH246833"});
+    steps->append(Step{"OvHd SelfTest33",  "j1850cmd:01 00 00"});
+
+    // --- Rain Sensor 0xA7 ---
+    steps->append(Step{"", "header:===== PHASE 3k: Rain Sensor 0xA7 ====="});
+    steps->append(Step{"", "j1850hdr:ATSH24A722"});
+    steps->append(Step{"", "j1850hdr:ATRAA7"});
+    steps->append(Step{"Rain 20 00",       "j1850cmd:20 00 00"});
+    steps->append(Step{"Rain 20 01",       "j1850cmd:20 01 00"});
+    steps->append(Step{"Rain 20 02",       "j1850cmd:20 02 00"});
+    steps->append(Step{"Rain 24 00",       "j1850cmd:24 00 00"});
+    steps->append(Step{"Rain 2E 10",       "j1850cmd:2E 10 00"});
+
+    // --- Dead modules ---
+    steps->append(Step{"", "header:===== PHASE 3l: Other Modules ====="});
+    steps->append(Step{"", "j1850hdr:ATSH242A22"});
+    steps->append(Step{"", "j1850hdr:ATRA2A"});
+    steps->append(Step{"AdjPedal 20 00",   "j1850cmd:20 00 00"});
+    steps->append(Step{"", "j1850hdr:ATSH248022"});
+    steps->append(Step{"", "j1850hdr:ATRA80"});
+    steps->append(Step{"Radio 20 00",      "j1850cmd:20 00 00"});
+    steps->append(Step{"", "j1850hdr:ATSH248122"});
+    steps->append(Step{"", "j1850hdr:ATRA81"});
+    steps->append(Step{"CDChngr 20 00",    "j1850cmd:20 00 00"});
+    steps->append(Step{"", "j1850hdr:ATSH246222"});
+    steps->append(Step{"", "j1850hdr:ATRA62"});
+    steps->append(Step{"ParkAst 20 00",    "j1850cmd:20 00 00"});
+    steps->append(Step{"", "j1850hdr:ATSH246D22"});
+    steps->append(Step{"", "j1850hdr:ATRA6D"});
+    steps->append(Step{"Nav 20 00",        "j1850cmd:20 00 00"});
+    steps->append(Step{"", "j1850hdr:ATSH248722"});
+    steps->append(Step{"", "j1850hdr:ATRA87"});
+    steps->append(Step{"SatAud 20 00",     "j1850cmd:20 00 00"});
+    steps->append(Step{"", "j1850hdr:ATSH249022"});
+    steps->append(Step{"", "j1850hdr:ATRA90"});
+    steps->append(Step{"HndsFree 20 00",   "j1850cmd:20 00 00"});
 
     // --- Done ---
-    steps->append(Step{"", "header:--- End ---"});
+    steps->append(Step{"", "header:===== COMPLETE ====="});
     steps->append(Step{"Battery", "cmd:ATRV"});
 
     // =================================================================
@@ -2195,6 +2321,16 @@ void MainWindow::runDiscoveryPhases(
                 log("#60b8a0", "J1850 VPW ready");
                 (*run)();
             });});});});});
+            return;
+        }
+        if (step.action.startsWith("kwpcmd:")) {
+            QString cmd = step.action.mid(7);
+            m_elm->sendCommand(cmd, [this, log, run, step](const QString &resp) {
+                bool nd = resp.contains("NO DATA")||resp.contains("ERROR")||resp.contains("TIMEOUT");
+                bool nrc = resp.contains("7F");
+                log(nd ? "#666666" : (nrc ? "#ff8800" : "#00ff88"), step.label + ": " + resp.trimmed());
+                (*run)();
+            }, 3000);
             return;
         }
         if (step.action.startsWith("j1850hdr:")) {
