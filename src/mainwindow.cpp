@@ -1477,7 +1477,7 @@ void MainWindow::onClearDTCs()
     switch (srcIdx) {
     case 1:  mod = WJDiagnostics::Module::MotorECU; break;
     case 2:  mod = WJDiagnostics::Module::ABS; break;
-    case 3:  mod = WJDiagnostics::Module::Airbag; break;
+    case 3:  mod = WJDiagnostics::Module::ESP_Module; break;  // Airbag btn = ESP 0x58
     default: mod = WJDiagnostics::Module::KLineTCM; break;
     }
 

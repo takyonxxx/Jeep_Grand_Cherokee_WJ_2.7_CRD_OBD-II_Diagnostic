@@ -521,14 +521,17 @@ static const J1850DtcPidEntry kAbsDtcPids[] = {
     {0x2E,0x13,"C0036"}, // RF Wheel Speed Signal
     {0x2E,0x14,"C0041"}, // LR Sensor Circuit
     {0x2E,0x15,"C0042"}, // LR Wheel Speed Signal
-    {0x2E,0x17,"C0045"}, // RR Sensor Circuit
-    {0x2E,0x21,"C0046"}, // RR Wheel Speed Signal
-    {0x2E,0x22,"C0051"}, // Valve Power Feed
-    {0x2E,0x23,"C0060"}, // Pump Motor Circuit
-    {0x2E,0x24,"C0070"}, // CAB Internal
-    {0x2E,0x25,"C0080"}, // ABS Lamp Short
-    {0x2E,0x26,"C0081"}, // ABS Lamp Open
-    {0x2E,0x30,"C0110"}, // Brake Fluid Level
+    {0x2E,0x16,"C0045"}, // RR Sensor Circuit
+    {0x2E,0x17,"C0046"}, // RR Wheel Speed Signal
+    {0x2E,0x20,"C0051"}, // Valve Power Feed
+    {0x2E,0x21,"C0060"}, // Pump Motor Circuit
+    {0x2E,0x22,"C0070"}, // CAB Internal
+    {0x2E,0x23,"C0080"}, // ABS Lamp Circuit Short
+    {0x2E,0x24,"C0081"}, // ABS Lamp Open
+    {0x2E,0x25,"C0085"}, // Brake Lamp Circuit Short
+    {0x2E,0x26,"C0110"}, // Brake Fluid Level Switch
+    {0x2E,0x27,"C0111"}, // G-Switch / Sensor Failure
+    {0x2E,0x30,"C1014"}, // ABS Messages Not Received
 };
 
 // ESP 0x58: PID range 2E 10 ~ 2F 3C (PCAP verified, 3-step increments)
@@ -720,17 +723,42 @@ void WJDiagnostics::clearDTCs(Module mod, std::function<void(bool)> cb)
 
             m_elm->sendCommand(clearHdr, [this, mod, modAddr, atraCmd, clearCmd, cb](const QString&) {
                 m_elm->sendCommand(atraCmd, [this, mod, modAddr, clearCmd, cb](const QString&) {
-                    m_elm->sendCommand(clearCmd, [this, mod, modAddr, cb](const QString &resp) {
-                        bool ok = resp.contains("54") && !resp.contains("7F");
-                        emit logMessage(QString("%1 DTC clear (mode 0x14): %2")
-                            .arg(moduleInfo(mod).shortName, ok ? "OK" : resp.trimmed()));
-                        // Restore read header
-                        QString restoreHdr = QString("ATSH24%1%2")
-                            .arg(modAddr, 2, 16, QChar('0')).arg("22").toUpper();
-                        m_elm->sendCommand(restoreHdr, [this, ok, cb](const QString&) {
-                            if (cb) cb(ok);
+                    // ESP 0x58 needs multiple retries (PCAP: up to 7 attempts before positive response)
+                    int maxRetries = (modAddr == 0x58) ? 10 : 1;
+                    auto attempt = std::make_shared<int>(0);
+                    auto tryOnce = std::make_shared<std::function<void()>>();
+
+                    *tryOnce = [this, mod, modAddr, clearCmd, cb, maxRetries, attempt, tryOnce]() {
+                        m_elm->sendCommand(clearCmd, [this, mod, modAddr, cb, maxRetries, attempt, tryOnce](const QString &resp) {
+                            ++(*attempt);
+                            bool success = resp.contains("54") && !resp.contains("7F");
+
+                            if (success) {
+                                emit logMessage(QString("%1 DTC clear OK (attempt %2)")
+                                    .arg(moduleInfo(mod).shortName).arg(*attempt));
+                                QString restoreHdr = QString("ATSH24%1%2")
+                                    .arg(modAddr, 2, 16, QChar('0')).arg("22").toUpper();
+                                m_elm->sendCommand(restoreHdr, [cb](const QString&) {
+                                    if (cb) cb(true);
+                                });
+                            } else if (*attempt < maxRetries) {
+                                emit logMessage(QString("%1 DTC clear attempt %2/%3: %4 - retrying...")
+                                    .arg(moduleInfo(mod).shortName).arg(*attempt).arg(maxRetries)
+                                    .arg(resp.trimmed().left(30)));
+                                (*tryOnce)();
+                            } else {
+                                emit logMessage(QString("%1 DTC clear FAILED after %2 attempts")
+                                    .arg(moduleInfo(mod).shortName).arg(*attempt));
+                                QString restoreHdr = QString("ATSH24%1%2")
+                                    .arg(modAddr, 2, 16, QChar('0')).arg("22").toUpper();
+                                m_elm->sendCommand(restoreHdr, [cb](const QString&) {
+                                    if (cb) cb(false);
+                                });
+                            }
                         });
-                    });
+                    };
+
+                    (*tryOnce)();
                 });
             });
         }

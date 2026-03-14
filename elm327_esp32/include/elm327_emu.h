@@ -37,6 +37,7 @@ private:
 
     // Per-module J1850 DTC cleared flags
     bool j1850DtcCleared[256] = {};
+    int espClearAttempts = 0;
 
     float  engineRpm    = 750.0f;
     float  coolantTemp  = 82.0f;

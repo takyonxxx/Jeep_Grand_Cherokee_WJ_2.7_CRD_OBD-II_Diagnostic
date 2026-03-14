@@ -108,7 +108,16 @@ String ELM327Emu::j1850_generic(uint8_t t, uint8_t m, uint8_t sid, const uint8_t
 
     // Mode 0x14 DTC Clear
     if (m == 0x14) {
-        if (t == 0x58) return "NO DATA";  // ESP: real vehicle returns NO DATA
+        if (t == 0x58) {
+            // ESP: real vehicle needs ~7 retries before positive response
+            espClearAttempts++;
+            if (espClearAttempts >= 7) {
+                j1850DtcCleared[t] = true;
+                espClearAttempts = 0;
+                return "26 58 54 01 00 00 21";  // positive response (PCAP verified)
+            }
+            return "NO DATA";  // first 6 attempts return NO DATA
+        }
         j1850DtcCleared[t] = true;
         return "26 " + hex8(t) + " 54 FF 00 00 DD";
     }
@@ -317,13 +326,13 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "2E 4C 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E 4F 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E 52 00") return "26 58 62 00 00 00 A8";
-            if (cmdStr == "2E 70 00") return "26 58 62 01 41 03 A8";  // C1041 active, occ=3
+            if (cmdStr == "2E 70 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E 73 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E 76 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E 79 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E 7C 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E 7F 00") return "26 58 62 00 00 00 A8";
-            if (cmdStr == "2E 82 00") return "26 58 62 01 70 05 A8";  // C1070 active, occ=5
+            if (cmdStr == "2E 82 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E 85 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E 88 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E 8B 00") return "26 58 62 00 00 00 A8";
@@ -334,7 +343,7 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "2E DC 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E DF 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E E2 00") return "26 58 62 00 00 00 A8";
-            if (cmdStr == "2E E5 00") return "26 58 62 00 00 00 A8";
+            if (cmdStr == "2E E5 00") return j1850DtcCleared[0x58] ? "26 58 62 00 00 00 A8" : "26 58 62 10 00 00 B0";  // C2103 real vehicle DTC
             if (cmdStr == "2E FA 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2E FD 00") return "26 58 62 00 00 00 A8";
             if (cmdStr == "2F 00 00") return "26 58 62 00 00 00 A8";
