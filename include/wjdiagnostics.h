@@ -9,7 +9,7 @@
 // ============================================================
 // WJ 2.7 CRD Multi-Protocol Multi-Module Diagnostics
 // K-Line (ATSP5): 0x15=MotorECU, 0x20=EPC
-// J1850 VPW (ATSP2): 0x28=ABS, 0x40=BodyComputer, 0x60=Airbag ...
+// J1850 VPW (ATSP2): 0x28=ABS, 0x40=BodyComp, 0x58=Airbag/ESP, 0x60=ElecCluster(NRC), 0x61=Cluster, 0x68=Overhead, 0x98=HVAC/MemSeat, 0xA0=DriverDoor, 0xA1=PassDoor, 0xA7=Rain, 0xC0=SKIM
 // ============================================================
 
 class WJDiagnostics : public QObject
@@ -34,17 +34,21 @@ public:
         EVIC         = 0x2A,   // Overhead Console / EVIC
         BodyComputer = 0x40,   // Body Computer (hazard/horn/mirrors)
         Airbag       = 0x60,   // Airbag (ORC/AOSIM)
-        SKIM         = 0x62,   // Immobilizer
-        ATC          = 0x68,   // Klima (HVAC)
+        SKIM         = 0xC0,   // SKIM/Immobilizer (APK verified)
+        ATC          = 0x98,   // HVAC/ATC (APK verified, same as MemSeat)
         // 0x80 = DEAD on EU vehicle (NO DATA)
-        Radio        = 0x87,   // Radyo / Ses
-        MemSeat      = 0x98,   // Memory Seat/Mirror
+        Radio        = 0x81,   // CD Changer/Radio (APK verified)
+        // MemSeat uses same address as ATC (0x98)
         DriverDoor   = 0xA0,   // Driver Door (left windows)
         PassengerDoor= 0xA1,   // Passenger Door (right windows)
         ESP_Module  = 0x58,   // ESP/Traction Control
         Cluster      = 0x61,   // Instrument Cluster
+        Overhead     = 0x68,   // Overhead Console
+        Navigation   = 0x6D,   // Navigation System
+        SatAudio     = 0x87,   // Satellite Audio
+        HandsFree    = 0x90,   // Hands Free / Uconnect
         RainSensor   = 0xA7,   // Rain Sensor
-        ParkAssist   = 0xC0,   // VTSS/Park Assist
+        ParkAssist   = 0x62,   // Park Assist (APK verified)
     };
     Q_ENUM(Module)
 
@@ -112,19 +116,51 @@ public:
         double idleAdapt=0;
         // Block 0xB2 - Fuel trims / cold start
         double fuelAdapt=0;
+        // Block 0x30 - RPM setpoints (APK: Engine RPM, Low Idle Setpoint)
+        double lowIdleSetpoint=0;
+        // Block 0x23 - Boost (APK: Boost Pressure Sensor/Voltage/Setpoint)
+        double boostVoltage=0;
+        // Block 0x21 - Fuel demand (APK: Desired/Actual Fuel QTY)
+        double fuelDemand=0, fuelDriver=0, fuelActual=0;
+        double fuelStartSet=0, fuelLimit=0, fuelTorque=0, fuelIdleGov=0;
+        // Block 0x16 - Battery/alternator
+        double batteryTemp=0, batteryTempV=0, alternatorField=0;
+        // Block 0x32 - Vehicle speed
+        double vehicleSpeedSet=0, cruiseSwitchV=0;
+        // Block 0x37 - EGR
+        double mafEgrSetpoint=0;
+        // Block 0x13 - Oil/AC pressure
+        double oilPressureV=0, acPressure=0, acPressureV=0;
+        // Block 0x36 - Pedal sensors
+        double pedalPos1=0, pedalPos2=0, pedalV1=0, pedalV2=0;
+        double fuelQtyPedal=0, fuelQtyCruise=0;
+        // Block 0x26 - Fuel level/pressure
+        double fuelLevel=0, fuelLevelV=0, fuelRegOutput=0, fuelPressureV=0, fuelPressureSet=0;
+        // Block 0x22 - Baro/temps (reinterpreted)
+        double baroPressure=0, baroPressureV=0, outsideAirTemp=0, mafVoltage=0;
+        // Block 0x34 - Transfer case
+        double transferCaseV=0, camCrankSync=0, injBankCap=0;
     };
 
     struct TCMStatus {
         // Gear
         Gear currentGear = Gear::Unknown;
         int actualGear=0, selectedGear=0, maxGear=0;
+        // Block 0x30 - TCC slip
+        double desTccSlip=0, actualTccSlip=0;
+        // Block 0x31 - Battery/supply
+        double tcmBattery=0, sensorSupply=0, solenoidSupply=0;
+        // Block 0x33 - Wheel speeds
+        double lfWheelSpd=0, rfWheelSpd=0, lrWheelSpd=0, rrWheelSpd=0;
+        double rearVehicleSpd=0, frontVehicleSpd=0;
+        // Block 0x34 - Pressures
+        double tccPressure=0, shiftPsi=0, modulationPsi=0;
+        double tcmTpsPercent=0, uphillGrad=0;
         // RPM
-        double turbineRPM=0, outputRPM=0;
-        // Temperatures & pressures
-        double transTemp=0, tccPressure=0;
-        double actualTCCslip=0, desTCCslip=0;
+        double turbineRpm=0, outputRPM=0;
+        // Extra
+        double transTemp=0;
         QString tccState;
-        double solenoidSupply=0;
         double vehicleSpeed=0;
         // Block 0x30 extra fields
         uint16_t engageStatus=0;    // byte[2-3]: P/N=30, D=50-55
@@ -222,6 +258,7 @@ signals:
 
 private:
     void parseECUBlock(uint8_t lid, const QByteArray &d, ECUStatus &ecu);
+    void parseTCMBlock(uint8_t blk, const QByteArray &d, TCMStatus &tcm);
     void parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm);
     void fillTCMCompat(TCMStatus &tcm);
     void initLiveDataParams();

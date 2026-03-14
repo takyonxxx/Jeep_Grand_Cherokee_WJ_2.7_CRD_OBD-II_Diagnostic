@@ -526,7 +526,7 @@ QWidget* MainWindow::createConnectionTab()
          "J1850 0x60 | ATRA60 | NRC 0x22 (needs special conditions)", true},
         {WJDiagnostics::Module::ATC, "Climate (HVAC)",
          "J1850 0x68 | ATRA68 | mode 0x22/0x31/0x33", true},
-        {WJDiagnostics::Module::MemSeat, "Memory Seat / Mirror",
+        {WJDiagnostics::Module::ATC, "Memory Seat / Mirror",
          "J1850 0x98 | ATRA98 | DTC read verified", true},
         {WJDiagnostics::Module::DriverDoor, "Driver Door",
          "J1850 0xA0 | ATRAA0 | mode 0x2F (windows/locks/mirrors)", true},
@@ -1101,10 +1101,10 @@ QWidget* MainWindow::createControlsTab()
     frontLay->addWidget(frLbl, 0, 1);
     // Left front: 0xA0 sequential
     frontLay->addWidget(makeHoldBtn("L UP",   "38 01 12", "38 01 00", "L-Front Up",   hdrL), 1, 0);
-    frontLay->addWidget(makeHoldBtn("L DOWN", "38 00 12", "38 00 00", "L-Front Down", hdrL), 2, 0);
+    frontLay->addWidget(makeHoldBtn("L DOWN", "38 02 12", "38 02 00", "L-Front Down", hdrL), 2, 0);
     // Right front: 0x40 bitmask
     frontLay->addWidget(makeHoldBtn("R UP",   "38 01 12", "38 01 00", "R-Front Up",   hdrR), 1, 1);
-    frontLay->addWidget(makeHoldBtn("R DOWN", "38 00 12", "38 00 00", "R-Front Down", hdrR), 2, 1);
+    frontLay->addWidget(makeHoldBtn("R DOWN", "38 02 12", "38 02 00", "R-Front Down", hdrR), 2, 1);
     innerLay->addWidget(frontGrp);
 
     // ====== REAR WINDOWS ======
@@ -1120,11 +1120,11 @@ QWidget* MainWindow::createControlsTab()
     rearLay->addWidget(rlLbl, 0, 0);
     rearLay->addWidget(rrLbl, 0, 1);
     // Left rear: 0xA0 sequential
-    rearLay->addWidget(makeHoldBtn("L UP",   "38 09 12", "38 09 00", "L-Rear Up",   hdrL), 1, 0);
-    rearLay->addWidget(makeHoldBtn("L DOWN", "38 08 12", "38 08 00", "L-Rear Down", hdrL), 2, 0);
+    rearLay->addWidget(makeHoldBtn("L UP",   "38 03 12", "38 03 00", "L-Rear Up",   hdrL), 1, 0);
+    rearLay->addWidget(makeHoldBtn("L DOWN", "38 04 12", "38 04 00", "L-Rear Down", hdrL), 2, 0);
     // Right rear: 0x40 bitmask
-    rearLay->addWidget(makeHoldBtn("R UP",   "38 09 12", "38 09 00", "R-Rear Up",   hdrR), 1, 1);
-    rearLay->addWidget(makeHoldBtn("R DOWN", "38 08 12", "38 08 00", "R-Rear Down", hdrR), 2, 1);
+    rearLay->addWidget(makeHoldBtn("R UP",   "38 03 12", "38 03 00", "R-Rear Up",   hdrR), 1, 1);
+    rearLay->addWidget(makeHoldBtn("R DOWN", "38 04 12", "38 04 00", "R-Rear Down", hdrR), 2, 1);
     innerLay->addWidget(rearGrp);
 
     // ====== HAZARD & HORN (BCM 0x80 mode 0x2F) ======
@@ -1133,8 +1133,8 @@ QWidget* MainWindow::createControlsTab()
     hazGrp->setStyleSheet(grpStyle);
     QHBoxLayout *hazLay = new QHBoxLayout(hazGrp);
     hazLay->setSpacing(4); hazLay->setContentsMargins(4,4,4,4);
-    hazLay->addWidget(makeBCMBtn("HAZARD", "38 01 00", "38 01 01", "Hazard", hdrBCM));
-    hazLay->addWidget(makeHoldBtn("HORN", "38 00 CC", "38 00 00", "Horn", hdrBCM));
+    hazLay->addWidget(makeBCMBtn("HAZARD", "38 06 20", "38 06 00", "Hazard", hdrBCM));
+    hazLay->addWidget(makeHoldBtn("HORN", "38 0D 01", "38 0D 00", "Horn", hdrBCM));
     innerLay->addWidget(hazGrp);
 
     // ====== INSTRUMENT CLUSTER 0x61 — Gauge Test ======
@@ -1698,16 +1698,16 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"L-FrontUp ON",      "j1850cmd:38 01 12"});
     steps->append(Step{"L-FrontUp ON",      "j1850cmd:38 01 12"});
     steps->append(Step{"L-FrontUp OFF",     "j1850cmd:38 01 00"});
-    steps->append(Step{"L-FrontDn ON",      "j1850cmd:38 00 12"});
-    steps->append(Step{"L-FrontDn ON",      "j1850cmd:38 00 12"});
-    steps->append(Step{"L-FrontDn ON",      "j1850cmd:38 00 12"});
-    steps->append(Step{"L-FrontDn OFF",     "j1850cmd:38 00 00"});
-    steps->append(Step{"L-RearUp ON",       "j1850cmd:38 09 12"});
-    steps->append(Step{"L-RearUp ON",       "j1850cmd:38 09 12"});
-    steps->append(Step{"L-RearUp OFF",      "j1850cmd:38 09 00"});
-    steps->append(Step{"L-RearDn ON",       "j1850cmd:38 08 12"});
-    steps->append(Step{"L-RearDn ON",       "j1850cmd:38 08 12"});
-    steps->append(Step{"L-RearDn OFF",      "j1850cmd:38 08 00"});
+    steps->append(Step{"L-FrontDn ON",      "j1850cmd:38 02 12"});
+    steps->append(Step{"L-FrontDn ON",      "j1850cmd:38 02 12"});
+    steps->append(Step{"L-FrontDn ON",      "j1850cmd:38 02 12"});
+    steps->append(Step{"L-FrontDn OFF",     "j1850cmd:38 02 00"});
+    steps->append(Step{"L-RearUp ON",       "j1850cmd:38 03 12"});
+    steps->append(Step{"L-RearUp ON",       "j1850cmd:38 03 12"});
+    steps->append(Step{"L-RearUp OFF",      "j1850cmd:38 03 00"});
+    steps->append(Step{"L-RearDn ON",       "j1850cmd:38 04 12"});
+    steps->append(Step{"L-RearDn ON",       "j1850cmd:38 04 12"});
+    steps->append(Step{"L-RearDn OFF",      "j1850cmd:38 04 00"});
 
     // --- 2. Passenger Door 0xA1 windows (same sequential pattern) ---
     steps->append(Step{"", "header:=== Passenger Door 0xA1 Windows ==="});
@@ -1718,34 +1718,45 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"R-FrontUp ON",      "j1850cmd:38 01 12"});
     steps->append(Step{"R-FrontUp ON",      "j1850cmd:38 01 12"});
     steps->append(Step{"R-FrontUp OFF",     "j1850cmd:38 01 00"});
-    steps->append(Step{"R-FrontDn ON",      "j1850cmd:38 00 12"});
-    steps->append(Step{"R-FrontDn ON",      "j1850cmd:38 00 12"});
-    steps->append(Step{"R-FrontDn ON",      "j1850cmd:38 00 12"});
-    steps->append(Step{"R-FrontDn OFF",     "j1850cmd:38 00 00"});
-    steps->append(Step{"R-RearUp ON",       "j1850cmd:38 09 12"});
-    steps->append(Step{"R-RearUp ON",       "j1850cmd:38 09 12"});
-    steps->append(Step{"R-RearUp OFF",      "j1850cmd:38 09 00"});
-    steps->append(Step{"R-RearDn ON",       "j1850cmd:38 08 12"});
-    steps->append(Step{"R-RearDn ON",       "j1850cmd:38 08 12"});
-    steps->append(Step{"R-RearDn OFF",      "j1850cmd:38 08 00"});
+    steps->append(Step{"R-FrontDn ON",      "j1850cmd:38 02 12"});
+    steps->append(Step{"R-FrontDn ON",      "j1850cmd:38 02 12"});
+    steps->append(Step{"R-FrontDn ON",      "j1850cmd:38 02 12"});
+    steps->append(Step{"R-FrontDn OFF",     "j1850cmd:38 02 00"});
+    steps->append(Step{"R-RearUp ON",       "j1850cmd:38 03 12"});
+    steps->append(Step{"R-RearUp ON",       "j1850cmd:38 03 12"});
+    steps->append(Step{"R-RearUp OFF",      "j1850cmd:38 03 00"});
+    steps->append(Step{"R-RearDn ON",       "j1850cmd:38 04 12"});
+    steps->append(Step{"R-RearDn ON",       "j1850cmd:38 04 12"});
+    steps->append(Step{"R-RearDn OFF",      "j1850cmd:38 04 00"});
 
-    // --- 3. Body Computer 0x40 relay (hazard/horn/lights) ---
+    // --- 3. Body Computer 0x40 mode 0x2F (APK-verified) ---
     steps->append(Step{"", "header:=== Body Computer 0x40 Relay ==="});
     steps->append(Step{"", "j1850hdr:ATSH244022"});
     steps->append(Step{"", "j1850hdr:ATRA40"});
     steps->append(Step{"", "j1850hdr:ATSH24402F"});
-    steps->append(Step{"Horn ON",           "j1850cmd:38 00 CC"});
-    steps->append(Step{"Horn OFF",          "j1850cmd:38 00 00"});
-    steps->append(Step{"Hazard ON",         "j1850cmd:38 01 00"});
-    steps->append(Step{"Hazard OFF",        "j1850cmd:38 01 01"});
-    steps->append(Step{"HiBeam ON",         "j1850cmd:38 00 FF"});
-    steps->append(Step{"HiBeam OFF",        "j1850cmd:38 00 00"});
-    steps->append(Step{"LowBeam ON",        "j1850cmd:38 02 05"});
-    steps->append(Step{"LowBeam OFF",       "j1850cmd:38 02 00"});
-    steps->append(Step{"ParkLamp ON",       "j1850cmd:38 09 00"});
-    steps->append(Step{"ParkLamp OFF",      "j1850cmd:38 09 01"});
-    steps->append(Step{"MirrorR ON",        "j1850cmd:38 06 20"});
-    steps->append(Step{"MirrorR OFF",       "j1850cmd:38 06 00"});
+    steps->append(Step{"Viper ON",          "j1850cmd:38 08 01"});
+    steps->append(Step{"Viper OFF",         "j1850cmd:38 08 00"});
+    steps->append(Step{"VTSS lamp ON",      "j1850cmd:38 07 01"});
+    steps->append(Step{"VTSS lamp OFF",     "j1850cmd:38 07 00"});
+    steps->append(Step{"FrontFog ON",       "j1850cmd:38 06 02"});
+    steps->append(Step{"FrontFog OFF",      "j1850cmd:38 06 00"});
+    steps->append(Step{"Chime ON",          "j1850cmd:38 02 01"});
+    steps->append(Step{"Chime OFF",         "j1850cmd:38 02 00"});
+    steps->append(Step{"HiBeam ON",         "j1850cmd:38 06 08"});
+    steps->append(Step{"HiBeam OFF",        "j1850cmd:38 06 00"});
+    steps->append(Step{"RearFog ON",        "j1850cmd:38 06 10"});
+    steps->append(Step{"RearFog OFF",       "j1850cmd:38 06 00"});
+    steps->append(Step{"Hazard ON",         "j1850cmd:38 06 20"});
+    steps->append(Step{"Hazard OFF",        "j1850cmd:38 06 00"});
+    steps->append(Step{"R Defog ON",        "j1850cmd:38 06 10"});
+    steps->append(Step{"R Defog OFF",       "j1850cmd:38 06 00"});
+    steps->append(Step{"Wiper ON",          "j1850cmd:38 08 02"});
+    steps->append(Step{"Wiper OFF",         "j1850cmd:38 08 00"});
+    steps->append(Step{"ParkLamp ON",       "j1850cmd:38 06 04"});
+    steps->append(Step{"ParkLamp OFF",      "j1850cmd:38 06 00"});
+    steps->append(Step{"Horn ON",           "j1850cmd:38 0D 01"});
+    steps->append(Step{"Horn OFF",          "j1850cmd:38 0D 00"});
+    steps->append(Step{"LowBeam ON",        "j1850cmd:3A 02 FF"});
     steps->append(Step{"Illum ON",          "j1850cmd:38 0D 01"});
     steps->append(Step{"Illum OFF",         "j1850cmd:38 0D 00"});
     steps->append(Step{"Release All",       "j1850cmd:3A 02 FF"});
@@ -1766,16 +1777,24 @@ void MainWindow::runDiscoveryPhases(
     steps->append(Step{"", "header:=== ECU 0x15 SID 0x30 actuators ==="});
     steps->append(Step{"", "switch:kline"});
     steps->append(Step{"", "header:ECU security unlock required first"});
-    steps->append(Step{"ECU PID 0x11 ON",   "kwpcmd:30 11 07 13 88"});
-    steps->append(Step{"ECU PID 0x11 OFF",  "kwpcmd:30 11 07 00 00"});
-    steps->append(Step{"ECU PID 0x12 ON",   "kwpcmd:30 12 07 00 10"});
-    steps->append(Step{"ECU PID 0x12 OFF",  "kwpcmd:30 12 07 00 00"});
-    steps->append(Step{"ECU PID 0x14 ON",   "kwpcmd:30 14 07 27 10"});
-    steps->append(Step{"ECU PID 0x14 OFF",  "kwpcmd:30 14 07 00 00"});
-    steps->append(Step{"ECU PID 0x16 ON",   "kwpcmd:30 16 07 27 10"});
-    steps->append(Step{"ECU PID 0x16 OFF",  "kwpcmd:30 16 07 00 00"});
-    steps->append(Step{"ECU PID 0x18 ON",   "kwpcmd:30 18 07 08 34"});
-    steps->append(Step{"ECU PID 0x18 OFF",  "kwpcmd:30 18 07 00 00"});
+    steps->append(Step{"EGR Solenoid ON",     "kwpcmd:30 11 07 13 88"});
+    steps->append(Step{"EGR Solenoid OFF",    "kwpcmd:30 11 07 00 00"});
+    steps->append(Step{"Cabin Heater ON",     "kwpcmd:30 1C 07 27 10"});
+    steps->append(Step{"Cabin Heater OFF",    "kwpcmd:30 1C 07 00 00"});
+    steps->append(Step{"Glow Plug 1 ON",      "kwpcmd:30 16 07 27 10"});
+    steps->append(Step{"Glow Plug 1 OFF",     "kwpcmd:30 16 07 00 00"});
+    steps->append(Step{"Glow Plug 2 ON",      "kwpcmd:30 17 07 27 10"});
+    steps->append(Step{"Glow Plug 2 OFF",     "kwpcmd:30 17 07 00 00"});
+    steps->append(Step{"A/C Control ON",      "kwpcmd:30 14 07 27 10"});
+    steps->append(Step{"A/C Control OFF",     "kwpcmd:30 14 07 00 00"});
+    steps->append(Step{"SWIRL Solenoid ON",   "kwpcmd:30 1A 07 13 88"});
+    steps->append(Step{"SWIRL Solenoid OFF",  "kwpcmd:30 1A 07 00 00"});
+    steps->append(Step{"Boost Pressure ON",   "kwpcmd:30 12 07 00 10"});
+    steps->append(Step{"Boost Pressure OFF",  "kwpcmd:30 12 07 00 00"});
+    steps->append(Step{"Fan Low Speed ON",    "kwpcmd:30 18 07 08 34"});
+    steps->append(Step{"Fan Low Speed OFF",   "kwpcmd:30 18 07 00 00"});
+    steps->append(Step{"Fan Full Speed ON",   "kwpcmd:30 18 07 21 34"});
+    steps->append(Step{"Fan Full Speed OFF",  "kwpcmd:30 18 07 00 00"});
 
     // --- Done ---
     steps->append(Step{"", "header:--- End ---"});

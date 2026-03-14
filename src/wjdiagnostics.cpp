@@ -47,7 +47,7 @@ QList<WJDiagnostics::ModuleInfo> WJDiagnostics::allModules()
          BusType::J1850, "ATSH248722", "", "ATSP2", "ATRA87"},
         {Module::Cluster, "Instrument Cluster", "Cluster",
          BusType::J1850, "ATSH249022", "", "ATSP2", "ATRA90"},
-        {Module::MemSeat, "Memory Seat / Mirror", "Seat",
+        {Module::ATC, "Memory Seat / Mirror", "Seat",
          BusType::J1850, "ATSH249822", "", "ATSP2", "ATRA98"},
         {Module::DriverDoor, "Door Module (0xA0)", "Door",
          BusType::J1850, "ATSH24A022", "", "ATSP2", "ATRAA0"},
@@ -310,7 +310,7 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                                 });
                             } else if (targetMod == Module::BodyComputer || targetMod == Module::DriverDoor ||
                                        targetMod == Module::Cluster || targetMod == Module::ParkAssist ||
-                                       targetMod == Module::MemSeat) {
+                                       targetMod == Module::ATC) {
                                 uint8_t modAddr = static_cast<uint8_t>(targetMod);
                                 QString sessHdr = QString("ATSH24%1%2")
                                     .arg(modAddr, 2, 16, QChar('0')).arg("11").toUpper();
@@ -408,7 +408,7 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                     });
                 } else if (targetMod == Module::BodyComputer || targetMod == Module::DriverDoor ||
                            targetMod == Module::Cluster || targetMod == Module::ParkAssist ||
-                           targetMod == Module::MemSeat) {
+                           targetMod == Module::ATC) {
                     // Generic J1850 DiagSession: ATSH24xx11 -> 01 01 00 -> back to read header
                     uint8_t modAddr = static_cast<uint8_t>(targetMod);
                     QString sessHdr = QString("ATSH24%1%2")
@@ -604,9 +604,9 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
     auto step = std::make_shared<int>(0);
     auto doNext = std::make_shared<std::function<void()>>();
 
-    // Read blocks: 0x12, 0x28, 0x20, 0x22 (always)
+    // Read all 13 blocks per cycle (APK-verified order from PCAP)
     // + 0x62, 0xB0, 0xB1, 0xB2 (if ECU security unlocked)
-    static const uint8_t baseIds[] = {0x12, 0x28, 0x20, 0x22};
+    static const uint8_t baseIds[] = {0x12, 0x30, 0x22, 0x20, 0x23, 0x21, 0x16, 0x32, 0x37, 0x13, 0x36, 0x26, 0x34, 0x28};
     static const uint8_t secIds[] = {0x62, 0xB0, 0xB1, 0xB2};
     auto ids = std::make_shared<QVector<uint8_t>>();
     for (auto id : baseIds) ids->append(id);
@@ -646,18 +646,34 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
 
 void WJDiagnostics::readTCMLiveData(std::function<void(const TCMStatus&)> cb)
 {
-    // K-Line TCM (0x20) - Read block 0x30 for live data
+    // K-Line TCM (0x20) - Read all 5 blocks (APK-verified order)
     auto tcm = std::make_shared<TCMStatus>();
+    auto step = std::make_shared<int>(0);
+    auto doNext = std::make_shared<std::function<void()>>();
+    static const uint8_t tcmBlocks[] = {0x30, 0x31, 0x34, 0x33, 0x32};
 
-    switchToModule(Module::KLineTCM, [this, tcm, cb](bool ok) {
-        if (!ok) { if (cb) cb(*tcm); return; }
-
-        m_elm->sendCommand("21 30", [this, tcm, cb](const QString &resp) {
+    *doNext = [this, tcm, step, doNext, cb]() {
+        if (*step >= 5) {
+            m_elm->sendCommand("ATRV", [this, tcm, cb](const QString &rv) {
+                QString v = rv.trimmed().remove('V').remove('v');
+                bool ok = false;
+                double volts = v.toDouble(&ok);
+                if (ok && volts > 0) tcm->batteryVoltage = volts;
+                m_lastTCM = *tcm;
+                emit tcmStatusUpdated(*tcm);
+                if (cb) cb(*tcm);
+            });
+            return;
+        }
+        uint8_t blk = tcmBlocks[*step];
+        QString cmd = QString("21 %1").arg(blk, 2, 16, QChar('0')).toUpper();
+        m_elm->sendCommand(cmd, [this, tcm, step, doNext, blk](const QString &resp) {
             if (!resp.contains("NO DATA") && !resp.contains("7F") && !resp.contains("ERROR")) {
                 QByteArray raw;
                 QString cleaned = resp;
                 cleaned.remove(' ').remove('\r').remove('\n');
-                int pos = cleaned.indexOf("6130", 0, Qt::CaseInsensitive);
+                QString marker = QString("61%1").arg(blk, 2, 16, QChar('0'));
+                int pos = cleaned.indexOf(marker, 0, Qt::CaseInsensitive);
                 if (pos >= 0) {
                     QString dataHex = cleaned.mid(pos);
                     if (dataHex.length() > 4) dataHex.chop(2);
@@ -667,24 +683,59 @@ void WJDiagnostics::readTCMLiveData(std::function<void(const TCMStatus&)> cb)
                         if (ok2) raw.append(static_cast<char>(b));
                     }
                 }
-                if (raw.size() >= 4) parseTCMBlock30(raw, *tcm);
-            }
-
-            // Read battery voltage via ATRV
-            m_elm->sendCommand("ATRV", [this, tcm, cb](const QString &rv) {
-                QString v = rv.trimmed().remove('V').remove('v');
-                bool ok = false;
-                double volts = v.toDouble(&ok);
-                if (ok && volts > 0) {
-                    tcm->batteryVoltage = volts;
-                    tcm->solenoidSupply = volts;
+                if (raw.size() >= 4) {
+                    if (blk == 0x30) parseTCMBlock30(raw, *tcm);
+                    else parseTCMBlock(blk, raw, *tcm);
                 }
-                m_lastTCM = *tcm;
-                emit tcmStatusUpdated(*tcm);
-                if (cb) cb(*tcm);
-            });
+            }
+            (*step)++;
+            (*doNext)();
         });
+    };
+
+    switchToModule(Module::KLineTCM, [doNext](bool ok) {
+        if (ok) (*doNext)();
     });
+}
+
+void WJDiagnostics::parseTCMBlock(uint8_t blk, const QByteArray &d, TCMStatus &tcm)
+{
+    int n = d.size();
+    auto u8 = [&](int i) -> uint8_t { return (i < n) ? static_cast<uint8_t>(d[i]) : 0; };
+    auto u16 = [&](int i) -> uint16_t { return (uint16_t(u8(i)) << 8) | u8(i+1); };
+
+    switch (blk) {
+    case 0x31:
+        if (n >= 8) {
+            tcm.tcmBattery = u16(2) / 100.0;
+            tcm.sensorSupply = u16(4) / 100.0;
+            tcm.solenoidSupply = u16(6) / 100.0;
+        }
+        break;
+    case 0x34:
+        if (n >= 14) {
+            tcm.transTemp = (u16(2) / 10.0) - 40.0;
+            tcm.tccPressure = u16(4) / 10.0;
+            tcm.shiftPsi = u16(6) / 10.0;
+            tcm.modulationPsi = u16(8) / 10.0;
+            tcm.tcmTpsPercent = u16(10) / 10.0;
+            tcm.uphillGrad = u16(12) / 10.0;
+        }
+        break;
+    case 0x33:
+        if (n >= 14) {
+            tcm.lfWheelSpd = u16(2);
+            tcm.rfWheelSpd = u16(4);
+            tcm.lrWheelSpd = u16(6);
+            tcm.rrWheelSpd = u16(8);
+            tcm.rearVehicleSpd = u16(10);
+            tcm.frontVehicleSpd = u16(12);
+        }
+        break;
+    case 0x32:
+        // Block 0x32 usually all zeros
+        break;
+    }
 }
 
 // --- ABS Live Data (J1850 VPW 0x40) ---
@@ -1315,7 +1366,7 @@ void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
                 double volts = v.toDouble(&ok);
                 if (ok && volts > 0) {
                     tcm->batteryVoltage = volts;
-                    tcm->solenoidSupply = volts;  // proxy: solenoid fed from battery
+                    tcm.solenoidSupply = volts;  // proxy: solenoid fed from battery
                 }
                 m_lastTCM = *tcm;
                 emit tcmStatusUpdated(*tcm);
@@ -1364,7 +1415,7 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
     // [21]    Flags (always 0x08)
 
     // Turbine/N2 sensor RPM
-    tcm.turbineRPM = u16(0);
+    tcm.turbineRpm = u16(0);
 
     // Engage status
     tcm.engageStatus = u16(2);
@@ -1385,11 +1436,11 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
 
     // TCC Slip actual (signed, byte 12-13)
     int16_t rawSlipA = static_cast<int16_t>(u16(12));
-    tcm.actualTCCslip = rawSlipA;
+    tcm.actualTccSlip = rawSlipA;
 
     // TCC Slip desired (signed, byte 14-15)
     int16_t rawSlipD = static_cast<int16_t>(u16(14));
-    tcm.desTCCslip = rawSlipD;
+    tcm.desTccSlip = rawSlipD;
 
     // Solenoid mode bitmask
     tcm.solenoidMode = u8(18);
@@ -1409,8 +1460,8 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
         // byte[0-1] = N2 sensor: unreliable during TCC lockup (drops to 30-50).
         // Use ratio only when N2 > 100 AND output > 100 (torque converter open).
         // When TCC locked (N2 < 100), show "D" without gear number.
-        if (tcm.turbineRPM > 100 && outputRPM > 100) {
-            double ratio = tcm.turbineRPM / (double)outputRPM;
+        if (tcm.turbineRpm > 100 && outputRPM > 100) {
+            double ratio = tcm.turbineRpm / (double)outputRPM;
             // NAG1 722.6 ratios: 1st=3.59, 2nd=2.19, 3rd=1.41, 4th=1.00, 5th=0.83
             if (ratio > 2.8)      { tcm.currentGear = Gear::Drive1; tcm.actualGear = 3; }
             else if (ratio > 1.7) { tcm.currentGear = Gear::Drive2; tcm.actualGear = 4; }
