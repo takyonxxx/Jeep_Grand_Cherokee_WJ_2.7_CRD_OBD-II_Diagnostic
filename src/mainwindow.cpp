@@ -1045,17 +1045,37 @@ void MainWindow::sendWindowCmd(const QString &label, const QString &relayCmd, bo
         return;
     }
 
-    // Different module — set ATRA + mode header, skip redundant AT init
-    // ATSP2/ATIFR0/ATH1 already set at connection time
+    // Different module — activate via switchToModule (DiagSession + ATRA + ATSH22)
+    // then switch to relay mode header (ATSH24xx2F)
     m_ctrlActiveHdr = hdr;
     m_ctrlInitBusy = true;
-    QString targetHex2 = hdr.mid(6, 2);
-    QString atra = "ATRA" + targetHex2;
-    m_elm->sendCommand(atra, [this, hdr, sendRelay](const QString &) {
-    m_elm->sendCommand(hdr, [this, sendRelay](const QString &) {
-        m_ctrlInitBusy = false;
-        sendRelay();
-    });});
+
+    // Map header to Module enum for switchToModule
+    WJDiagnostics::Module targetMod = WJDiagnostics::Module::BodyComputer;  // default
+    if (targetHex.compare("A0", Qt::CaseInsensitive) == 0)
+        targetMod = WJDiagnostics::Module::DriverDoor;
+    else if (targetHex.compare("A1", Qt::CaseInsensitive) == 0)
+        targetMod = WJDiagnostics::Module::PassengerDoor;
+    else if (targetHex.compare("40", Qt::CaseInsensitive) == 0)
+        targetMod = WJDiagnostics::Module::BodyComputer;
+    else if (targetHex.compare("98", Qt::CaseInsensitive) == 0)
+        targetMod = WJDiagnostics::Module::ATC;
+    else if (targetHex.compare("61", Qt::CaseInsensitive) == 0)
+        targetMod = WJDiagnostics::Module::Cluster;
+
+    m_tcm->switchToModule(targetMod, [this, hdr, sendRelay](bool ok) {
+        if (!ok) {
+            onLogMessage("Module activation failed");
+            m_ctrlInitBusy = false;
+            m_ctrlActiveHdr.clear();
+            return;
+        }
+        // Module is now active with DiagSession done, switch to relay mode header
+        m_elm->sendCommand(hdr, [this, sendRelay](const QString &) {
+            m_ctrlInitBusy = false;
+            sendRelay();
+        });
+    });
 }
 
 QWidget* MainWindow::createActuatorTab()
