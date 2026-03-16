@@ -816,6 +816,18 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
 
     *doNext = [this, ecu, step, doNext, cb, ids]() {
         if (*step >= ids->size()) {
+            // Final calculations after all blocks are read
+            // Use fuelActual from 0x32 if available (WJDiag Pro verified source)
+            double iq = (ecu->fuelActual > 0) ? ecu->fuelActual : ecu->injectionQty;
+            // Fuel flow: OM612 = 5 cylinders, 4-stroke
+            constexpr double DIESEL_DENSITY = 832.0;
+            constexpr int CYLINDERS = 5;
+            ecu->fuelFlowGS = ecu->rpm * iq * CYLINDERS / (2.0 * 1000.0 * 60.0);
+            ecu->fuelFlowLH = ecu->fuelFlowGS * 3600.0 / DIESEL_DENSITY;
+            if (ecu->vehicleSpeed > 5.0)
+                ecu->fuelLPer100km = ecu->fuelFlowLH / ecu->vehicleSpeed * 100.0;
+            else
+                ecu->fuelLPer100km = 0;
             // Read battery voltage
             m_elm->sendCommand("ATRV", [this, ecu, cb](const QString &rv) {
                 QString v = rv.trimmed().remove('V').remove('v');
@@ -906,34 +918,40 @@ void WJDiagnostics::parseTCMBlock(uint8_t blk, const QByteArray &d, TCMStatus &t
 
     switch (blk) {
     case 0x31:
-        if (n >= 8) {
-            tcm.tcmBattery = u16(2) / 100.0;
-            tcm.sensorSupply = u16(4) / 100.0;
-            tcm.solenoidSupply = u16(6) / 100.0;
+        // Real BLE: 01BB 0000 02D8 02F0 then zeros
+        // [0-1]=N2(443), [2-3]=N3(0), [4-5]=Turbine(728), [6-7]=Engine(752)
+        if (n >= 10) {
+            tcm.lfWheelSpd = u16(2);             // Input RPM N2 (reuse wheel field)
+            tcm.rfWheelSpd = u16(4);             // Input RPM N3
+            tcm.turbineRpm = u16(6);             // Turbine RPM
+            tcm.rearVehicleSpd = u16(8);         // Engine RPM from TCM
         }
         break;
     case 0x34:
-        if (n >= 14) {
-            tcm.transTemp = (u16(2) / 10.0) - 40.0;
-            tcm.tccPressure = u16(4) / 10.0;
-            tcm.shiftPsi = u16(6) / 10.0;
-            tcm.modulationPsi = u16(8) / 10.0;
-            tcm.tcmTpsPercent = u16(10) / 10.0;
-            tcm.uphillGrad = u16(12) / 10.0;
+        // Real BLE: 0217 03FF 0332 0214 0807 0001 0028
+        // [0-1] is NOT Trans Temp! Trans Temp comes from 0x30 byte[11]
+        // WJDiag Pro: SensorV=5.73V, SolV=13.28V, BattV=13.32V
+        if (n >= 12) {
+            // [0-1] unknown (535/1175 - NOT temperature)
+            // [2-3]=03FF=1023 (unknown/max)
+            tcm.sensorSupply = u16(6) * 7.0 / 1000.0;  // [4-5] Sensor V (818*7/1000=5.73) ✓
+            tcm.solenoidSupply = u16(8) / 40.0;  // [6-7] Solenoid V (532/40=13.3≈13.28)
+            tcm.tcmBattery = u16(10) / 154.5;    // [8-9] Battery V (2055/154.5=13.3≈13.32)
         }
         break;
     case 0x33:
-        if (n >= 14) {
-            tcm.lfWheelSpd = u16(2);
-            tcm.rfWheelSpd = u16(4);
-            tcm.lrWheelSpd = u16(6);
-            tcm.rrWheelSpd = u16(8);
-            tcm.rearVehicleSpd = u16(10);
-            tcm.frontVehicleSpd = u16(12);
+        // Real BLE: 0024 0771 05DC 02B8 02B4 02E3 02E1 0000
+        // WJDiag Pro: TCC press=0.000, Shift PSI=1.904, Mod PSI=1.499
+        // NOT wheel speeds! Pressure data
+        if (n >= 12) {
+            tcm.tccPressure = u16(2) / 1000.0;  // [0-1] TCC pressure (36→0.036≈0)
+            // [2-3]=0x0771=1905, [4-5]=0x05DC=1500
+            tcm.shiftPsi = u16(6) / 365.0;      // [4-5] Shift PSI (696/365=1.9≈1.904)
+            tcm.modulationPsi = u16(8) / 462.0;  // [6-7] Modulation PSI (692/462=1.5≈1.499)
         }
         break;
     case 0x32:
-        // Block 0x32 usually all zeros
+        // Block 0x32: all zeros at idle
         break;
     }
 }
@@ -1077,55 +1095,200 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
 
     switch (localID) {
     case 0x12:
+        // Block 0x12: Primary engine data (BLE full dump verified)
+        // Full: 0C79 0BE7 08B7 08B7 0000 02EC 0000 0210 038E 0B60 02A6 012A 0042 097F 03A0 0000
+        if (n >= 20) {
+            ecu.coolantTemp = u16(2) / 10.0 - 273.1;   // data[0-1] Coolant Temp
+            ecu.iat = u16(4) / 10.0 - 273.1;           // data[2-3] IAT
+            ecu.coolantSensorV = u16(6) / 1000.0;      // data[4-5] Coolant Sensor V
+            ecu.iatSensorV = u16(8) / 1000.0;          // data[6-7] IAT Sensor V
+            ecu.rpm = u16(12);                          // data[10-11] RPM
+            ecu.injectionQty = u16(16) / 100.0;        // data[14-15] Inj Qty /100=mg/str
+            ecu.mapActual = u16(18);                    // data[16-17] MAP mbar
+            ecu.boostPressure = ecu.mapActual / 1000.0; // Boost = MAP/1000 = Bar ✓ (WJDiag Pro: 0.913)
+        }
+        if (n >= 22) {
+            ecu.railActual = u16(20) * 0.101;           // data[18-19] Rail *0.101=Bar (native lib verified)
+        }
         if (n >= 34) {
-            ecu.coolantTemp = u16(2) / 10.0 - 273.1;
-            ecu.iat = u16(4) / 10.0 - 273.1;
-            ecu.tps = u16(14) / 100.0;              // Java: byte 14, /100
-            ecu.mapActual = u16(18);                 // mbar
-            ecu.railActual = u16(20) / 10.0;         // Java: byte 20, /10 -> bar
-            ecu.aap = u16(30);                       // mbar (barometric)
-            ecu.boostPressure = ecu.mapActual;        // dashboard shows MAP as boost
-            emit logMessage(QString("ECU 2112: cool=%1 iat=%2 tps=%3% map=%4 rail=%5bar aap=%6 [n=%7]")
-                .arg(ecu.coolantTemp,0,'f',1).arg(ecu.iat,0,'f',1)
-                .arg(ecu.tps,0,'f',1).arg(ecu.mapActual)
-                .arg(ecu.railActual,0,'f',1).arg(ecu.aap).arg(n));
+            ecu.baroPressure = u16(30);
+            ecu.baroPressureV = u16(32) / 1000.0;
         }
         break;
-    case 0x20:
-        if (n >= 18) {
-            ecu.mafActual = u16(14);
-            ecu.mafSpec = u16(16);
-            emit logMessage(QString("ECU 2120: maf=%1/%2").arg(ecu.mafActual).arg(ecu.mafSpec));
-        }
-        break;
-    case 0x22:
-        if (n >= 34) {
-            ecu.railSpec = u16(18) / 10.0;
-            ecu.mapSpec = u16(16);
-            emit logMessage(QString("ECU 2122: rail=%1bar mapSpec=%2")
-                .arg(ecu.railSpec,0,'f',1).arg(ecu.mapSpec));
-        }
-        break;
-    case 0x28:
-        if (n >= 6) {  // minimum: 61 28 + RPM(2) + InjQty(2)
-            ecu.rpm = u16(2);
-            ecu.injectionQty = u16(4) / 100.0;
 
-            // Injector correction values at bytes 18-27 (if available)
+    case 0x13:
+        // Block 0x13: Oil/AC/Baro (PCAP verified)
+        // Real idle: 0390 024D 02E4 02E4 0375 08B7 0000 0253 FFFA
+        // Dynamic: [2-3](570-589), [8-9](0/885), [14-15](574-595), [16-17](-6 signed)
+        if (n >= 12) {
+            ecu.baroPressure = u16(2);                  // data[0-1] 912 mbar baro
+            ecu.oilPressure = u16(4) / 100.0;          // data[2-3] Oil Pressure /100=bar (5.89)
+            ecu.acPressure = u16(6) / 100.0;           // data[4-5] AC Pressure /100=bar (7.40)
+            ecu.acPressureV = u16(8) / 1000.0;         // data[6-7] AC Pressure V
+        }
+        if (n >= 18) {
+            ecu.oilPressureV = u16(16) / 1000.0;       // data[14-15] Oil Pressure V (595→0.595V)
+        }
+        break;
+
+    case 0x16:
+        // Block 0x16: Battery/Alternator (BLE full dump verified)
+        // BLE: 251C 2138 0000...0000 2710 07DA 0000...01F4 0000 0000
+        // [0-1]=9500 (alternator raw), [2-3]=8504 (battery ADC)
+        // Battery=13.85V: data[2-3]*5.0/3072=8504*5/3072=13.84 ✓
+        if (n >= 6) {
+            ecu.batteryVoltage = u16(4) * 5.0 / 3072.0; // data[2-3] Battery V ✓ (13.85V)
+        }
+        if (n >= 36) {
+            ecu.alternatorDuty = u16(34) / 10.0;         // data[32-33] Alt Duty (01F4=500→50%)
+        }
+        break;
+
+    case 0x20:
+        // Block 0x20: MAF actual/spec, cruise (PCAP verified)
+        // Real idle: 015C 0283 03FD 0000 0094 0000 019A 0166 0104
+        // [0-1]=348dyn, [2-3]=643dyn, [4-5]=1021, [8-9]=148dyn
+        if (n >= 8) {
+            ecu.mafSpec = u16(2);                       // data[0-1] MAF actual alt? (348)
+            ecu.mafVoltage = u16(4) / 1000.0;          // data[2-3] MAF Voltage? (643→0.643V)
+            ecu.cruiseSwitchV = u16(6) / 1000.0;       // data[4-5] Cruise Switch V (1.021V)
+        }
+        break;
+
+    case 0x21:
+        // Block 0x21: Fuel quantities (PCAP verified, all /100=mg/str)
+        // Real idle: 018E 03E3 03FC 004C 012A 03FD 0250 01EE 00A9
+        // =3.98 9.95 10.20 0.76 2.98 10.21 5.92 4.94 1.69
+        if (n >= 20) {
+            ecu.fuelQtyPedal = u16(2) / 100.0;         // data[0-1] Desired Fuel QTY Pedal
+            ecu.fuelQtyCruise = u16(4) / 100.0;        // data[2-3] Desired Fuel QTY Cruise
+            ecu.fuelDemand = u16(6) / 100.0;           // data[4-5] Desired Fuel QTY Demand
+            ecu.fuelDriver = u16(8) / 100.0;           // data[6-7] Desired Fuel QTY Driver
+            // data[8-9] = NOT fuelActual (WJDiag Pro reads fuelActual from 0x32)
+            ecu.fuelStartSet = u16(12) / 100.0;        // data[10-11] Fuel QTY Start Setpoint
+            ecu.fuelLimit = u16(14) / 100.0;           // data[12-13] Fuel QTY Limit
+            ecu.fuelTorque = u16(16) / 100.0;          // data[14-15] Fuel QTY Torque
+            ecu.fuelIdleGov = u16(18) / 100.0;         // data[16-17] Fuel QTY Low-Idle Gov
+        }
+        break;
+
+    case 0x22:
+        // Block 0x22: Coolant, IAT, Boost (user confirmed)
+        // BLE: 0C79 0BE7 08B7 08B7 0000 0000 0211 038E 0B97 0394...
+        // [14-15]=MAP/1000=Boost, [16-17]=AirIntakeVolts/1000=V (NOT Rail!)
+        if (n >= 18) {
+            ecu.coolantTemp = u16(2) / 10.0 - 273.1;   // data[0-1] Coolant ✓
+            ecu.iat = u16(4) / 10.0 - 273.1;           // data[2-3] IAT ✓
+            ecu.coolantSensorV = u16(6) / 1000.0;      // data[4-5]
+            ecu.iatSensorV = u16(8) / 1000.0;          // data[6-7]
+            ecu.boostPressure = u16(16) / 1000.0;      // data[14-15] MAP/1000=Bar ✓
+        }
+        break;
+
+    case 0x23:
+        // Block 0x23: Boost/MAP detail (BLE verified)
+        // BLE: 097F 0250 FFFC 0BD7 03A0 02A3 0085 0043 03FD 012A
+        // data[0-1]=2431 Boost Sensor V raw, data[6-7]=3031 NOT boost (turbo pressure?)
+        // Boost Pressure Sensor = MAP/1000 from 0x12/0x22, NOT from here
+        if (n >= 4) {
+            ecu.boostVoltage = u16(2) / 1000.0;        // data[0-1] Boost Sensor V raw
+        }
+        break;
+
+    case 0x26:
+        // Block 0x26: Fuel level/regulator (PCAP verified)
+        // Real idle: 0000 0316 0000 5CAF 7FFF 0000 2FA0 0029 0029
+        // [0-1]=0, [2-3]=790dyn(0-790), [6-7]=23727, [8-9]=32767, [12-13]=12192
+        if (n >= 6) {
+            ecu.fuelLevel = u16(2);                     // data[0-1] Fuel Level raw (0 at idle)
+            ecu.fuelLevelV = u16(4) / 1000.0;          // data[2-3] Fuel Level Sensor V
+        }
+        if (n >= 12) {
+            ecu.fuelRegOutput = u16(6);                 // data[4-5] Fuel Pressure Raw
+            ecu.fuelPressureV = u16(8) / 1000.0;       // data[6-7] (23727→23.7V? raw ADC)
+            ecu.fuelPressureSet = u16(10);              // data[8-9] (32767=0x7FFF sentinel?)
+        }
+        break;
+
+    case 0x28:
+        // Block 0x28: RPM + Fuel injection (WJDiag Pro APK native lib)
+        // Overrides 0x12 values if present
+        if (n >= 6) {
+            uint16_t rpmVal = u16(2);
+            double iqVal = u16(4) / 100.0;
+            if (rpmVal > 0) {
+                ecu.rpm = rpmVal;
+                ecu.injectionQty = iqVal;
+            }
             if (n >= 28) {
                 for (int i = 0; i < 5; i++)
                     ecu.injCorr[i] = s16(18 + i*2) / 100.0;
             }
+        }
+        break;
 
-            // Fuel flow calculation: OM612 = 5 cylinders, 4-stroke
-            constexpr double DIESEL_DENSITY = 832.0;  // g/L
-            constexpr int CYLINDERS = 5;               // OM612
-            ecu.fuelFlowGS = ecu.rpm * ecu.injectionQty * CYLINDERS / (2.0 * 1000.0 * 60.0);
-            ecu.fuelFlowLH = ecu.fuelFlowGS * 3600.0 / DIESEL_DENSITY;
+    case 0x30:
+        // Block 0x30: RPM setpoints (PCAP verified)
+        // Real idle: 02EE 0000 0000 0F41 0F42 03DA 0000 0000 0000
+        // [0-1]=750 idle RPM, [6-7]+[8-9]=paired dynamic, [10-11]=986dyn
+        if (n >= 4) {
+            ecu.idleRpmSet = u16(2);                    // data[0-1] = 750 Idle RPM ✓
+            ecu.lowIdleSetpoint = ecu.idleRpmSet;       // Alias for live data display
+        }
+        break;
 
-            emit logMessage(QString("ECU 2128: rpm=%1 iq=%2mg/str fuel=%3L/h %4g/s [n=%5]")
-                .arg(ecu.rpm).arg(ecu.injectionQty,0,'f',1)
-                .arg(ecu.fuelFlowLH,0,'f',2).arg(ecu.fuelFlowGS,0,'f',2).arg(n));
+    case 0x32:
+        // Block 0x32: Fuel actual + Vehicle speed (WJDiag Pro verified: reads 0x32 for Actual Fuel Qty)
+        // Real idle: 0588 0907 0000 0000 0CE4 0589 0588 0184 0175
+        // [0-1]=dyn(585-750) → /100 = 5.85-7.50 mg/str (idle fuel)
+        // [4-5]=0, [6-7]=0 at idle → vehicle speed
+        if (n >= 4) {
+            ecu.fuelActual = u16(2) / 100.0;           // data[0-1] Actual Fuel Qty /100=mg/str ✓
+        }
+        if (n >= 8) {
+            ecu.vehicleSpeed = u16(6);                  // data[4-5] = 0 at idle → speed raw
+            ecu.vehicleSpeedSet = u16(8);               // data[6-7] = 0 at idle → speed setpoint
+        }
+        break;
+
+    case 0x34:
+        // Block 0x34: Transfer case + injector (PCAP verified)
+        // Real idle: 0040 1000 0000 0004 0000...0000 03FF
+        // [0-1]=64, [2-3]=4096, [6-7]=4, [16-17]=1023
+        if (n >= 10) {
+            ecu.transferCaseV = u16(2) / 1000.0;       // data[0-1] Transfer Case V (64→0.064V)
+            ecu.camCrankSync = u16(4);                  // data[2-3] Cam/Crank (4096)
+            ecu.injBankCap = u16(8) / 10.0;            // data[6-7] Inj Bank Cap (4→0.4V)
+        }
+        break;
+
+    case 0x36:
+        // Block 0x36: Pedal + MAF (PCAP + WJDiag Pro verified)
+        // Real idle: 0000 0100 0579 134C 039F 0390 0A22 0000 039C
+        // [0-1]=0dyn(pedal), [2-3]=256(pedal2), [4-5]=1401dyn(pedalV1)
+        // [6-7]=4940dyn(MAF /10=494mg/str), [8-9]=927(MAP), [10-11]=912
+        // [12-13]=2594dyn, [16-17]=924
+        if (n >= 12) {
+            ecu.pedalPos1 = u16(2) / 100.0;            // data[0-1] Accel Pedal 1 %
+            ecu.pedalPos2 = u16(4) / 100.0;            // data[2-3] Accel Pedal 2 %
+            ecu.pedalV1 = u16(6) / 1000.0;             // data[4-5] Accel Pedal 1 V (1.401V)
+            ecu.mafActual = u16(8) / 10.0;             // data[6-7] MAF /10=Mg/Str ✓ (494.0)
+            ecu.boostSetpoint = u16(10) / 1000.0;      // data[8-9] Boost Setpoint /1000=Bar
+        }
+        if (n >= 20) {
+            ecu.pedalV2 = u16(14) / 1000.0;            // data[12-13] Accel Pedal 2 V
+            ecu.mafVoltage = u16(18) / 1000.0;         // data[16-17] MAF Voltage
+        }
+        break;
+
+    case 0x37:
+        // Block 0x37: EGR/Wastegate (PCAP verified)
+        // Real idle: 0C97 11E8 0079 0000 0008 0000 0000 0000 0076
+        // [0-1]=3223 const, [2-3]=4584 dynamic(3144-4584), [4-5]=121
+        // [16-17]=118 dyn(118-122)
+        if (n >= 8) {
+            ecu.mafEgrSetpoint = u16(2);                // data[0-1] EGR/MAF raw (3223)
+            ecu.wastegate = u16(4);                     // data[2-3] Wastegate raw (4584 dyn)
         }
         break;
     case 0x62:
@@ -1196,15 +1359,6 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
                 .arg(u16(8)).arg(u16(10)).arg(u8(12)));
         }
         break;
-    case 0x16:
-        // Block 0x16: Idle/fuel parameters (verified: 40 bytes)
-        // [0-1]=012C(300) [2-3]=2134 [4-5]=012C(300)
-        if (n >= 6) {
-            emit logMessage(QString("ECU 2116: v0=%1 v2=%2 v4=%3 v16=%4 v18=%5")
-                .arg(u16(2)).arg(u16(4)).arg(u16(6))
-                .arg(n >= 20 ? u16(18) : 0).arg(n >= 22 ? u16(20) : 0));
-        }
-        break;
     case 0x24:
         // Block 0x24: RPM thresholds? (verified: 26 bytes)
         // [16-17]=0746(1862) [18-19]=07B9(1977) [20-21]=094E(2382)
@@ -1214,29 +1368,6 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
                 .arg(n >= 20 ? u16(18) : 0)
                 .arg(n >= 22 ? u16(20) : 0)
                 .arg(n >= 24 ? u16(22) : 0));
-        }
-        break;
-    case 0x26:
-        // Block 0x26: Sensor/injector raw (verified: 32 bytes)
-        // [6-7]=5C6C [12-13]=2FA0 [14-21]=0029 repeated (injector trims?)
-        // [28-29]=0BCD (coolant raw?)
-        if (n >= 16) {
-            ecu.accelPedalRaw = u16(8);    // byte[6-7] of data (raw ADC?)
-            emit logMessage(QString("ECU 2126: raw6=%1 raw8=%2 raw12=%3 inj=%4,%5,%6,%7 cool=%8")
-                .arg(u16(8)).arg(u16(10)).arg(u16(14))
-                .arg(u16(16)).arg(u16(18)).arg(u16(20)).arg(u16(22))
-                .arg(n >= 32 ? u16(30) : 0));
-        }
-        break;
-    case 0x30:
-        // Block 0x30: RPM setpoints (verified: 26 bytes)
-        // [0-1]=02EE(750=idle RPM) [6-7]=0AD9(2777) [8-9]=0AD9
-        // [10-11]=03EA(1002=MAP?) [18-19]=0B91(2961)
-        if (n >= 4) {
-            ecu.idleRpmSet = u16(2);
-            emit logMessage(QString("ECU 2130: idleSet=%1 v6=%2 v8=%3 v10=%4 v18=%5")
-                .arg(ecu.idleRpmSet).arg(u16(8)).arg(u16(10))
-                .arg(u16(12)).arg(n >= 22 ? u16(20) : 0));
         }
         break;
     case 0x18:
@@ -1686,11 +1817,18 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
     // [20]    Flags (0x00 idle, 0x80 during D engagement, 0x82 briefly)
     // [21]    Flags (always 0x08)
 
-    // Turbine/N2 sensor RPM
-    tcm.turbineRpm = u16(0);
+    // Real BLE 0x30: 0017 001E 0000 0008 0400 DD60 FFF6 FFF6 0000 9618 0008
+    // [0-1] = Actual TCC Slip (23≈20)
+    // [2-3] = Desired TCC Slip (30)
+    // [4-5] = Output RPM (0 idle)
+    // [7] = Selector (P=8, D=5)
+    // [9] = Actual Gear (0=P, 1-5=gear)
 
-    // Engage status
-    tcm.engageStatus = u16(2);
+    // TCC Slip actual (was wrongly called turbineRpm)
+    tcm.actualTccSlip = static_cast<int16_t>(u16(0));
+
+    // TCC Slip desired
+    tcm.desTccSlip = static_cast<int16_t>(u16(2));
 
     // Output Shaft RPM
     uint16_t outputRPM = u16(4);
@@ -1706,45 +1844,32 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
     int16_t rawLP = static_cast<int16_t>(u16(9));
     tcm.linePressure = rawLP;
 
-    // TCC Slip actual (signed, byte 12-13)
-    int16_t rawSlipA = static_cast<int16_t>(u16(12));
-    tcm.actualTccSlip = rawSlipA;
-
-    // TCC Slip desired (signed, byte 14-15)
-    int16_t rawSlipD = static_cast<int16_t>(u16(14));
-    tcm.desTccSlip = rawSlipD;
-
     // Solenoid mode bitmask
     tcm.solenoidMode = u8(18);
 
     // Solenoid supply: NOT available in block 0x30
     tcm.solenoidSupply = 0;
 
-    // Gear from byte[7]: SELECTOR RANGE, not actual gear
-    // P=8, R=7, N=6, D=5 (all drive gears show as 5)
+    // Gear from byte[7] = selector range: P=8, R=7, N=6, D=5
+    // Gear from byte[9] = ACTUAL GEAR NUMBER (PCAP verified):
+    //   0x00 = P/N, 0x01 = 1st, 0x02 = 2nd, 0x03 = 3rd, 0x04 = 4th, 0x05 = 5th
+    //   0xFF/0x58 = shift in progress
+    // byte[10] = gear * 0x11 (double confirmation: 0x11=1st, 0x22=2nd, 0x33=3rd, 0x44=4th)
     tcm.gearByte = u8(7);
+    uint8_t actualGearNum = u8(9);
+
     switch (tcm.gearByte) {
     case 8: tcm.currentGear = Gear::Park;    tcm.actualGear = 0; break;
     case 7: tcm.currentGear = Gear::Reverse; tcm.actualGear = 1; break;
     case 6: tcm.currentGear = Gear::Neutral; tcm.actualGear = 2; break;
-    case 5: // D range - all drive gears (1-5) show as byte[7]=5
-        // Gear estimation from RPM ratio when available.
-        // byte[0-1] = N2 sensor: unreliable during TCC lockup (drops to 30-50).
-        // Use ratio only when N2 > 100 AND output > 100 (torque converter open).
-        // When TCC locked (N2 < 100), show "D" without gear number.
-        if (tcm.turbineRpm > 100 && outputRPM > 100) {
-            double ratio = tcm.turbineRpm / (double)outputRPM;
-            // NAG1 722.6 ratios: 1st=3.59, 2nd=2.19, 3rd=1.41, 4th=1.00, 5th=0.83
-            if (ratio > 2.8)      { tcm.currentGear = Gear::Drive1; tcm.actualGear = 3; }
-            else if (ratio > 1.7) { tcm.currentGear = Gear::Drive2; tcm.actualGear = 4; }
-            else if (ratio > 1.15){ tcm.currentGear = Gear::Drive3; tcm.actualGear = 5; }
-            else if (ratio > 0.9) { tcm.currentGear = Gear::Drive4; tcm.actualGear = 6; }
-            else                  { tcm.currentGear = Gear::Drive5; tcm.actualGear = 7; }
-        } else if (outputRPM > 50) {
-            // Moving but TCC locked — cannot determine gear
-            tcm.currentGear = Gear::Drive1; tcm.actualGear = 3; // "D"
-        } else {
-            tcm.currentGear = Gear::Drive1; tcm.actualGear = 3; // D idle
+    case 5: // D range — use byte[9] for actual gear
+        switch (actualGearNum) {
+        case 0x01: tcm.currentGear = Gear::Drive1; tcm.actualGear = 3; break;
+        case 0x02: tcm.currentGear = Gear::Drive2; tcm.actualGear = 4; break;
+        case 0x03: tcm.currentGear = Gear::Drive3; tcm.actualGear = 5; break;
+        case 0x04: tcm.currentGear = Gear::Drive4; tcm.actualGear = 6; break;
+        case 0x05: tcm.currentGear = Gear::Drive5; tcm.actualGear = 7; break;
+        default:   tcm.currentGear = Gear::Drive1; tcm.actualGear = 3; break; // shift transition
         }
         break;
     default: tcm.currentGear = Gear::Unknown; tcm.actualGear = -1; break;
@@ -1844,27 +1969,28 @@ void WJDiagnostics::initLiveDataParams()
 {
     // TCM K-Line (0x20) ReadLocalData parameters
     m_liveParams = {
-        {0x01, "Actual Gear",                 "",      0,   7,   1.0,    0, 1, false},
+        // === TCM Parameters (0x01-0x30) ===
+        {0x01, "Actual Gear",                 "",      0,   7,   1.0,    0, 1, true},
+        {0x10, "Turbine RPM",                 "rpm",   0, 8000, 1.0,    0, 2, true},
+        {0x13, "Output RPM",                  "rpm",   0, 8000, 1.0,    0, 2, true},
+        {0x14, "Transmission Temp",           "C",   -40, 200,  1.0,  -40, 1, true},
+        {0x15, "Line Pressure",               "mbar",  0, 2000, 1.0,    0, 2, true},
+        {0x16, "Solenoid Supply",             "V",     0,  20,  0.1,    0, 1, true},
+        {0x18, "Actual TCC Slip",             "rpm",-2000,2000, 1.0,    0, 2, true},
+        {0x19, "Desired TCC Slip",            "rpm",-2000,2000, 1.0,    0, 2, true},
+        {0x20, "Vehicle Speed",               "km/h",  0, 300,  1.0,    0, 2, true},
         {0x02, "Selected Gear",               "",      0,   7,   1.0,    0, 1, false},
         {0x03, "Max Gear",                    "",      0,   7,   1.0,    0, 1, false},
         {0x04, "Shift Selector Position",     "",      0,  15,   1.0,    0, 1, false},
-        {0x10, "Turbine RPM",                 "rpm",   0, 8000, 1.0,    0, 2, false},
         {0x11, "Input RPM (N2)",              "rpm",   0, 8000, 1.0,    0, 2, false},
         {0x12, "Input RPM (N3)",              "rpm",   0, 8000, 1.0,    0, 2, false},
-        {0x13, "Output RPM",                  "rpm",   0, 8000, 1.0,    0, 2, false},
-        {0x14, "Transmission Temp",           "C",   -40, 200,  1.0,  -40, 1, false},
-        {0x15, "TCC Pressure",                "PSI",   0, 255,  0.1,    0, 1, false},
-        {0x16, "Solenoid Supply",             "V",     0,  20,  0.1,    0, 1, false},
         {0x17, "TCC Clutch State",            "",      0,   5,  1.0,    0, 1, false},
-        {0x18, "Actual TCC Slip",             "rpm",-2000,2000, 1.0,    0, 2, true},
-        {0x19, "Desired TCC Slip",            "rpm",-2000,2000, 1.0,    0, 2, true},
         {0x1A, "Act 1245 Solenoid",           "%",     0, 100,  0.39,   0, 1, false},
         {0x1B, "Set 1245 Solenoid",           "%",     0, 100,  0.39,   0, 1, false},
         {0x1C, "Act 2-3 Solenoid",            "%",     0, 100,  0.39,   0, 1, false},
         {0x1D, "Set 2-3 Solenoid",            "%",     0, 100,  0.39,   0, 1, false},
         {0x1E, "Act 3-4 Solenoid",            "%",     0, 100,  0.39,   0, 1, false},
         {0x1F, "Set 3-4 Solenoid",            "%",     0, 100,  0.39,   0, 1, false},
-        {0x20, "Vehicle Speed",               "km/h",  0, 300,  1.0,    0, 2, false},
         {0x21, "Front Vehicle Speed",         "km/h",  0, 300,  1.0,    0, 2, false},
         {0x22, "Rear Vehicle Speed",          "km/h",  0, 300,  1.0,    0, 2, false},
         {0x23, "Shift PSI",                   "PSI",   0, 500,  0.1,    0, 2, false},
@@ -1875,20 +2001,71 @@ void WJDiagnostics::initLiveDataParams()
         {0x28, "Primary Brake Switch",        "",      0,   1,  1.0,    0, 1, false},
         {0x29, "Secondary Brake Switch",      "",      0,   1,  1.0,    0, 1, false},
         {0x2A, "Kickdown Switch",             "",      0,   1,  1.0,    0, 1, false},
-        {0x2B, "Fuel QTY Torque",             "%",     0, 100,  0.39,   0, 1, false},
-        {0x2C, "Swirl Solenoid",              "",      0,   1,  1.0,    0, 1, false},
-        {0x2D, "Wastegate Solenoid",          "%",     0, 100,  0.39,   0, 1, false},
-        {0x30, "Calculated Gear",             "",      0,   7,  1.0,    0, 1, false},
-        // ECU (0x15) parameters - localID 0xE0+ range (virtual IDs for ECU block data)
-        {0xF0, "Engine RPM",                  "rpm",   0, 6000, 1.0,    0, 2, false},
-        {0xF1, "Coolant Temp",                "C",   -40, 150,  1.0,    0, 2, false},
+        {0x2B, "TCM Battery",                 "V",     0,  20,  0.01,   0, 2, false},
+        {0x2C, "Sensor Supply",               "V",     0,  10,  0.01,   0, 2, false},
+        {0x2D, "LF Wheel Speed",              "km/h",  0, 300,  1.0,    0, 2, false},
+        {0x2E, "RF Wheel Speed",              "km/h",  0, 300,  1.0,    0, 2, false},
+        {0x2F, "LR Wheel Speed",              "km/h",  0, 300,  1.0,    0, 2, false},
+        {0x30, "RR Wheel Speed",              "km/h",  0, 300,  1.0,    0, 2, false},
+        {0x31, "TCC Pressure",                "PSI",   0, 500,  0.1,    0, 2, false},
+        {0x32, "TPS Percent",                 "%",     0, 100,  0.1,    0, 2, false},
+        {0x33, "Uphill Grad",                 "",   -100, 100,  0.1,    0, 2, false},
+        // === ECU Parameters (0xF0+ virtual IDs) ===
+        {0xF0, "Engine RPM",                  "rpm",   0, 6000, 1.0,    0, 2, true},
+        {0xF1, "Coolant Temp",                "C",   -40, 150,  1.0,    0, 2, true},
+        {0xF4, "Boost Pressure",              "Bar",   0, 5, 1.0,    0, 2, true},
+        {0xF5, "MAF Actual",                  "mg/s",  0, 2000, 1.0,    0, 2, true},
+        {0xF6, "Rail Pressure",               "bar",   0, 2000, 1.0,    0, 2, true},
+        {0xF7, "Injection Qty",               "mg",    0, 100,  1.0,    0, 2, true},
+        {0xF8, "Battery Voltage",             "V",     0,  20,  1.0,    0, 2, true},
         {0xF2, "Intake Air Temp",             "C",   -40, 100,  1.0,    0, 2, false},
         {0xF3, "Throttle Position",           "%",     0, 100,  1.0,    0, 2, false},
-        {0xF4, "Boost Pressure",              "mbar",  0, 3000, 1.0,    0, 2, false},
-        {0xF5, "MAF Actual",                  "mg/s",  0, 2000, 1.0,    0, 2, false},
-        {0xF6, "Rail Pressure",               "bar",   0, 2000, 1.0,    0, 2, false},
-        {0xF7, "Injection Qty",               "mg",    0, 100,  1.0,    0, 2, false},
-        {0xF8, "Battery Voltage",             "V",     0,  20,  1.0,    0, 2, false},
+        {0xE0, "Low Idle Setpoint",           "rpm",   0, 2000, 1.0,    0, 2, false},
+        {0xE1, "Accel Pedal 1",               "%",     0, 100,  1.0,    0, 2, false},
+        {0xE2, "Accel Pedal 2",               "%",     0, 100,  1.0,    0, 2, false},
+        {0xE3, "Accel Pedal 1 Voltage",       "V",     0,   5,  1.0,    0, 2, false},
+        {0xE4, "Accel Pedal 2 Voltage",       "V",     0,   5,  1.0,    0, 2, false},
+        {0xE5, "Boost Pressure Voltage",      "V",     0,   5,  1.0,    0, 2, false},
+        {0xE6, "Boost Pressure Setpoint",     "Bar",   0,    5, 1.0,    0, 2, false},
+        {0xE7, "Fuel Level",                  "%",     0, 100,  1.0,    0, 1, false},
+        {0xE8, "Fuel Level Sensor Voltage",   "V",     0,   5,  1.0,    0, 2, false},
+        {0xE9, "Fuel Regulator Output",       "%",     0, 100,  1.0,    0, 1, false},
+        {0xEA, "Fuel Rail Voltage",           "V",     0,   5,  1.0,    0, 2, false},
+        {0xEB, "Fuel Pressure Setpoint",      "bar",   0, 2000, 1.0,    0, 1, false},
+        {0xEC, "Desired Fuel QTY Pedal",      "mg",    0, 100,  1.0,    0, 2, false},
+        {0xED, "Desired Fuel QTY Cruise",     "mg",    0, 100,  1.0,    0, 2, false},
+        {0xEE, "Desired Fuel QTY Demand",     "mg",    0, 100,  1.0,    0, 2, false},
+        {0xEF, "Desired Fuel QTY Driver",     "mg",    0, 100,  1.0,    0, 2, false},
+        {0xD0, "Actual Fuel Quantity",        "mg",    0, 100,  1.0,    0, 2, false},
+        {0xD1, "Fuel QTY Start Setpoint",     "mg",    0, 100,  1.0,    0, 2, false},
+        {0xD2, "Fuel QTY Limit",              "mg",    0, 100,  1.0,    0, 2, false},
+        {0xD3, "Fuel QTY Torque",             "mg",    0, 100,  1.0,    0, 2, false},
+        {0xD4, "Fuel QTY Low-Idle Gov",       "mg",    0, 100,  1.0,    0, 2, false},
+        {0xD5, "Battery Temp",                "C",   -40, 100,  1.0,    0, 1, false},
+        {0xD6, "Battery Temp Voltage",        "V",     0,   5,  1.0,    0, 2, false},
+        {0xD7, "Alternator Field Current",    "A",     0,  20,  1.0,    0, 2, false},
+        {0xD8, "Alternator Duty Cycle",       "%",     0, 100,  1.0,    0, 1, false},
+        {0xD9, "Oil Pressure",                "bar",   0,  10,  1.0,    0, 2, false},
+        {0xDA, "Oil Pressure Voltage",        "V",     0,   5,  1.0,    0, 2, false},
+        {0xDB, "Coolant Sensor Voltage",      "V",     0,   5,  1.0,    0, 2, false},
+        {0xDC, "Air Intake Volts",            "V",     0,   5,  1.0,    0, 2, false},
+        {0xDD, "Outside Air Temperature",     "C",   -40, 60,   1.0,    0, 1, false},
+        {0xDE, "MAF Voltage",                 "V",     0,   5,  1.0,    0, 2, false},
+        {0xDF, "Barometric Pressure",         "mbar",  0, 1200, 1.0,    0, 2, false},
+        {0xC0, "Barometer Pressure Voltage",  "V",     0,   5,  1.0,    0, 2, false},
+        {0xC1, "AC System Pressure",          "bar",   0,  30,  1.0,    0, 2, false},
+        {0xC2, "AC System Pressure Voltage",  "V",     0,   5,  1.0,    0, 2, false},
+        {0xC3, "Vehicle Speed",               "km/h",  0, 300,  1.0,    0, 2, false},
+        {0xC4, "Vehicle Speed Setpoint",      "km/h",  0, 300,  1.0,    0, 2, false},
+        {0xC5, "Cruise Switch Voltage",       "V",     0,   5,  1.0,    0, 2, false},
+        {0xC6, "MAF for EGR Setpoint",        "mg/s",  0, 2000, 1.0,    0, 2, false},
+        {0xC7, "Wastegate Solenoid",          "%",     0, 100,  1.0,    0, 1, false},
+        {0xC8, "Transfer Case Voltage",       "V",     0,   5,  1.0,    0, 2, false},
+        {0xC9, "Cam/Crank Sync",              "",      0,   1,  1.0,    0, 1, false},
+        {0xCA, "Injector Bank 1 Cap",         "V",     0, 200,  1.0,    0, 1, false},
+        {0xCB, "Rail Pressure Setpoint",      "bar",   0, 2000, 1.0,    0, 2, false},
+        {0xCC, "MAF Spec",                    "mg/s",  0, 2000, 1.0,    0, 2, false},
+        {0xCD, "Fuel",                        "L/h",   0,  50,  1.0,    0, 2, true},
     };
     emit logMessage(QString("Live data: %1 parameters loaded").arg(m_liveParams.size()));
 }

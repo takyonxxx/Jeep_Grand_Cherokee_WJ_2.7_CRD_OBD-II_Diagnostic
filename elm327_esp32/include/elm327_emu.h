@@ -43,6 +43,7 @@ private:
     float  coolantTemp  = 82.0f;
     float  transTemp    = 77.0f;
     uint8_t gearSel     = 8;
+    int tcmReadCount    = 0;
     void tick();
     uint32_t _t0 = 0;
 };

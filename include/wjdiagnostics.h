@@ -87,6 +87,7 @@ public:
     struct ECUStatus {
         double rpm=0, injectionQty=0;
         double fuelFlowLH=0;   // L/h instantaneous fuel consumption
+        double fuelLPer100km=0; // L/100km instantaneous consumption
         double fuelFlowGS=0;   // g/s total fuel mass flow
         double coolantTemp=0, iat=0, tps=0;
         double mapActual=0, aap=0;

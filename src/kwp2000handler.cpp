@@ -11,7 +11,7 @@ KWP2000Handler::KWP2000Handler(ELM327Connection *elm, QObject *parent)
 
     // TesterPresent zamanlayıcı - her 2 saniyede bir oturum canlı tut
     m_testerPresentTimer = new QTimer(this);
-    m_testerPresentTimer->setInterval(2000);
+    m_testerPresentTimer->setInterval(3500);
     connect(m_testerPresentTimer, &QTimer::timeout,
             this, &KWP2000Handler::sendTesterPresent);
 }
@@ -190,7 +190,7 @@ void KWP2000Handler::readLocalData(uint8_t localID,
         QByteArray payload = stripHeader(resp);
         emit liveDataReceived(localID, payload);
         if (callback) callback(payload);
-    }, 2000);
+    }, 800);
 }
 
 void KWP2000Handler::readCommonData(uint16_t commonID,

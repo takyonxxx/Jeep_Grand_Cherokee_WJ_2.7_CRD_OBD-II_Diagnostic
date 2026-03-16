@@ -168,5 +168,5 @@ private:
 
     QString m_elmVersion;
     QString m_elmVoltage;
-    int m_defaultTimeoutMs = 3000;
+    int m_defaultTimeoutMs = 1000;
 };

@@ -198,16 +198,16 @@ QFrame* MainWindow::createGaugeCard(const QString &title, const QString &initVal
     QVBoxLayout *lay = new QVBoxLayout(card);
     lay->setContentsMargins(2,1,2,1); lay->setSpacing(0);
     QLabel *tl = new QLabel(title);
-    tl->setStyleSheet("color:#5888a8;font-size:10px;border:none;background:transparent;");
+    tl->setStyleSheet("color:#5888a8;font-size:14px;border:none;background:transparent;");
     tl->setAlignment(Qt::AlignCenter); lay->addWidget(tl);
     QLabel *vl = new QLabel(initValue);
     vl->setAlignment(Qt::AlignCenter);
-    vl->setStyleSheet("color:#00d4b4;font-size:15px;font-weight:bold;"
+    vl->setStyleSheet("color:#00d4b4;font-size:22px;font-weight:bold;"
         "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;");
     lay->addWidget(vl);
     QLabel *ul = new QLabel(unit);
     ul->setAlignment(Qt::AlignCenter);
-    ul->setStyleSheet("color:#406888;font-size:10px;border:none;background:transparent;");
+    ul->setStyleSheet("color:#406888;font-size:13px;border:none;background:transparent;");
     lay->addWidget(ul);
     *valueLabel = vl; *unitLabel = ul;
     return card;
@@ -275,7 +275,7 @@ void MainWindow::rebuildDashboard()
         gl->setContentsMargins(4,2,4,2); gl->setSpacing(0);
         QLabel *gt = new QLabel("GEAR");
         gt->setAlignment(Qt::AlignCenter);
-        gt->setStyleSheet("color:#5888a8;font-size:10px;border:none;background:transparent;");
+        gt->setStyleSheet("color:#5888a8;font-size:14px;border:none;background:transparent;");
         gl->addWidget(gt);
         m_dashGearVal = new QLabel("---");
         m_dashGearVal->setAlignment(Qt::AlignCenter);
@@ -284,7 +284,7 @@ void MainWindow::rebuildDashboard()
         gl->addWidget(m_dashGearVal);
         m_dashGearUnit = new QLabel("");
         m_dashGearUnit->setAlignment(Qt::AlignCenter);
-        m_dashGearUnit->setStyleSheet("color:#406888;font-size:10px;border:none;background:transparent;");
+        m_dashGearUnit->setStyleSheet("color:#406888;font-size:14px;border:none;background:transparent;");
         gl->addWidget(m_dashGearUnit);
         g->addWidget(gearCard, 0, 1, 2, 2);
 
@@ -320,7 +320,7 @@ void MainWindow::rebuildDashboard()
         fl->setContentsMargins(4,2,4,2); fl->setSpacing(0);
         QLabel *ft = new QLabel("FUEL");
         ft->setAlignment(Qt::AlignCenter);
-        ft->setStyleSheet("color:#5888a8;font-size:10px;border:none;background:transparent;");
+        ft->setStyleSheet("color:#5888a8;font-size:14px;border:none;background:transparent;");
         fl->addWidget(ft);
         m_dashFuelAdaptVal = new QLabel("---");
         m_dashFuelAdaptVal->setAlignment(Qt::AlignCenter);
@@ -329,14 +329,14 @@ void MainWindow::rebuildDashboard()
         fl->addWidget(m_dashFuelAdaptVal);
         m_dashFuelAdaptUnit = new QLabel("L/h");
         m_dashFuelAdaptUnit->setAlignment(Qt::AlignCenter);
-        m_dashFuelAdaptUnit->setStyleSheet("color:#406888;font-size:12px;border:none;background:transparent;");
+        m_dashFuelAdaptUnit->setStyleSheet("color:#406888;font-size:13px;border:none;background:transparent;");
         fl->addWidget(m_dashFuelAdaptUnit);
         g->addWidget(fuelCard, 0, 1, 2, 2);
 
         g->addWidget(createGaugeCard("INJ-Q", "---", "mg/str", &m_dashSpeedVal, &m_dashSpeedUnit), 0, 3);
 
         // Row 1
-        g->addWidget(createGaugeCard("BOOST", "---", "mbar", &m_dashMotBoostVal, &m_dashMotBoostUnit), 1, 0);
+        g->addWidget(createGaugeCard("BOOST", "---", "Bar", &m_dashMotBoostVal, &m_dashMotBoostUnit), 1, 0);
         // FUEL spans here
         g->addWidget(createGaugeCard("RAIL", "---", "bar", &m_dashMotRailVal, &m_dashMotRailUnit), 1, 3);
 
@@ -355,7 +355,7 @@ void MainWindow::rebuildDashboard()
         g->addWidget(createGaugeCard("RPM", "---", "rpm", &m_dashMotRpmVal, &m_dashMotRpmUnit), 0, 2);
         g->addWidget(createGaugeCard("TURBIN", "---", "rpm", &m_dashRpmVal, &m_dashRpmUnit), 0, 3);
 
-        g->addWidget(createGaugeCard("BOOST", "---", "mbar", &m_dashMotBoostVal, &m_dashMotBoostUnit), 1, 0);
+        g->addWidget(createGaugeCard("BOOST", "---", "Bar", &m_dashMotBoostVal, &m_dashMotBoostUnit), 1, 0);
         g->addWidget(createGaugeCard("MAF", "---", "mg/s", &m_dashMotMafVal, &m_dashMotMafUnit), 1, 1);
         g->addWidget(createGaugeCard("RAIL", "---", "bar", &m_dashMotRailVal, &m_dashMotRailUnit), 1, 2);
         g->addWidget(createGaugeCard("LIMP", "---", "", &m_dashLimpVal, &m_dashLimpUnit), 1, 3);
@@ -430,11 +430,22 @@ void MainWindow::updateDashboardFromLiveData(const QMap<uint8_t, double> &v)
         DASH_SET(m_dashMotMafVal, QString::number(v[0x18],'f',0));
     }
 
-    // ECU data
-    if(v.contains(0xE0) && m_dashMotCoolVal){
-        double ct = v[0xE0];
+    // ECU coolant temp on dashboard
+    if(v.contains(0xF1) && m_dashMotCoolVal){
+        double ct = v[0xF1];
         DASH_SET(m_dashMotCoolVal, QString::number(ct,'f',0));
         DASH_COLOR(m_dashMotCoolVal, ct > 105 ? "#e04040" : ct > 95 ? "#d09030" : "#00d4b4");
+    }
+    // Fuel (averaged): L/h when stopped, L/100km when moving
+    if(v.contains(0xCD) && m_dashFuelAdaptVal){
+        double fv = v[0xCD];
+        bool moving = v.contains(0xC3) && v[0xC3] > 5.0;
+        DASH_SET(m_dashFuelAdaptVal, QString::number(fv,'f',1));
+        DASH_SET(m_dashFuelAdaptUnit, moving ? "L/100km" : "L/h");
+        if (moving)
+            DASH_COLOR(m_dashFuelAdaptVal, fv > 15.0 ? "#e04040" : fv > 10.0 ? "#d09030" : "#00d4b4");
+        else
+            DASH_COLOR(m_dashFuelAdaptVal, fv > 15.0 ? "#e04040" : fv > 8.0 ? "#d09030" : "#00d4b4");
     }
 
     #undef DASH_SET
@@ -1045,37 +1056,16 @@ void MainWindow::sendWindowCmd(const QString &label, const QString &relayCmd, bo
         return;
     }
 
-    // Different module — activate via switchToModule (DiagSession + ATRA + ATSH22)
-    // then switch to relay mode header (ATSH24xx2F)
+    // Different module header — module already activated by button, just switch ATRA + ATSH
     m_ctrlActiveHdr = hdr;
     m_ctrlInitBusy = true;
-
-    // Map header to Module enum for switchToModule
-    WJDiagnostics::Module targetMod = WJDiagnostics::Module::BodyComputer;  // default
-    if (targetHex.compare("A0", Qt::CaseInsensitive) == 0)
-        targetMod = WJDiagnostics::Module::DriverDoor;
-    else if (targetHex.compare("A1", Qt::CaseInsensitive) == 0)
-        targetMod = WJDiagnostics::Module::PassengerDoor;
-    else if (targetHex.compare("40", Qt::CaseInsensitive) == 0)
-        targetMod = WJDiagnostics::Module::BodyComputer;
-    else if (targetHex.compare("98", Qt::CaseInsensitive) == 0)
-        targetMod = WJDiagnostics::Module::ATC;
-    else if (targetHex.compare("61", Qt::CaseInsensitive) == 0)
-        targetMod = WJDiagnostics::Module::Cluster;
-
-    m_tcm->switchToModule(targetMod, [this, hdr, sendRelay](bool ok) {
-        if (!ok) {
-            onLogMessage("Module activation failed");
-            m_ctrlInitBusy = false;
-            m_ctrlActiveHdr.clear();
-            return;
-        }
-        // Module is now active with DiagSession done, switch to relay mode header
-        m_elm->sendCommand(hdr, [this, sendRelay](const QString &) {
-            m_ctrlInitBusy = false;
-            sendRelay();
-        });
-    });
+    QString targetHex2 = hdr.mid(6, 2);
+    QString atra = "ATRA" + targetHex2;
+    m_elm->sendCommand(atra, [this, hdr, sendRelay](const QString &) {
+    m_elm->sendCommand(hdr, [this, sendRelay](const QString &) {
+        m_ctrlInitBusy = false;
+        sendRelay();
+    });});
 }
 
 QWidget* MainWindow::createActuatorTab()
@@ -1125,29 +1115,19 @@ QWidget* MainWindow::createControlsTab()
 {
     QWidget *w = new QWidget();
     QVBoxLayout *lay = new QVBoxLayout(w);
-    lay->setContentsMargins(3,2,3,2);
-    lay->setSpacing(2);
+    lay->setContentsMargins(4,4,4,4);
+    lay->setSpacing(0);
 
-    // Scrollable area for all controls
-    QScrollArea *scroll = new QScrollArea();
-    scroll->setWidgetResizable(true);
-    scroll->setStyleSheet("QScrollArea{border:none;}");
-    QWidget *inner = new QWidget();
-    QVBoxLayout *innerLay = new QVBoxLayout(inner);
-    innerLay->setContentsMargins(2,2,2,2);
-    innerLay->setSpacing(3);
-
-
-    // --- Button factory: hold-to-activate ---
+    // --- Button factories ---
     auto makeHoldBtn = [this](const QString &text, const QString &onCmd, const QString &offCmd,
                               const QString &label, const QString &hdr) -> QPushButton* {
         QPushButton *btn = new QPushButton(text);
-        btn->setMinimumHeight(64);
-        btn->setMinimumWidth(100);
+        btn->setMinimumHeight(60);
         btn->setStyleSheet(
             "QPushButton{background:#1a3050;color:#e0e0e0;border:1px solid #2a5070;"
-            "border-radius:10px;font-size:16px;font-weight:bold;padding:12px 16px;}"
-            "QPushButton:pressed{background:#00806a;border-color:#00d4b4;color:white;}");
+            "border-radius:10px;font-size:15px;font-weight:bold;padding:10px 8px;}"
+            "QPushButton:pressed{background:#00806a;border-color:#00d4b4;color:white;}"
+            "QPushButton:disabled{background:#101820;color:#404050;border:1px solid #202030;}");
         connect(btn, &QPushButton::pressed, this, [this, label, onCmd, hdr]() {
             sendWindowCmd(label, onCmd, true, hdr);
         });
@@ -1157,114 +1137,196 @@ QWidget* MainWindow::createControlsTab()
         return btn;
     };
 
-    // --- Button factory: click-pulse (ON then auto-OFF) ---
-    auto makePulseBtn = [this](const QString &text, const QString &onCmd, const QString &offCmd,
-                               const QString &label, const QString &hdr,
-                               const QString &bgColor = "#1a3050",
-                               const QString &fgColor = "#e0e0e0") -> QPushButton* {
-        QPushButton *btn = new QPushButton(text);
-        btn->setMinimumHeight(64);
-        btn->setMinimumWidth(100);
-        btn->setStyleSheet(QString(
-            "QPushButton{background:%1;color:%2;border:1px solid #2a5070;"
-            "border-radius:10px;font-size:16px;font-weight:bold;padding:12px 16px;}"
-            "QPushButton:pressed{background:#00806a;border-color:#00d4b4;color:white;}").arg(bgColor, fgColor));
-        connect(btn, &QPushButton::clicked, this, [this, label, onCmd, offCmd, hdr]() {
-            sendWindowCmd(label, onCmd, true, hdr);
-            if (!offCmd.isEmpty()) {
-                QTimer::singleShot(500, this, [this, label, offCmd, hdr]() {
-                    sendWindowCmd(label, offCmd, false, hdr);
-                });
-            }
-        });
-        return btn;
-    };
-
-    // --- Button factory: BCM toggle (no auto-OFF) ---
     auto makeBCMBtn = [this](const QString &text, const QString &onCmd, const QString &offCmd,
                              const QString &label, const QString &hdr) -> QPushButton* {
         QPushButton *btn = new QPushButton(text);
         btn->setCheckable(true);
-        btn->setMinimumHeight(64);
-        btn->setMinimumWidth(100);
+        btn->setMinimumHeight(60);
         btn->setStyleSheet(
             "QPushButton{background:#1a2840;color:#d0d0d0;border:1px solid #304060;"
-            "border-radius:10px;font-size:16px;font-weight:bold;padding:12px 16px;}"
+            "border-radius:10px;font-size:15px;font-weight:bold;padding:10px 8px;}"
             "QPushButton:checked{background:#2a5030;color:#00ff88;border-color:#00aa66;}"
-            "QPushButton:pressed{background:#00806a;border-color:#00d4b4;}");
+            "QPushButton:pressed{background:#00806a;border-color:#00d4b4;}"
+            "QPushButton:disabled{background:#101820;color:#404050;border:1px solid #202030;}");
         connect(btn, &QPushButton::toggled, this, [this, label, onCmd, offCmd, hdr](bool checked) {
-            if (checked)
-                sendWindowCmd(label, onCmd, true, hdr);
-            else
-                sendWindowCmd(label, offCmd, false, hdr);
+            sendWindowCmd(label, checked ? onCmd : offCmd, checked, hdr);
         });
         return btn;
     };
 
-    // EU WJ 2.7 CRD — verified module addresses:
-    //   0xA0 = LEFT/Driver door — sequential 38 xx 12
-    //   0x40 = RIGHT/DriverDoor — bitmask commands
-    //   0x80 = BCM — mode 0x2F + mode 0xB4
-    QString hdrL    = "ATSH24A02F";   // Driver Door 0xA0 mode 0x2F
-    QString hdrR    = "ATSH24A12F";   // Passenger Door 0xA1 mode 0x2F
+    QString hdrL   = "ATSH24A02F";  // Driver Door 0xA0
+    QString hdrR   = "ATSH24A12F";  // Passenger Door 0xA1
+    QString hdrBCM = "ATSH24402F";  // Body Computer 0x40
 
     QString grpStyle = "QGroupBox{color:#5888a8;font-size:14px;font-weight:bold;border:1px solid #2a5070;"
-                       "border-radius:5px;margin-top:3px;padding-top:12px;}";
+                       "border-radius:5px;margin-top:6px;padding-top:14px;}"
+                       "QGroupBox:disabled{color:#404050;border-color:#202030;}";
 
-    // ====== FRONT WINDOWS ======
-    QGroupBox *frontGrp = new QGroupBox("Front Windows");
-    frontGrp->setStyleSheet(grpStyle);
-    QGridLayout *frontLay = new QGridLayout(frontGrp);
-    frontLay->setSpacing(8); frontLay->setContentsMargins(8,8,8,8);
+    // ====== Scroll area for controls ======
+    QScrollArea *scroll = new QScrollArea();
+    scroll->setWidgetResizable(true);
+    scroll->setStyleSheet("QScrollArea{border:none;}");
+    QWidget *inner = new QWidget();
+    QVBoxLayout *innerLay = new QVBoxLayout(inner);
+    innerLay->setContentsMargins(4,4,4,4);
+    innerLay->setSpacing(6);
 
-    QLabel *flLbl = new QLabel("Left (0xA0)");
-    QLabel *frLbl = new QLabel("Right (0xA1)");
-    flLbl->setStyleSheet("color:#5888a8;font-size:14px;"); flLbl->setAlignment(Qt::AlignCenter);
-    frLbl->setStyleSheet("color:#5888a8;font-size:14px;"); frLbl->setAlignment(Qt::AlignCenter);
-    frontLay->addWidget(flLbl, 0, 0);
-    frontLay->addWidget(frLbl, 0, 1);
-    // Left front: 0xA0 sequential
-    frontLay->addWidget(makeHoldBtn("L UP",   "38 01 12", "38 01 00", "L-Front Up",   hdrL), 1, 0);
-    frontLay->addWidget(makeHoldBtn("L DOWN", "38 02 12", "38 02 00", "L-Front Down", hdrL), 2, 0);
-    // Right front: 0x40 bitmask
-    frontLay->addWidget(makeHoldBtn("R UP",   "38 01 12", "38 01 00", "R-Front Up",   hdrR), 1, 1);
-    frontLay->addWidget(makeHoldBtn("R DOWN", "38 02 12", "38 02 00", "R-Front Down", hdrR), 2, 1);
-    innerLay->addWidget(frontGrp);
+    // === DRIVER DOOR group (Left side windows only) ===
+    m_ctrlFrontGrp = new QGroupBox("Driver Door 0xA0 — Left Windows");
+    m_ctrlFrontGrp->setStyleSheet(grpStyle);
+    m_ctrlFrontGrp->setEnabled(false);
+    QGridLayout *drvLay = new QGridLayout(m_ctrlFrontGrp);
+    drvLay->setSpacing(8); drvLay->setContentsMargins(8,10,8,8);
+    drvLay->addWidget(makeHoldBtn("Front UP",   "38 01 12", "38 01 00", "L-Front Up",   hdrL), 0, 0);
+    drvLay->addWidget(makeHoldBtn("Front DOWN", "38 02 12", "38 02 00", "L-Front Down", hdrL), 0, 1);
+    drvLay->addWidget(makeHoldBtn("Rear UP",    "38 03 12", "38 03 00", "L-Rear Up",    hdrL), 1, 0);
+    drvLay->addWidget(makeHoldBtn("Rear DOWN",  "38 04 12", "38 04 00", "L-Rear Down",  hdrL), 1, 1);
+    innerLay->addWidget(m_ctrlFrontGrp);
 
-    // ====== REAR WINDOWS ======
-    QGroupBox *rearGrp = new QGroupBox("Rear Windows");
-    rearGrp->setStyleSheet(grpStyle);
-    QGridLayout *rearLay = new QGridLayout(rearGrp);
-    rearLay->setSpacing(8); rearLay->setContentsMargins(8,8,8,8);
+    // === PASSENGER DOOR group (Right side windows only) ===
+    m_ctrlRearGrp = new QGroupBox("Passenger Door 0xA1 — Right Windows");
+    m_ctrlRearGrp->setStyleSheet(grpStyle);
+    m_ctrlRearGrp->setEnabled(false);
+    QGridLayout *pasLay = new QGridLayout(m_ctrlRearGrp);
+    pasLay->setSpacing(8); pasLay->setContentsMargins(8,10,8,8);
+    pasLay->addWidget(makeHoldBtn("Front UP",   "38 01 12", "38 01 00", "R-Front Up",   hdrR), 0, 0);
+    pasLay->addWidget(makeHoldBtn("Front DOWN", "38 02 12", "38 02 00", "R-Front Down", hdrR), 0, 1);
+    pasLay->addWidget(makeHoldBtn("Rear UP",    "38 03 12", "38 03 00", "R-Rear Up",    hdrR), 1, 0);
+    pasLay->addWidget(makeHoldBtn("Rear DOWN",  "38 04 12", "38 04 00", "R-Rear Down",  hdrR), 1, 1);
+    innerLay->addWidget(m_ctrlRearGrp);
 
-    QLabel *rlLbl = new QLabel("Left (0xA0)");
-    QLabel *rrLbl = new QLabel("Right (0xA1)");
-    rlLbl->setStyleSheet("color:#5888a8;font-size:14px;"); rlLbl->setAlignment(Qt::AlignCenter);
-    rrLbl->setStyleSheet("color:#5888a8;font-size:14px;"); rrLbl->setAlignment(Qt::AlignCenter);
-    rearLay->addWidget(rlLbl, 0, 0);
-    rearLay->addWidget(rrLbl, 0, 1);
-    // Left rear: 0xA0 sequential
-    rearLay->addWidget(makeHoldBtn("L UP",   "38 03 12", "38 03 00", "L-Rear Up",   hdrL), 1, 0);
-    rearLay->addWidget(makeHoldBtn("L DOWN", "38 04 12", "38 04 00", "L-Rear Down", hdrL), 2, 0);
-    // Right rear: 0x40 bitmask
-    rearLay->addWidget(makeHoldBtn("R UP",   "38 03 12", "38 03 00", "R-Rear Up",   hdrR), 1, 1);
-    rearLay->addWidget(makeHoldBtn("R DOWN", "38 04 12", "38 04 00", "R-Rear Down", hdrR), 2, 1);
-    innerLay->addWidget(rearGrp);
-
-    // ====== HAZARD / HORN / WIPER (Body 0x40 mode 0x2F) ======
-    QString hdrBCM = "ATSH24402F";   // Body Computer 0x40 mode 0x2F
-    QGroupBox *hazGrp = new QGroupBox("Body Computer (0x40)");
-    hazGrp->setStyleSheet(grpStyle);
-    QHBoxLayout *hazLay = new QHBoxLayout(hazGrp);
-    hazLay->setSpacing(8); hazLay->setContentsMargins(8,8,8,8);
-    hazLay->addWidget(makeBCMBtn("HAZARD", "38 06 20", "38 06 00", "Hazard", hdrBCM));
-    hazLay->addWidget(makeHoldBtn("HORN", "38 0D 01", "38 0D 00", "Horn", hdrBCM));
-    hazLay->addWidget(makeHoldBtn("WIPER", "38 08 01", "38 08 00", "Wiper", hdrBCM));
-    innerLay->addWidget(hazGrp);
+    // === BODY COMPUTER group (Hazard / Horn / Wiper) ===
+    m_ctrlBodyGrp = new QGroupBox("Body Computer 0x40");
+    m_ctrlBodyGrp->setStyleSheet(grpStyle);
+    m_ctrlBodyGrp->setEnabled(false);
+    QHBoxLayout *bcmLay = new QHBoxLayout(m_ctrlBodyGrp);
+    bcmLay->setSpacing(8); bcmLay->setContentsMargins(8,10,8,8);
+    bcmLay->addWidget(makeBCMBtn("HAZARD", "38 06 20", "38 06 00", "Hazard", hdrBCM));
+    bcmLay->addWidget(makeHoldBtn("HORN",  "38 0D 01", "38 0D 00", "Horn",   hdrBCM));
+    bcmLay->addWidget(makeHoldBtn("WIPER", "38 08 01", "38 08 00", "Wiper",  hdrBCM));
+    innerLay->addWidget(m_ctrlBodyGrp);
 
     innerLay->addStretch();
     scroll->setWidget(inner);
-    lay->addWidget(scroll);
+    lay->addWidget(scroll, 1);
+
+    // ====== MODE SELECT BUTTONS — fixed at bottom with padding ======
+    QWidget *bottomBar = new QWidget();
+    QVBoxLayout *bottomLay = new QVBoxLayout(bottomBar);
+    bottomLay->setContentsMargins(4,12,4,4);
+    bottomLay->setSpacing(0);
+
+    // Separator line
+    QFrame *sep = new QFrame();
+    sep->setFrameShape(QFrame::HLine);
+    sep->setStyleSheet("color:#2a5070;");
+    bottomLay->addWidget(sep);
+    bottomLay->addSpacing(8);
+
+    QString actStyle =
+        "QPushButton{background:#1a2840;color:#8899aa;border:1px solid #304060;"
+        "border-radius:8px;font-size:13px;font-weight:bold;padding:12px 6px;}"
+        "QPushButton:checked{background:#0a3830;color:#00d4b4;border:2px solid #00806a;}"
+        "QPushButton:disabled{background:#101820;color:#404050;border:1px solid #202030;}";
+
+    QHBoxLayout *actLay = new QHBoxLayout();
+    actLay->setSpacing(8);
+
+    m_ctrlDrvBtn = new QPushButton("Driver Door");
+    m_ctrlDrvBtn->setCheckable(true);
+    m_ctrlDrvBtn->setMinimumHeight(48);
+    m_ctrlDrvBtn->setStyleSheet(actStyle);
+
+    m_ctrlPasBtn = new QPushButton("Pass. Door");
+    m_ctrlPasBtn->setCheckable(true);
+    m_ctrlPasBtn->setMinimumHeight(48);
+    m_ctrlPasBtn->setStyleSheet(actStyle);
+
+    m_ctrlBcmBtn = new QPushButton("Body Ctrl");
+    m_ctrlBcmBtn->setCheckable(true);
+    m_ctrlBcmBtn->setMinimumHeight(48);
+    m_ctrlBcmBtn->setStyleSheet(actStyle);
+
+    actLay->addWidget(m_ctrlDrvBtn);
+    actLay->addWidget(m_ctrlPasBtn);
+    actLay->addWidget(m_ctrlBcmBtn);
+    bottomLay->addLayout(actLay);
+
+    lay->addWidget(bottomBar);
+
+    // ====== TOGGLE ACTIVATION LOGIC (radio-style: only one active) ======
+    auto activateModule = [this](WJDiagnostics::Module mod, QPushButton *btn, const QString &name,
+                                  std::function<void(bool)> onDone) {
+        btn->setEnabled(false);
+        btn->setText(name + "...");
+        statusBar()->showMessage("Activating " + name + "...");
+        m_tcm->switchToModule(mod, [this, btn, name, onDone](bool ok) {
+            btn->setEnabled(true);
+            btn->setChecked(ok);
+            btn->setText(ok ? name + " [ON]" : name);
+            statusBar()->showMessage(ok ? name + " ready" : name + " FAILED");
+            if (onDone) onDone(ok);
+        });
+    };
+
+    auto deselectAll = [this]() {
+        m_ctrlDrvBtn->setChecked(false); m_ctrlDrvBtn->setText("Driver Door");
+        m_ctrlPasBtn->setChecked(false); m_ctrlPasBtn->setText("Pass. Door");
+        m_ctrlBcmBtn->setChecked(false); m_ctrlBcmBtn->setText("Body Ctrl");
+        m_ctrlFrontGrp->setEnabled(false);
+        m_ctrlRearGrp->setEnabled(false);
+        m_ctrlBodyGrp->setEnabled(false);
+        m_ctrlActiveHdr.clear();
+    };
+
+    connect(m_ctrlDrvBtn, &QPushButton::clicked, this, [this, activateModule, deselectAll]() {
+        if (!m_elm || !m_elm->isConnected()) {
+            statusBar()->showMessage("Not connected!");
+            m_ctrlDrvBtn->setChecked(false);
+            return;
+        }
+        deselectAll();
+        m_ctrlDrvBtn->setChecked(true);
+        activateModule(WJDiagnostics::Module::DriverDoor, m_ctrlDrvBtn, "Driver Door",
+            [this](bool ok) {
+                m_ctrlFrontGrp->setEnabled(ok);
+                m_ctrlRearGrp->setEnabled(false);
+                m_ctrlBodyGrp->setEnabled(false);
+            });
+    });
+
+    connect(m_ctrlPasBtn, &QPushButton::clicked, this, [this, activateModule, deselectAll]() {
+        if (!m_elm || !m_elm->isConnected()) {
+            statusBar()->showMessage("Not connected!");
+            m_ctrlPasBtn->setChecked(false);
+            return;
+        }
+        deselectAll();
+        m_ctrlPasBtn->setChecked(true);
+        activateModule(WJDiagnostics::Module::PassengerDoor, m_ctrlPasBtn, "Pass. Door",
+            [this](bool ok) {
+                m_ctrlFrontGrp->setEnabled(false);
+                m_ctrlRearGrp->setEnabled(ok);
+                m_ctrlBodyGrp->setEnabled(false);
+            });
+    });
+
+    connect(m_ctrlBcmBtn, &QPushButton::clicked, this, [this, activateModule, deselectAll]() {
+        if (!m_elm || !m_elm->isConnected()) {
+            statusBar()->showMessage("Not connected!");
+            m_ctrlBcmBtn->setChecked(false);
+            return;
+        }
+        deselectAll();
+        m_ctrlBcmBtn->setChecked(true);
+        activateModule(WJDiagnostics::Module::BodyComputer, m_ctrlBcmBtn, "Body Ctrl",
+            [this](bool ok) {
+                m_ctrlFrontGrp->setEnabled(false);
+                m_ctrlRearGrp->setEnabled(false);
+                m_ctrlBodyGrp->setEnabled(ok);
+            });
+    });
+
     return w;
 }
 
@@ -1316,7 +1378,7 @@ QWidget* MainWindow::createLogTab()
     });
     logGrid->addWidget(saveLogBtn, 0, 1);
 
-    m_rawDumpBtn = new QPushButton("Raw Data");
+    m_rawDumpBtn = new QPushButton("Raw Block Dump");
     m_rawDumpBtn->setMinimumHeight(36);
     m_rawDumpBtn->setStyleSheet("background:#2a4858; color:#00ffcc; font-weight:bold;");
     connect(m_rawDumpBtn, &QPushButton::clicked, this, &MainWindow::onRawBusDump);
@@ -1382,6 +1444,12 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
         m_ctrlActiveHdr.clear();
         m_ctrlInitBusy = false;
         m_actHdrActive.clear();
+        if (m_ctrlDrvBtn) { m_ctrlDrvBtn->setChecked(false); m_ctrlDrvBtn->setText("Driver Door"); }
+        if (m_ctrlPasBtn) { m_ctrlPasBtn->setChecked(false); m_ctrlPasBtn->setText("Pass. Door"); }
+        if (m_ctrlBcmBtn) { m_ctrlBcmBtn->setChecked(false); m_ctrlBcmBtn->setText("Body Ctrl"); }
+        if (m_ctrlFrontGrp) m_ctrlFrontGrp->setEnabled(false);
+        if (m_ctrlRearGrp) m_ctrlRearGrp->setEnabled(false);
+        if (m_ctrlBodyGrp) m_ctrlBodyGrp->setEnabled(false);
         if (m_batteryTimer) m_batteryTimer->stop();
         updateActiveHeaderLabel();
         statusBar()->showMessage("Disconnected");
@@ -1541,7 +1609,7 @@ void MainWindow::onStartLiveData()
     }
 
     m_liveData->setSelectedParams(selected);
-    m_liveData->startPolling(300); // 300ms aralık
+    m_liveData->startPolling(50); // 50ms poll interval (back-to-back reads)
 
     m_startLiveBtn->setEnabled(false);
     m_stopLiveBtn->setEnabled(true);
@@ -1578,6 +1646,14 @@ void MainWindow::onLiveDataUpdated(const QMap<uint8_t, double> &values)
 
             if (m_liveTable->item(i, 2)) {
                 m_liveTable->item(i, 2)->setText(valStr);
+            }
+
+            // Dynamic unit for Fuel: L/h when stopped, L/100km when moving
+            if (params[i].localID == 0xCD) {
+                bool moving = values.contains(0xC3) && values[0xC3] > 5.0;
+                QString fuelUnit = moving ? "L/100km" : "L/h";
+                if (m_liveTable->item(i, 1))
+                    m_liveTable->item(i, 1)->setText(fuelUnit);
             }
 
             // Selenoid voltajı düşükse uyarı rengi
@@ -1618,14 +1694,14 @@ void MainWindow::onECUDataUpdated(const TCMDiagnostics::ECUStatus &ecu)
     ECOL(m_dashMotRpmVal, ecu.rpm > 4500 ? "#e04040" : ecu.rpm > 3500 ? "#d09030" : "#00d4b4");
 
     // Boost Pressure (mbar)
-    ESET(m_dashMotBoostVal, QString::number(ecu.boostPressure, 'f', 0));
-    ECOL(m_dashMotBoostVal, ecu.boostPressure > 2000 ? "#e04040" : ecu.boostPressure > 1500 ? "#d09030" : "#00d4b4");
+    ESET(m_dashMotBoostVal, QString::number(ecu.boostPressure, 'f', 2));
+    ECOL(m_dashMotBoostVal, ecu.boostPressure > 2.0 ? "#e04040" : ecu.boostPressure > 1.5 ? "#d09030" : "#00d4b4");
 
     // MAF
     ESET(m_dashMotMafVal, QString::number(ecu.mafActual, 'f', 0));
 
     // Rail Pressure (bar)
-    ESET(m_dashMotRailVal, QString::number(ecu.railActual, 'f', 0));
+    ESET(m_dashMotRailVal, QString::number(ecu.railActual, 'f', 1));
     ECOL(m_dashMotRailVal, ecu.railActual > 1400 ? "#e04040" : ecu.railActual > 1200 ? "#d09030" : "#00d4b4");
 
     // Coolant temp
@@ -1639,16 +1715,13 @@ void MainWindow::onECUDataUpdated(const TCMDiagnostics::ECUStatus &ecu)
     ESET(m_dashLimpVal, QString::number(ecu.tps, 'f', 1));
 
     // Injection quantity -> m_dashSpeedVal (reused in ECU mode)
-    ESET(m_dashSpeedVal, QString::number(ecu.injectionQty, 'f', 1));
+    ESET(m_dashSpeedVal, QString::number(
+        (ecu.fuelActual > 0) ? ecu.fuelActual : ecu.injectionQty, 'f', 1));
 
     // Protected data gauges (only populated if security unlocked)
     ESET(m_dashEgrVal, QString::number(ecu.egrDuty, 'f', 0));
     ESET(m_dashWgVal, QString::number(ecu.wastegate, 'f', 0));
-    // Fuel consumption L/h
-    ESET(m_dashFuelAdaptVal, QString::number(ecu.fuelFlowLH, 'f', 1));
-    if (m_dashFuelAdaptVal) {
-        ECOL(m_dashFuelAdaptVal, ecu.fuelFlowLH > 15.0 ? "#e04040" : ecu.fuelFlowLH > 8.0 ? "#d09030" : "#00d4b4");
-    }
+    // Fuel display handled by updateDashboardFromLiveData (averaged values)
 
     // Battery voltage (ATRV)
     if (ecu.batteryVoltage > 0) {
@@ -1941,7 +2014,7 @@ QString MainWindow::gearToString(TCMDiagnostics::Gear gear)
     case TCMDiagnostics::Gear::Park:    return "P";
     case TCMDiagnostics::Gear::Reverse: return "R";
     case TCMDiagnostics::Gear::Neutral: return "N";
-    case TCMDiagnostics::Gear::Drive1:  return "D";
+    case TCMDiagnostics::Gear::Drive1:  return "D1";
     case TCMDiagnostics::Gear::Drive2:  return "D2";
     case TCMDiagnostics::Gear::Drive3:  return "D3";
     case TCMDiagnostics::Gear::Drive4:  return "D4";
@@ -1969,10 +2042,10 @@ void MainWindow::onRawBusDump()
 
     auto done = [this]() {
         m_rawDumpBtn->setEnabled(true);
-        m_rawDumpBtn->setText("Raw Data Read");
+        m_rawDumpBtn->setText("Raw Block Dump");
     };
 
-    m_logText->append("<font color='white'>========== UNVERIFIED ACTUATOR TEST ==========</font>");
+    m_logText->append("<font color='white'>========== RAW BLOCK DUMP — ECU + TCM ==========</font>");
     runDiscoveryPhases(log, done);
 }
 
@@ -1984,325 +2057,40 @@ void MainWindow::runDiscoveryPhases(
     auto steps = std::make_shared<QList<Step>>();
 
     // =================================================================
-    // RAW TEST — Full vehicle verification
-    // Tests: Module read, DTC, Actuators, Live data blocks
+    // RAW BLOCK DUMP — ECU (0x15) + TCM (0x20) live data blocks
+    // Read all blocks, log raw hex for byte mapping verification
     // =================================================================
 
-    // ===== PHASE 1: K-Line ECU 0x15 =====
-    steps->append(Step{"", "header:===== PHASE 1: ECU 0x15 (K-Line) ====="});
+    // ===== ECU 0x15: 14 live data blocks =====
+    steps->append(Step{"", "header:===== ECU 0x15 (K-Line) — Raw Block Dump ====="});
     steps->append(Step{"", "switch:ecu_arvuta"});
-    // After unlock, read identification + DTC
-    steps->append(Step{"ECU 1A 86",        "kwpcmd:1A 86"});
-    steps->append(Step{"ECU 1A 91",        "kwpcmd:1A 91"});
-    steps->append(Step{"ECU DTC Read",     "kwpcmd:18 02 00 00"});
-    // Live data blocks (all 14)
-    steps->append(Step{"", "header:--- ECU Live Data Blocks ---"});
-    steps->append(Step{"ECU Blk 0x12",     "kwpcmd:21 12"});
-    steps->append(Step{"ECU Blk 0x30",     "kwpcmd:21 30"});
-    steps->append(Step{"ECU Blk 0x22",     "kwpcmd:21 22"});
-    steps->append(Step{"ECU Blk 0x20",     "kwpcmd:21 20"});
-    steps->append(Step{"ECU Blk 0x23",     "kwpcmd:21 23"});
-    steps->append(Step{"ECU Blk 0x21",     "kwpcmd:21 21"});
-    steps->append(Step{"ECU Blk 0x16",     "kwpcmd:21 16"});
-    steps->append(Step{"ECU Blk 0x32",     "kwpcmd:21 32"});
-    steps->append(Step{"ECU Blk 0x37",     "kwpcmd:21 37"});
-    steps->append(Step{"ECU Blk 0x13",     "kwpcmd:21 13"});
-    steps->append(Step{"ECU Blk 0x36",     "kwpcmd:21 36"});
-    steps->append(Step{"ECU Blk 0x26",     "kwpcmd:21 26"});
-    steps->append(Step{"ECU Blk 0x34",     "kwpcmd:21 34"});
-    steps->append(Step{"ECU Blk 0x28",     "kwpcmd:21 28"});
-    // Actuators
-    steps->append(Step{"", "header:--- ECU Actuators (SID 0x30) ---"});
-    steps->append(Step{"EGR ON",           "kwpcmd:30 11 07 13 88"});
-    steps->append(Step{"EGR OFF",          "kwpcmd:30 11 07 00 00"});
-    steps->append(Step{"Cabin Htr ON",     "kwpcmd:30 1C 07 27 10"});
-    steps->append(Step{"Cabin Htr OFF",    "kwpcmd:30 1C 07 00 00"});
-    steps->append(Step{"Glow1 ON",         "kwpcmd:30 16 07 27 10"});
-    steps->append(Step{"Glow1 OFF",        "kwpcmd:30 16 07 00 00"});
-    steps->append(Step{"Glow2 ON",         "kwpcmd:30 17 07 27 10"});
-    steps->append(Step{"Glow2 OFF",        "kwpcmd:30 17 07 00 00"});
-    steps->append(Step{"A/C ON",           "kwpcmd:30 14 07 27 10"});
-    steps->append(Step{"A/C OFF",          "kwpcmd:30 14 07 00 00"});
-    steps->append(Step{"SWIRL ON",         "kwpcmd:30 1A 07 13 88"});
-    steps->append(Step{"SWIRL OFF",        "kwpcmd:30 1A 07 00 00"});
-    steps->append(Step{"Boost ON",         "kwpcmd:30 12 07 00 10"});
-    steps->append(Step{"Boost OFF",        "kwpcmd:30 12 07 00 00"});
-    steps->append(Step{"Fan Low ON",       "kwpcmd:30 18 07 08 34"});
-    steps->append(Step{"Fan Low OFF",      "kwpcmd:30 18 07 00 00"});
-    steps->append(Step{"Fan Full ON",      "kwpcmd:30 18 07 21 34"});
-    steps->append(Step{"Fan Full OFF",     "kwpcmd:30 18 07 00 00"});
+    steps->append(Step{"ECU Blk 0x12", "kwpcmd:21 12"});
+    steps->append(Step{"ECU Blk 0x30", "kwpcmd:21 30"});
+    steps->append(Step{"ECU Blk 0x22", "kwpcmd:21 22"});
+    steps->append(Step{"ECU Blk 0x20", "kwpcmd:21 20"});
+    steps->append(Step{"ECU Blk 0x23", "kwpcmd:21 23"});
+    steps->append(Step{"ECU Blk 0x21", "kwpcmd:21 21"});
+    steps->append(Step{"ECU Blk 0x16", "kwpcmd:21 16"});
+    steps->append(Step{"ECU Blk 0x32", "kwpcmd:21 32"});
+    steps->append(Step{"ECU Blk 0x37", "kwpcmd:21 37"});
+    steps->append(Step{"ECU Blk 0x13", "kwpcmd:21 13"});
+    steps->append(Step{"ECU Blk 0x36", "kwpcmd:21 36"});
+    steps->append(Step{"ECU Blk 0x26", "kwpcmd:21 26"});
+    steps->append(Step{"ECU Blk 0x34", "kwpcmd:21 34"});
+    steps->append(Step{"ECU Blk 0x28", "kwpcmd:21 28"});
 
-    // ===== PHASE 2: K-Line TCM 0x20 =====
-    steps->append(Step{"", "header:===== PHASE 2: TCM 0x20 (K-Line) ====="});
+    // ===== TCM 0x20: 5 live data blocks =====
+    steps->append(Step{"", "header:===== TCM 0x20 (K-Line) — Raw Block Dump ====="});
     steps->append(Step{"", "switch:tcm"});
-    steps->append(Step{"TCM 1A 90",        "kwpcmd:1A 90"});
-    steps->append(Step{"TCM 1A 86",        "kwpcmd:1A 86"});
-    steps->append(Step{"TCM DTC Read",     "kwpcmd:18 02 FF 00"});
-    steps->append(Step{"", "header:--- TCM Live Data Blocks ---"});
-    steps->append(Step{"TCM Blk 0x30",     "kwpcmd:21 30"});
-    steps->append(Step{"TCM Blk 0x31",     "kwpcmd:21 31"});
-    steps->append(Step{"TCM Blk 0x34",     "kwpcmd:21 34"});
-    steps->append(Step{"TCM Blk 0x33",     "kwpcmd:21 33"});
-    steps->append(Step{"TCM Blk 0x32",     "kwpcmd:21 32"});
-    steps->append(Step{"", "header:--- TCM Actuators ---"});
-    steps->append(Step{"TCM Reset Adapt",  "kwpcmd:31 31"});
-    steps->append(Step{"TCM Store Adapt",  "kwpcmd:31 32"});
-    steps->append(Step{"TCM Sol Test ON",  "kwpcmd:30 10 07 00 02"});
-    steps->append(Step{"TCM Sol Test OFF", "kwpcmd:30 10 07 00 00"});
-    steps->append(Step{"TCM ParkLock",     "kwpcmd:30 10 07 04 00"});
-
-    // ===== PHASE 3: J1850 Modules =====
-    steps->append(Step{"", "switch:j1850"});
-
-    // --- ABS 0x28 ---
-    steps->append(Step{"", "header:===== PHASE 3a: ABS 0x28 ====="});
-    steps->append(Step{"", "j1850hdr:ATSH242822"});
-    steps->append(Step{"", "j1850hdr:ATRA28"});
-    steps->append(Step{"ABS 20 00",        "j1850cmd:20 00 00"});
-    steps->append(Step{"ABS 20 01",        "j1850cmd:20 01 00"});
-    steps->append(Step{"ABS 20 02",        "j1850cmd:20 02 00"});
-    steps->append(Step{"ABS 24 00",        "j1850cmd:24 00 00"});
-    steps->append(Step{"ABS 28 01",        "j1850cmd:28 01 00"});
-    steps->append(Step{"ABS 20 07",        "j1850cmd:20 07 00"});
-    steps->append(Step{"ABS 20 08",        "j1850cmd:20 08 00"});
-    steps->append(Step{"", "j1850hdr:ATSH242818"});
-    steps->append(Step{"", "j1850hdr:ATRA28"});
-    steps->append(Step{"ABS DTC Read",     "j1850cmd:FF 00 00"});
-    // --- ABS DTC PID Scan (mode 0x22, PID 2E series) ---
-    steps->append(Step{"", "j1850hdr:ATSH242822"});
-    steps->append(Step{"", "j1850hdr:ATRA28"});
-    steps->append(Step{"", "header:--- ABS DTC PID Scan ---"});
-    for (uint8_t p : {0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,
-                       0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x30}) {
-        steps->append(Step{QString("ABS DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
-            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
-    }
-
-    // --- ESP 0x58 ---
-    steps->append(Step{"", "header:===== PHASE 3b: ESP 0x58 ====="});
-    steps->append(Step{"", "j1850hdr:ATSH245822"});
-    steps->append(Step{"", "j1850hdr:ATRA58"});
-    steps->append(Step{"ESP 20 00",        "j1850cmd:20 00 00"});
-    steps->append(Step{"ESP 20 01",        "j1850cmd:20 01 00"});
-    steps->append(Step{"ESP 20 02",        "j1850cmd:20 02 00"});
-    steps->append(Step{"ESP 24 00",        "j1850cmd:24 00 00"});
-    steps->append(Step{"ESP 28 00",        "j1850cmd:28 00 00"});
-    steps->append(Step{"ESP 20 07",        "j1850cmd:20 07 00"});
-    steps->append(Step{"", "j1850hdr:ATSH245818"});
-    steps->append(Step{"", "j1850hdr:ATRA58"});
-    steps->append(Step{"ESP DTC Read",     "j1850cmd:FF 00 00"});
-    // --- ESP DTC PID Scan (55 PIDs: 2E series + 2F series) ---
-    steps->append(Step{"", "j1850hdr:ATSH245822"});
-    steps->append(Step{"", "j1850hdr:ATRA58"});
-    steps->append(Step{"", "header:--- ESP DTC PID Scan (55 PIDs) ---"});
-    for (uint8_t p : {0x10,0x13,0x16,0x19,0x1C,0x1F,0x22,0x25,0x28,0x2B,0x2E,
-                       0x37,0x3A,0x3D,0x43,0x49,0x4C,0x4F,0x52,
-                       0x70,0x73,0x76,0x79,0x7C,0x7F,0x82,0x85,0x88,0x8B,0x8E,
-                       0x91,0x94,0x97,0xDC,0xDF,0xE2,0xE5,0xFA,0xFD}) {
-        steps->append(Step{QString("ESP 2E %1").arg(p,2,16,QChar('0')).toUpper(),
-            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
-    }
-    for (uint8_t p : {0x00,0x03,0x06,0x18,0x1B,0x1E,0x21,0x24,0x27,0x2A,0x2D,
-                       0x30,0x33,0x36,0x39,0x3C}) {
-        steps->append(Step{QString("ESP 2F %1").arg(p,2,16,QChar('0')).toUpper(),
-            QString("j1850cmd:2F %1 00").arg(p,2,16,QChar('0')).toUpper()});
-    }
-
-    // --- Cluster 0x61 ---
-    steps->append(Step{"", "header:===== PHASE 3c: Cluster 0x61 ====="});
-    steps->append(Step{"", "j1850hdr:ATSH246122"});
-    steps->append(Step{"", "j1850hdr:ATRA61"});
-    steps->append(Step{"Clust 20 00",      "j1850cmd:20 00 00"});
-    steps->append(Step{"Clust 20 01",      "j1850cmd:20 01 00"});
-    steps->append(Step{"Clust 20 02",      "j1850cmd:20 02 00"});
-    steps->append(Step{"Clust 24 00",      "j1850cmd:24 00 00"});
-    steps->append(Step{"Speedo ON",        "j1850cmd:3A 00 80"});
-    steps->append(Step{"Speedo OFF",       "j1850cmd:3A 00 00"});
-    steps->append(Step{"Tacho ON",         "j1850cmd:3A 00 40"});
-    steps->append(Step{"Tacho OFF",        "j1850cmd:3A 00 00"});
-    // --- Cluster DTC PID Discovery (2E 00~2E 10) ---
-    steps->append(Step{"", "j1850hdr:ATSH246122"});
-    steps->append(Step{"", "j1850hdr:ATRA61"});
-    steps->append(Step{"", "header:--- Cluster DTC PID Discovery ---"});
-    for (uint8_t p : {0x00,0x01,0x02,0x03,0x05,0x08,0x0A,0x10}) {
-        steps->append(Step{QString("Clust DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
-            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
-    }
-
-    // --- SKIM 0xC0 ---
-    steps->append(Step{"", "header:===== PHASE 3d: SKIM 0xC0 ====="});
-    steps->append(Step{"", "j1850hdr:ATSH24C022"});
-    steps->append(Step{"", "j1850hdr:ATRAC0"});
-    steps->append(Step{"SKIM 20 00",       "j1850cmd:20 00 00"});
-    steps->append(Step{"SKIM 20 01",       "j1850cmd:20 01 00"});
-    steps->append(Step{"SKIM 20 02",       "j1850cmd:20 02 00"});
-    steps->append(Step{"SKIM 24 00",       "j1850cmd:24 00 00"});
-    // --- SKIM DTC PID Scan ---
-    steps->append(Step{"", "header:--- SKIM DTC PID Scan ---"});
-    steps->append(Step{"SKIM DTC 2E 00",   "j1850cmd:2E 00 00"});
-
-    // --- Body 0x40 ---
-    steps->append(Step{"", "header:===== PHASE 3e: Body 0x40 ====="});
-    steps->append(Step{"", "j1850hdr:ATSH244022"});
-    steps->append(Step{"", "j1850hdr:ATRA40"});
-    steps->append(Step{"Body 20 00",       "j1850cmd:20 00 00"});
-    steps->append(Step{"Body 20 01",       "j1850cmd:20 01 00"});
-    steps->append(Step{"Body 20 02",       "j1850cmd:20 02 00"});
-    steps->append(Step{"Body 24 00",       "j1850cmd:24 00 00"});
-    steps->append(Step{"Body 28 00",       "j1850cmd:28 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH24402F"});
-    steps->append(Step{"Hazard ON",        "j1850cmd:38 06 20"});
-    steps->append(Step{"Hazard OFF",       "j1850cmd:38 06 00"});
-    steps->append(Step{"Horn ON",          "j1850cmd:38 0D 01"});
-    steps->append(Step{"Horn OFF",         "j1850cmd:38 0D 00"});
-    steps->append(Step{"Wiper ON",         "j1850cmd:38 08 01"});
-    steps->append(Step{"Wiper OFF",        "j1850cmd:38 08 00"});
-    steps->append(Step{"", "j1850hdr:ATSH244018"});
-    steps->append(Step{"", "j1850hdr:ATRA40"});
-    steps->append(Step{"Body DTC Read",    "j1850cmd:FF 00 00"});
-    // --- Body DTC PID Scan ---
-    steps->append(Step{"", "j1850hdr:ATSH244022"});
-    steps->append(Step{"", "j1850hdr:ATRA40"});
-    steps->append(Step{"", "header:--- Body DTC PID Scan ---"});
-    for (uint8_t p : {0x00,0x01,0x02,0x03,0x05,0x0D,0x12}) {
-        steps->append(Step{QString("Body DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
-            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
-    }
-
-    // --- HVAC 0x98 ---
-    steps->append(Step{"", "header:===== PHASE 3f: HVAC 0x98 ====="});
-    steps->append(Step{"", "j1850hdr:ATSH249822"});
-    steps->append(Step{"", "j1850hdr:ATRA98"});
-    steps->append(Step{"HVAC 24 00",       "j1850cmd:24 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH249830"});
-    steps->append(Step{"HVAC SelfTest",    "j1850cmd:01 FF FF"});
-    steps->append(Step{"HVAC MTR Def",     "j1850cmd:02 FF FF"});
-    steps->append(Step{"HVAC MTR Panel",   "j1850cmd:03 FF FF"});
-    steps->append(Step{"", "j1850hdr:ATSH24982F"});
-    steps->append(Step{"DrvBlend Hot",     "j1850cmd:38 03 00"});
-    steps->append(Step{"DrvBlend Cold",    "j1850cmd:38 04 00"});
-    // --- HVAC DTC PID Scan ---
-    steps->append(Step{"", "j1850hdr:ATSH249822"});
-    steps->append(Step{"", "j1850hdr:ATRA98"});
-    steps->append(Step{"", "header:--- HVAC DTC PID Scan ---"});
-    for (uint8_t p : {0x03,0x04,0x05,0x06}) {
-        steps->append(Step{QString("HVAC DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
-            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
-    }
-
-    // --- Driver Door 0xA0 ---
-    steps->append(Step{"", "header:===== PHASE 3g: Driver Door 0xA0 ====="});
-    steps->append(Step{"", "j1850hdr:ATSH24A022"});
-    steps->append(Step{"", "j1850hdr:ATRAA0"});
-    steps->append(Step{"DrvDr 20 00",      "j1850cmd:20 00 00"});
-    steps->append(Step{"DrvDr 20 01",      "j1850cmd:20 01 00"});
-    steps->append(Step{"DrvDr 20 02",      "j1850cmd:20 02 00"});
-    steps->append(Step{"", "j1850hdr:ATSH24A02F"});
-    steps->append(Step{"Courtesy ON",      "j1850cmd:38 00 12"});
-    steps->append(Step{"Courtesy OFF",     "j1850cmd:38 00 00"});
-    steps->append(Step{"FrontWin UP",      "j1850cmd:38 01 12"});
-    steps->append(Step{"FrontWin OFF",     "j1850cmd:38 01 00"});
-    steps->append(Step{"FrontWin DN",      "j1850cmd:38 02 12"});
-    steps->append(Step{"FrontWin OFF",     "j1850cmd:38 02 00"});
-    steps->append(Step{"Lock ON",          "j1850cmd:38 05 12"});
-    steps->append(Step{"Lock OFF",         "j1850cmd:38 05 00"});
-    steps->append(Step{"Unlock ON",        "j1850cmd:38 06 12"});
-    steps->append(Step{"Unlock OFF",       "j1850cmd:38 06 00"});
-    // --- DriverDoor DTC PID Discovery (2E 00~2E 10) ---
-    steps->append(Step{"", "j1850hdr:ATSH24A022"});
-    steps->append(Step{"", "j1850hdr:ATRAA0"});
-    steps->append(Step{"", "header:--- DriverDoor DTC PID Discovery ---"});
-    for (uint8_t p : {0x00,0x01,0x02,0x03,0x04,0x05,0x08,0x0A,0x10}) {
-        steps->append(Step{QString("DrvDr DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
-            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
-    }
-
-    // --- Passenger Door 0xA1 ---
-    steps->append(Step{"", "header:===== PHASE 3h: Passenger Door 0xA1 ====="});
-    steps->append(Step{"", "j1850hdr:ATSH24A122"});
-    steps->append(Step{"", "j1850hdr:ATRAA1"});
-    steps->append(Step{"PasDr 20 00",      "j1850cmd:20 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH24A12F"});
-    steps->append(Step{"FrontWin UP",      "j1850cmd:38 01 12"});
-    steps->append(Step{"FrontWin OFF",     "j1850cmd:38 01 00"});
-    steps->append(Step{"Lock ON",          "j1850cmd:38 05 12"});
-    steps->append(Step{"Lock OFF",         "j1850cmd:38 05 00"});
-    // --- PassengerDoor DTC PID Discovery (2E 00~2E 10) ---
-    steps->append(Step{"", "j1850hdr:ATSH24A122"});
-    steps->append(Step{"", "j1850hdr:ATRAA1"});
-    steps->append(Step{"", "header:--- PassengerDoor DTC PID Discovery ---"});
-    for (uint8_t p : {0x00,0x01,0x02,0x03,0x04,0x05,0x08,0x0A,0x10}) {
-        steps->append(Step{QString("PasDr DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
-            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
-    }
-
-    // --- Electro Mech Cluster 0x60 ---
-    steps->append(Step{"", "header:===== PHASE 3i: ElecClust 0x60 ====="});
-    steps->append(Step{"", "j1850hdr:ATSH246022"});
-    steps->append(Step{"", "j1850hdr:ATRA60"});
-    steps->append(Step{"0x60 20 00",       "j1850cmd:20 00 00"});
-    steps->append(Step{"0x60 20 0B",       "j1850cmd:20 0B 00"});
-
-    // --- Overhead 0x68 ---
-    steps->append(Step{"", "header:===== PHASE 3j: Overhead 0x68 ====="});
-    steps->append(Step{"", "j1850hdr:ATSH246822"});
-    steps->append(Step{"", "j1850hdr:ATRA68"});
-    steps->append(Step{"OvHd 20 00",       "j1850cmd:20 00 00"});
-    steps->append(Step{"OvHd 20 01",       "j1850cmd:20 01 00"});
-    steps->append(Step{"OvHd 20 02",       "j1850cmd:20 02 00"});
-    steps->append(Step{"OvHd 24 00",       "j1850cmd:24 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH246831"});
-    steps->append(Step{"OvHd SelfTest31",  "j1850cmd:01 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH246833"});
-    steps->append(Step{"OvHd SelfTest33",  "j1850cmd:01 00 00"});
-    // --- Overhead DTC PID Scan ---
-    steps->append(Step{"", "j1850hdr:ATSH246822"});
-    steps->append(Step{"", "j1850hdr:ATRA68"});
-    steps->append(Step{"", "header:--- Overhead DTC PID Scan ---"});
-    for (uint8_t p : {0x02,0x05,0x08}) {
-        steps->append(Step{QString("OvHd DTC 2E %1").arg(p,2,16,QChar('0')).toUpper(),
-            QString("j1850cmd:2E %1 00").arg(p,2,16,QChar('0')).toUpper()});
-    }
-
-    // --- Rain Sensor 0xA7 ---
-    steps->append(Step{"", "header:===== PHASE 3k: Rain Sensor 0xA7 ====="});
-    steps->append(Step{"", "j1850hdr:ATSH24A722"});
-    steps->append(Step{"", "j1850hdr:ATRAA7"});
-    steps->append(Step{"Rain 20 00",       "j1850cmd:20 00 00"});
-    steps->append(Step{"Rain 20 01",       "j1850cmd:20 01 00"});
-    steps->append(Step{"Rain 20 02",       "j1850cmd:20 02 00"});
-    steps->append(Step{"Rain 24 00",       "j1850cmd:24 00 00"});
-    steps->append(Step{"", "header:--- Rain DTC PID Scan ---"});
-    steps->append(Step{"Rain DTC 2E 10",   "j1850cmd:2E 10 00"});
-
-    // --- Dead modules ---
-    steps->append(Step{"", "header:===== PHASE 3l: Other Modules ====="});
-    steps->append(Step{"", "j1850hdr:ATSH242A22"});
-    steps->append(Step{"", "j1850hdr:ATRA2A"});
-    steps->append(Step{"AdjPedal 20 00",   "j1850cmd:20 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH248022"});
-    steps->append(Step{"", "j1850hdr:ATRA80"});
-    steps->append(Step{"Radio 20 00",      "j1850cmd:20 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH248122"});
-    steps->append(Step{"", "j1850hdr:ATRA81"});
-    steps->append(Step{"CDChngr 20 00",    "j1850cmd:20 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH246222"});
-    steps->append(Step{"", "j1850hdr:ATRA62"});
-    steps->append(Step{"ParkAst 20 00",    "j1850cmd:20 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH246D22"});
-    steps->append(Step{"", "j1850hdr:ATRA6D"});
-    steps->append(Step{"Nav 20 00",        "j1850cmd:20 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH248722"});
-    steps->append(Step{"", "j1850hdr:ATRA87"});
-    steps->append(Step{"SatAud 20 00",     "j1850cmd:20 00 00"});
-    steps->append(Step{"", "j1850hdr:ATSH249022"});
-    steps->append(Step{"", "j1850hdr:ATRA90"});
-    steps->append(Step{"HndsFree 20 00",   "j1850cmd:20 00 00"});
+    steps->append(Step{"TCM Blk 0x30", "kwpcmd:21 30"});
+    steps->append(Step{"TCM Blk 0x31", "kwpcmd:21 31"});
+    steps->append(Step{"TCM Blk 0x34", "kwpcmd:21 34"});
+    steps->append(Step{"TCM Blk 0x33", "kwpcmd:21 33"});
+    steps->append(Step{"TCM Blk 0x32", "kwpcmd:21 32"});
 
     // --- Done ---
     steps->append(Step{"", "header:===== COMPLETE ====="});
     steps->append(Step{"Battery", "cmd:ATRV"});
-
     // =================================================================
     // STEP RUNNER
     // =================================================================
@@ -2311,7 +2099,7 @@ void MainWindow::runDiscoveryPhases(
 
     *run = [this, steps, idx, run, log, done]() {
         if (*idx >= steps->size()) {
-            m_logText->append("<font color='white'>========== UNVERIFIED TEST COMPLETE ==========</font>");
+            m_logText->append("<font color='white'>========== RAW BLOCK DUMP COMPLETE ==========</font>");
             log("#ffff00", "Use COPY LOG to copy results!");
             done();
             return;

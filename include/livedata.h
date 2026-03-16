@@ -87,4 +87,8 @@ private:
 
     QFile *m_logFile = nullptr;
     QTextStream *m_logStream = nullptr;
+
+    // Fuel consumption cumulative average
+    double m_fuelLhSum = 0;  int m_fuelLhN = 0;
+    double m_fuelLkmSum = 0; int m_fuelLkmN = 0;
 };

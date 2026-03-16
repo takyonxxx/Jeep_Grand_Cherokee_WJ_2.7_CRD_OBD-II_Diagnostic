@@ -28,7 +28,7 @@ void ELM327Emu::tick() {
     float t = (millis() - _t0) / 1000.0f;
     engineRpm = 750 + 30 * sin(t * 0.5f) + random(-10, 10);
     coolantTemp = min(95.0f, 20.0f + t * 0.05f);
-    transTemp = min(130.0f, 77.0f + t * 0.02f);
+    transTemp = min(130.0f, 57.0f + t * 0.02f);
 }
 
 // ==================== AT Commands ====================
@@ -687,70 +687,82 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
     if (sid == 0x21) {
         uint8_t blk = (dlen > 0) ? data[0] : 0;
         if (klTarget == 0x20) {
-            // TCM block 0x30
+            // TCM block 0x30: Real BLE: 0017 001E 0000 0008 0400 DD60 FFF6 FFF6 0000 9618 0008
             if (blk == 0x30) {
                 tick();
-                uint16_t turbRpm = (uint16_t)max(0.0f, engineRpm * 0.97f);
+                tcmReadCount++;
+                uint8_t selector = 8;  // P
+                uint8_t gearNum = 0;
+                uint8_t gearX11 = 0;
+                uint16_t turbRpm = 0;
+                uint16_t outputRpm = 0;
+                int phase = (tcmReadCount / 8) % 7;
+                switch (phase) {
+                case 0: selector=8; gearNum=0; gearX11=0x00; turbRpm=0; outputRpm=0; break;
+                case 1: selector=5; gearNum=1; gearX11=0x11; turbRpm=1800; outputRpm=500; break;
+                case 2: selector=5; gearNum=2; gearX11=0x22; turbRpm=1650; outputRpm=750; break;
+                case 3: selector=5; gearNum=3; gearX11=0x33; turbRpm=1550; outputRpm=1100; break;
+                case 4: selector=5; gearNum=4; gearX11=0x44; turbRpm=1500; outputRpm=1500; break;
+                case 5: selector=5; gearNum=5; gearX11=0x55; turbRpm=1400; outputRpm=1700; break;
+                case 6: selector=8; gearNum=0; gearX11=0x00; turbRpm=0; outputRpm=0; break;
+                }
+                // Real BLE format: [0-1]=actualTCCslip [2-3]=desTCCslip [4-5]=outputRPM
+                // [7]=selector [9]=gearNum [10]=gearX11
+                int16_t tccActual = (selector==5) ? 20 : 0;
+                int16_t tccDesired = (selector==5) ? 30 : 0;
                 uint8_t traw = (uint8_t)(transTemp + 40);
-                uint16_t tccSlip = 25;    // Des TCC slip
-                uint16_t tccActual = 30;  // Actual TCC slip
                 uint8_t r[] = {0x61, 0x30,
-                    (uint8_t)(turbRpm>>8), (uint8_t)(turbRpm&0xFF), // Turbine RPM
-                    (uint8_t)(tccSlip>>8), (uint8_t)(tccSlip&0xFF), // Des TCC slip
-                    (uint8_t)(tccActual>>8), (uint8_t)(tccActual&0xFF), // Actual TCC slip
-                    0x00, gearSel, 0x04,
-                    0x00, 0xDD, traw,     // Fluid temp raw
-                    0xFF, 0xF7, 0xFF, 0xF7,
-                    0x00, 0x00, 0x96, 0x18, 0x00, 0x08};
+                    (uint8_t)((uint16_t)tccActual>>8), (uint8_t)((uint16_t)tccActual&0xFF),
+                    (uint8_t)((uint16_t)tccDesired>>8), (uint8_t)((uint16_t)tccDesired&0xFF),
+                    (uint8_t)(outputRpm>>8), (uint8_t)(outputRpm&0xFF),
+                    0x00, selector, 0x04,           // [6-8]
+                    gearNum,                         // [9] ACTUAL GEAR
+                    gearX11, traw,                   // [10-11] gear*0x11, transTemp+40
+                    0xFF,0xF6, 0xFF,0xF6,           // [12-15]
+                    0x00,0x00, 0x96,0x18, 0x00,0x08}; // [16-21]
                 return kwpWrap(r, 24);
             }
+            // TCM block 0x31: Real BLE: 01BB 0000 02D8 02F0 then zeros
             if (blk == 0x31) {
-                uint16_t batV = (uint16_t)(14.2f * 100);   // Battery voltage
-                uint16_t sensV = (uint16_t)(5.0f * 100);   // Sensor Supply
-                uint16_t solV = (uint16_t)(12.5f * 100);   // Solenoid Supply
-                uint16_t turbRpm = (uint16_t)max(0.0f, engineRpm * 0.97f);
+                tick();
+                uint16_t n2 = (uint16_t)(engineRpm * 0.59f);  // Input N2
+                uint16_t n3 = 0;
+                uint16_t turbine = (uint16_t)(engineRpm * 0.97f);
+                uint16_t engRpm = (uint16_t)engineRpm;
                 uint8_t r[] = {0x61,0x31,
-                    (uint8_t)(batV>>8),(uint8_t)(batV&0xFF),   // Battery
-                    (uint8_t)(sensV>>8),(uint8_t)(sensV&0xFF), // Sensor Supply
-                    (uint8_t)(solV>>8),(uint8_t)(solV&0xFF),   // Solenoid Supply
-                    (uint8_t)(turbRpm>>8),(uint8_t)(turbRpm&0xFF), // turbine RPM
+                    (uint8_t)(n2>>8),(uint8_t)(n2&0xFF),
+                    (uint8_t)(n3>>8),(uint8_t)(n3&0xFF),
+                    (uint8_t)(turbine>>8),(uint8_t)(turbine&0xFF),
+                    (uint8_t)(engRpm>>8),(uint8_t)(engRpm&0xFF),
                     0x00,0x00, 0x00,0x00, 0x00,0x00,
                     0x00,0x00, 0x00,0x00, 0x00,0x00};
                 return kwpWrap(r, 22);
             }
+            // TCM block 0x34: Real BLE: 0217 03FF 0332 0214 0807 0001 0028
             if (blk == 0x34) {
-                tick();
-                uint16_t fluidT = (uint16_t)((transTemp + 40.0f) * 10); // Fluid temp
-                uint16_t tccP = (uint16_t)(55.0f * 10);    // TCC pressure PSI
-                uint16_t shiftP = (uint16_t)(80.0f * 10);  // Shift PSI
-                uint16_t modP = (uint16_t)(65.0f * 10);    // Modulation PSI
-                float tps = (engineRpm > 850.0f) ? (engineRpm - 850.0f) * 0.05f : 0.0f;
-                uint16_t tpsPct = (uint16_t)(tps * 10);    // TPS percent
-                uint16_t uphill = (uint16_t)(0.0f * 10);   // Uphill Grad
+                // Real BLE: 0217 03FF 0332 0214 0807 0001 0028
+                // [0-1] is NOT transTemp (dynamic, unknown purpose)
                 uint8_t r[] = {0x61,0x34,
-                    (uint8_t)(fluidT>>8),(uint8_t)(fluidT&0xFF),
-                    (uint8_t)(tccP>>8),(uint8_t)(tccP&0xFF),
-                    (uint8_t)(shiftP>>8),(uint8_t)(shiftP&0xFF),
-                    (uint8_t)(modP>>8),(uint8_t)(modP&0xFF),
-                    (uint8_t)(tpsPct>>8),(uint8_t)(tpsPct&0xFF),
-                    (uint8_t)(uphill>>8),(uint8_t)(uphill&0xFF),
-                    0x00,0x28};
+                    0x02,0x17,  // [0-1] unknown dynamic
+                    0x03,0xFF,
+                    0x03,0x32,  // Sensor Supply
+                    0x02,0x14,  // Solenoid Supply
+                    0x08,0x07,  // Battery
+                    0x00,0x01, 0x00,0x28};
                 return kwpWrap(r, 16);
             }
+            // TCM block 0x33: Real BLE: 0024 0771 05DC 02B8 02B4 02E3 02E1 0000
             if (blk == 0x33) {
-                // Wheel speeds (all 0 when stopped)
-                uint16_t lfW = 0, rfW = 0, lrW = 0, rrW = 0;
-                uint16_t rearV = 0, frontV = 0;
                 uint8_t r[] = {0x61,0x33,
-                    (uint8_t)(lfW>>8),(uint8_t)(lfW&0xFF),     // LF wheel
-                    (uint8_t)(rfW>>8),(uint8_t)(rfW&0xFF),     // RF wheel
-                    (uint8_t)(lrW>>8),(uint8_t)(lrW&0xFF),     // LR wheel
-                    (uint8_t)(rrW>>8),(uint8_t)(rrW&0xFF),     // RR wheel
-                    (uint8_t)(rearV>>8),(uint8_t)(rearV&0xFF), // Rear Vehicle speed
-                    (uint8_t)(frontV>>8),(uint8_t)(frontV&0xFF),// Front Vehicle speed
-                    0x00,0x00, 0x00,0x00};
+                    0x00,0x24,  // TCC pressure
+                    0x07,0x71,  // ?
+                    0x05,0xDC,  // ?
+                    0x02,0xB8,  // Shift PSI
+                    0x02,0xB4,  // Modulation PSI
+                    0x02,0xE3, 0x02,0xE1, 0x00,0x00};
                 return kwpWrap(r, 18);
             }
+            // TCM block 0x32: Real BLE: all zeros
             if (blk == 0x32) {
                 uint8_t r[] = {0x61,0x32,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
                 return kwpWrap(r, 15);
@@ -760,267 +772,196 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             return kwpWrap(r, 18);
         }
         // ECU blocks — PCAP-verified format (2026-03-12)
+        // ================================================================
+        // ECU BLOCKS — EXACT REAL CAR BLE DATA (dynamic: RPM, coolant)
+        // ================================================================
         if (blk == 0x12) {
-            // PCAP: 61 12 [34 bytes] — coolant, IAT, TPS, MAP, rail, AAP
             tick();
             uint16_t cr = (uint16_t)((coolantTemp + 273.1f) * 10);
-            uint16_t ir = (uint16_t)((18.0f + 273.1f) * 10);
-            float tps = (engineRpm > 850.0f) ? (engineRpm - 850.0f) * 0.05f : 0.0f;
-            uint16_t tpsRaw = (uint16_t)(tps * 100);
-            uint16_t mapVal = 920 + (uint16_t)(tps * 2.5f);
-            uint16_t railVal = (uint16_t)((290.0f + tps * 5.0f) * 10);
-            uint8_t r[36] = {0x61, 0x12,
-                (uint8_t)(cr>>8), (uint8_t)(cr&0xFF),
-                (uint8_t)(ir>>8), (uint8_t)(ir&0xFF),
-                0x08, 0xB7, 0x08, 0xB7, 0x00, 0x00,
-                0x04, 0x03,
-                (uint8_t)(tpsRaw>>8), (uint8_t)(tpsRaw&0xFF),
-                (uint8_t)(mapVal>>8), (uint8_t)(mapVal&0xFF),
-                0x03, 0x91,
-                (uint8_t)(railVal>>8), (uint8_t)(railVal&0xFF),
-                0x02, 0x24, 0x01, 0x2A, 0x00, 0x68,
-                0x03, 0xA0, 0x03, 0xA0, 0x00, 0x0B};
+            uint16_t rpm = (uint16_t)engineRpm;
+            uint16_t iq = (uint16_t)(5.46f * 100); // 546 = idle injection qty
+            // Real BLE: 0C79 0BE7 08B7 08B7 0000 02EC 0000 0210 038E 0B60 02A6 012A 0042 097F 03A0 0000
+            uint8_t r[] = {0x61,0x12,
+                (uint8_t)(cr>>8),(uint8_t)(cr&0xFF),    // [0-1] Coolant
+                0x0B,0xE7,                               // [2-3] IAT
+                0x08,0xB7, 0x08,0xB7,                   // [4-7] Voltages
+                0x00,0x00,                               // [8-9]
+                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),  // [10-11] RPM
+                0x00,0x00,                               // [12-13]
+                (uint8_t)(iq>>8),(uint8_t)(iq&0xFF),    // [14-15] InjQty
+                0x03,0x8E,                               // [16-17] MAP mbar
+                0x0B,0x60,                               // [18-19] Rail *0.101=291Bar
+                0x02,0xA6, 0x01,0x2A, 0x00,0x42,       // [20-25]
+                0x09,0x7F, 0x03,0xA0, 0x00,0x00};      // [26-31]
             return kwpWrap(r, 34);
         }
-        if (blk == 0x20) {
-            // PCAP: 61 20 [16 bytes] — MAF actual, MAF spec, rest static
-            tick();
-            float tps = (engineRpm > 850.0f) ? (engineRpm - 850.0f) * 0.05f : 0.0f;
-            uint16_t mafAct = 420 + (uint16_t)(tps * 3.0f);
-            uint16_t mafSpec = 360 + (uint16_t)(tps * 1.5f);
-            uint8_t r[18] = {0x61, 0x20,
-                (uint8_t)(mafAct>>8), (uint8_t)(mafAct&0xFF),
-                (uint8_t)(mafSpec>>8), (uint8_t)(mafSpec&0xFF),
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00};
-            return kwpWrap(r, 16);
-        }
         if (blk == 0x22) {
-            // Barometric pressure, outside air temp, coolant/IAT voltages
-            uint16_t barP = (uint16_t)(1013.0f);             // Barometric Pressure mbar
-            uint16_t barPV = (uint16_t)(4.0f * 1000);        // Barometric Voltage mV
-            uint16_t oat = (uint16_t)((22.0f + 40.0f) * 10); // Outside Air Temp (offset +40)
-            uint16_t coolV = (uint16_t)(1.5f * 1000);        // Coolant Sensor Voltage
-            uint16_t iatV = (uint16_t)(2.8f * 1000);         // Air Intake Volts
-            uint16_t mafV = (uint16_t)(1.2f * 1000);         // Mass Air Flow Voltage
+            tick();
+            uint16_t cr = (uint16_t)((coolantTemp + 273.1f) * 10);
+            // Real BLE: 0C79 0BE7 08B7 08B7 0000 0000 0211 038E 0B97 0394 024E 02E4 02E4 02BF 08B7 000F
             uint8_t r[] = {0x61,0x22,
-                (uint8_t)(barP>>8),(uint8_t)(barP&0xFF),
-                (uint8_t)(barPV>>8),(uint8_t)(barPV&0xFF),
-                (uint8_t)(oat>>8),(uint8_t)(oat&0xFF),
-                (uint8_t)(coolV>>8),(uint8_t)(coolV&0xFF),
-                (uint8_t)(iatV>>8),(uint8_t)(iatV&0xFF),
-                (uint8_t)(mafV>>8),(uint8_t)(mafV&0xFF),
-                0x00,0x00};
-            return kwpWrap(r, 16);
+                (uint8_t)(cr>>8),(uint8_t)(cr&0xFF),    // [0-1] Coolant
+                0x0B,0xE7,                               // [2-3] IAT
+                0x08,0xB7, 0x08,0xB7,                   // [4-7] Voltages
+                0x00,0x00, 0x00,0x00,                   // [8-11]
+                0x02,0x11,                               // [12-13] InjQty spec
+                0x03,0x8E,                               // [14-15] MAP/1000=Boost
+                0x0B,0x97,                               // [16-17] Rail area
+                0x03,0x94, 0x02,0x4E,                   // [18-21]
+                0x02,0xE4, 0x02,0xE4,                   // [22-25]
+                0x02,0xBF, 0x08,0xB7, 0x00,0x0F};      // [26-31]
+            return kwpWrap(r, 34);
         }
         if (blk == 0x28) {
-            // PCAP: 61 28 [30 bytes] — RPM, injQty, injector data
             tick();
             uint16_t rpm = (uint16_t)engineRpm;
-            float injQty = (engineRpm > 850.0f) ? 9.5f + (engineRpm - 850.0f) * 0.02f : 9.5f;
-            uint16_t iq = (uint16_t)(injQty * 100);
-            uint8_t r[32] = {0x61, 0x28,
-                (uint8_t)(rpm>>8), (uint8_t)(rpm&0xFF),
-                (uint8_t)(iq>>8), (uint8_t)(iq&0xFF),
-                // Remaining 26 bytes: injector balance + other data
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-            return kwpWrap(r, 32);
+            // Real BLE: 02EF 03B9 then zeros
+            uint8_t r[] = {0x61,0x28,
+                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),  // [0-1] RPM
+                0x03,0xB9,                               // [2-3] InjQty
+                0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
+                0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
+                0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
+                0x00,0x00, 0x00,0x00};
+            return kwpWrap(r, 34);
         }
         if (blk == 0x62) {
             if (!ecuUnlocked) { uint8_t r[]={0x7F,0x21,0x33}; return kwpWrap(r,3); }
-            uint8_t r[] = {0x61, 0x62, 0x50, 0x52, 0x8F, 0x84};  // real PCAP
+            uint8_t r[] = {0x61,0x62, 0x50,0x52,0x8F,0x84};
             return kwpWrap(r, 6);
         }
         if (blk == 0xB0) {
             if (!ecuUnlocked) { uint8_t r[]={0x7F,0x21,0x33}; return kwpWrap(r,3); }
-            uint8_t r[] = {0x61, 0xB0, 0x37, 0x0F};
+            uint8_t r[] = {0x61,0xB0, 0x37,0x0F};
             return kwpWrap(r, 4);
         }
         if (blk == 0xB1) {
             if (!ecuUnlocked) { uint8_t r[]={0x7F,0x21,0x33}; return kwpWrap(r,3); }
-            uint8_t r[] = {0x61, 0xB1, 0xD2, 0x15};
+            uint8_t r[] = {0x61,0xB1, 0xD2,0x15};
             return kwpWrap(r, 4);
         }
         if (blk == 0xB2) {
             if (!ecuUnlocked) { uint8_t r[]={0x7F,0x21,0x33}; return kwpWrap(r,3); }
-            uint8_t r[] = {0x61, 0xB2, 0xE0, 0x4B};
+            uint8_t r[] = {0x61,0xB2, 0xE0,0x4B};
             return kwpWrap(r, 4);
         }
-        // Block 0x30: RPM setpoints, idle control
         if (blk == 0x30) {
-            tick();
-            uint16_t rpm = (uint16_t)engineRpm;
-            uint16_t idleSet = 750;
+            // Real BLE: 02EE 0000 0000 0C91 0C92 03E5 0000 0000 0000 0B77 0000 0000
             uint8_t r[] = {0x61,0x30,
-                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),      // Engine RPM
-                (uint8_t)(idleSet>>8),(uint8_t)(idleSet&0xFF), // Low Idle Setpoint
+                0x02,0xEE, 0x00,0x00, 0x00,0x00,
+                0x0C,0x91, 0x0C,0x92, 0x03,0xE5,
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x03,0x20, // idle governor
-                0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 18);
+                0x0B,0x77, 0x00,0x00, 0x00,0x00};
+            return kwpWrap(r, 26);
         }
-        // Block 0x23: Boost/turbo control
         if (blk == 0x23) {
-            tick();
-            float tps = (engineRpm > 850.0f) ? (engineRpm - 850.0f) * 0.05f : 0.0f;
-            uint16_t boostAct = 980 + (uint16_t)(tps * 3.0f);  // mbar
-            uint16_t boostSet = 970 + (uint16_t)(tps * 2.8f);
-            uint16_t boostV = (uint16_t)(1.8f * 1000);         // voltage mV
+            // Real BLE: 097F 0250 FFFC 0BD7 03A0 02A3 0085 0043 03FD 012A
             uint8_t r[] = {0x61,0x23,
-                (uint8_t)(boostAct>>8),(uint8_t)(boostAct&0xFF), // Boost Pressure Sensor
-                (uint8_t)(boostV>>8),(uint8_t)(boostV&0xFF),     // Boost Pressure Voltage
-                (uint8_t)(boostSet>>8),(uint8_t)(boostSet&0xFF), // Boost Pressure Setpoint
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 18);
+                0x09,0x7F, 0x02,0x50, 0xFF,0xFC,
+                0x0B,0xD7, 0x03,0xA0, 0x02,0xA3,
+                0x00,0x85, 0x00,0x43, 0x03,0xFD, 0x01,0x2A};
+            return kwpWrap(r, 22);
         }
-        // Block 0x21: Fuel demand / desired quantities
         if (blk == 0x21) {
-            tick();
-            float tps = (engineRpm > 850.0f) ? (engineRpm - 850.0f) * 0.05f : 0.0f;
-            uint16_t fuelDem = (uint16_t)((9.5f + tps * 0.5f) * 100);
-            uint16_t fuelDrv = (uint16_t)((8.0f + tps * 0.4f) * 100);
-            uint16_t fuelAct = (uint16_t)((9.2f + tps * 0.48f) * 100);
-            uint16_t fuelStart = 1200;
-            uint16_t fuelLim = 4500;
-            uint16_t fuelTrq = (uint16_t)((9.0f + tps * 0.3f) * 100);
-            uint16_t fuelIdle = (uint16_t)(9.5f * 100);
+            // Real BLE: 017E 03E4 03FD 0038 012A 03FE 024D 01F5 00BF 01A2
             uint8_t r[] = {0x61,0x21,
-                (uint8_t)(fuelDem>>8),(uint8_t)(fuelDem&0xFF),   // Desired Fuel QTY Demand
-                (uint8_t)(fuelDrv>>8),(uint8_t)(fuelDrv&0xFF),   // Desired Fuel QTY Driver
-                (uint8_t)(fuelAct>>8),(uint8_t)(fuelAct&0xFF),   // Actual Fuel Quantity
-                (uint8_t)(fuelStart>>8),(uint8_t)(fuelStart&0xFF), // Fuel QTY Start Setpoint
-                (uint8_t)(fuelLim>>8),(uint8_t)(fuelLim&0xFF),   // Fuel QTY Limit
-                (uint8_t)(fuelTrq>>8),(uint8_t)(fuelTrq&0xFF),   // Fuel QTY Torque
-                (uint8_t)(fuelIdle>>8),(uint8_t)(fuelIdle&0xFF),  // Fuel QTY Low-Idle Gov
-                0x00,0x00};
-            return kwpWrap(r, 18);
+                0x01,0x7E, 0x03,0xE4, 0x03,0xFD,
+                0x00,0x38, 0x01,0x2A, 0x03,0xFE,
+                0x02,0x4D, 0x01,0xF5, 0x00,0xBF, 0x01,0xA2};
+            return kwpWrap(r, 22);
         }
-        // Block 0x16: Battery/alternator
         if (blk == 0x16) {
-            uint16_t batV = (uint16_t)(14.2f * 100);    // Battery Voltage
-            uint16_t batT = (uint16_t)(28.0f * 10);     // Battery Temp
-            uint16_t batTV = (uint16_t)(2.5f * 1000);   // Battery Temp Voltage
-            uint16_t altField = (uint16_t)(3.2f * 100);  // Alternator Field
-            uint16_t altDuty = (uint16_t)(45.0f * 10);   // Alternator Duty Cycle
+            // Real BLE: 251C 2138 0000x18...2710 07DA...01F4...
             uint8_t r[] = {0x61,0x16,
-                (uint8_t)(batV>>8),(uint8_t)(batV&0xFF),
-                (uint8_t)(batT>>8),(uint8_t)(batT&0xFF),
-                (uint8_t)(batTV>>8),(uint8_t)(batTV&0xFF),
-                (uint8_t)(altField>>8),(uint8_t)(altField&0xFF),
-                (uint8_t)(altDuty>>8),(uint8_t)(altDuty&0xFF),
-                0x00,0x00, 0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 18);
+                0x25,0x1C, 0x21,0x38,
+                0x00,0x00, 0x00,0x00, 0x00,0x00,
+                0x00,0x00, 0x00,0x00, 0x00,0x00,
+                0x00,0x00, 0x00,0x00, 0x00,0x00,
+                0x00,0x00,
+                0x27,0x10, 0x07,0xDA,
+                0x00,0x00, 0x00,0x00, 0x00,0x00,
+                0x00,0x00, 0x01,0xF4,
+                0x00,0x00, 0x00,0x00};
+            return kwpWrap(r, 42);
         }
-        // Block 0x32: Vehicle speed
         if (blk == 0x32) {
-            uint16_t vspd = 0;     // Vehicle Speed (stopped)
-            uint16_t vspdSet = 0;  // Speed Setpoint
-            uint16_t cruiseV = (uint16_t)(0.5f * 1000);
-            uint8_t r[] = {0x61,0x32,
-                (uint8_t)(vspd>>8),(uint8_t)(vspd&0xFF),
-                (uint8_t)(vspdSet>>8),(uint8_t)(vspdSet&0xFF),
-                (uint8_t)(cruiseV>>8),(uint8_t)(cruiseV&0xFF),
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 18);
-        }
-        // Block 0x37: EGR/wastegate
-        if (blk == 0x37) {
-            uint16_t mafEgr = (uint16_t)(350.0f);       // MAF for EGR Setpoint
-            uint16_t wastegate = (uint16_t)(25.0f * 10); // Wastegate Solenoid %
-            uint8_t r[] = {0x61,0x37,
-                (uint8_t)(mafEgr>>8),(uint8_t)(mafEgr&0xFF),
-                (uint8_t)(wastegate>>8),(uint8_t)(wastegate&0xFF),
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00};
-            return kwpWrap(r, 18);
-        }
-        // Block 0x13: AC system / oil pressure
-        if (blk == 0x13) {
-            uint16_t oilP = (uint16_t)(3.5f * 100);     // Oil Pressure Sensor bar
-            uint16_t oilPV = (uint16_t)(2.1f * 1000);   // Oil Pressure Voltage mV
-            uint16_t acP = (uint16_t)(12.0f * 100);      // AC System Pressure
-            uint16_t acPV = (uint16_t)(1.8f * 1000);     // AC System Pressure Voltage
-            uint8_t r[] = {0x61,0x13,
-                (uint8_t)(oilP>>8),(uint8_t)(oilP&0xFF),
-                (uint8_t)(oilPV>>8),(uint8_t)(oilPV&0xFF),
-                (uint8_t)(acP>>8),(uint8_t)(acP&0xFF),
-                (uint8_t)(acPV>>8),(uint8_t)(acPV&0xFF),
-                0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 18);
-        }
-        // Block 0x36: Pedal position sensors
-        if (blk == 0x36) {
             tick();
-            float tps = (engineRpm > 850.0f) ? (engineRpm - 850.0f) * 0.05f : 0.0f;
-            uint16_t ped1 = (uint16_t)(tps * 100);          // Accel Pedal 1 %
-            uint16_t ped2 = (uint16_t)(tps * 50);           // Accel Pedal 2 %
-            uint16_t ped1V = (uint16_t)((0.8f + tps * 0.04f) * 1000); // Voltage mV
-            uint16_t ped2V = (uint16_t)((0.4f + tps * 0.02f) * 1000);
-            uint16_t fuelPed = (uint16_t)((8.0f + tps * 0.3f) * 100);
-            uint16_t fuelCru = 0;
+            uint16_t fuelAct = (uint16_t)(5.50f * 100); // idle fuel
+            // Real BLE: 03C3 0AD8 0000 0000 0CE4 03C4 03C3 0189 01A2 00FA 0030 026E 02C9 0000 0000 0000
+            uint8_t r[] = {0x61,0x32,
+                (uint8_t)(fuelAct>>8),(uint8_t)(fuelAct&0xFF), // [0-1] Actual Fuel Qty
+                0x0A,0xD8,                               // [2-3]
+                0x00,0x00, 0x00,0x00,                   // [4-7] Speed=0
+                0x0C,0xE4,                               // [8-9]
+                (uint8_t)(fuelAct>>8),(uint8_t)(fuelAct&0xFF), // [10-11]
+                (uint8_t)(fuelAct>>8),(uint8_t)(fuelAct&0xFF), // [12-13]
+                0x01,0x89, 0x01,0xA2,                   // [14-17]
+                0x00,0xFA, 0x00,0x30,                   // [18-21]
+                0x02,0x6E, 0x02,0xC9,                   // [22-25]
+                0x00,0x00, 0x00,0x00, 0x00,0x00};       // [26-31]
+            return kwpWrap(r, 34);
+        }
+        if (blk == 0x37) {
+            // Real BLE: 0C67 105D 0079 0000 0008 0000 0000 0000 004E 0000 0000 0105 0040 0000 0000 0001 0000
+            uint8_t r[] = {0x61,0x37,
+                0x0C,0x67, 0x10,0x5D, 0x00,0x79,
+                0x00,0x00, 0x00,0x08, 0x00,0x00,
+                0x00,0x00, 0x00,0x00, 0x00,0x4E,
+                0x00,0x00, 0x00,0x00, 0x01,0x05,
+                0x00,0x40, 0x00,0x00, 0x00,0x00,
+                0x00,0x01, 0x00,0x00};
+            return kwpWrap(r, 36);
+        }
+        if (blk == 0x13) {
+            // Real BLE: 0393 024A 02E4 02E4 0000 08B7 0000 0250 FFFC 0BD7 0085 03FD 0BCC
+            uint8_t r[] = {0x61,0x13,
+                0x03,0x93, 0x02,0x4A, 0x02,0xE4, 0x02,0xE4,
+                0x00,0x00, 0x08,0xB7, 0x00,0x00,
+                0x02,0x50, 0xFF,0xFC, 0x0B,0xD7,
+                0x00,0x85, 0x03,0xFD, 0x0B,0xCC};
+            return kwpWrap(r, 28);
+        }
+        if (blk == 0x36) {
+            // Real BLE: 0000 0000 02FF 125E 038D 0393 0000 0000 0391 0000 02C4 0B97 FFFF 125E 0083 FF62 002D 8494 0000
             uint8_t r[] = {0x61,0x36,
-                (uint8_t)(ped1>>8),(uint8_t)(ped1&0xFF),
-                (uint8_t)(ped2>>8),(uint8_t)(ped2&0xFF),
-                (uint8_t)(ped1V>>8),(uint8_t)(ped1V&0xFF),
-                (uint8_t)(ped2V>>8),(uint8_t)(ped2V&0xFF),
-                (uint8_t)(fuelPed>>8),(uint8_t)(fuelPed&0xFF),
-                (uint8_t)(fuelCru>>8),(uint8_t)(fuelCru&0xFF),
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 18);
+                0x00,0x00, 0x00,0x00, 0x02,0xFF,
+                0x12,0x5E, 0x03,0x8D, 0x03,0x93,
+                0x00,0x00, 0x00,0x00, 0x03,0x91,
+                0x00,0x00, 0x02,0xC4, 0x0B,0x97,
+                0xFF,0xFF, 0x12,0x5E, 0x00,0x83,
+                0xFF,0x62, 0x00,0x2D, 0x84,0x94, 0x00,0x00};
+            return kwpWrap(r, 40);
         }
-        // Block 0x26: Fuel level / pressure regulator
         if (blk == 0x26) {
-            uint16_t fuelLvl = (uint16_t)(65.0f * 10);      // Fuel Level %
-            uint16_t fuelLvlV = (uint16_t)(3.2f * 1000);    // Fuel Level Sensor Voltage
-            uint16_t fuelRegOut = (uint16_t)(50.0f * 10);    // Fuel Pressure Regulator Output
-            uint16_t fuelRailV = (uint16_t)(2.8f * 1000);    // Fuel Pressure Volts
-            uint16_t fuelPSet = (uint16_t)(290.0f * 10);     // Fuel Pressure Setpoint
+            // Real BLE: 0000 0000 0000 5CAF 7FFF 0000 2FA0 0029 0029 0029 0029 0048 0023 0000 0C77
             uint8_t r[] = {0x61,0x26,
-                (uint8_t)(fuelLvl>>8),(uint8_t)(fuelLvl&0xFF),
-                (uint8_t)(fuelLvlV>>8),(uint8_t)(fuelLvlV&0xFF),
-                (uint8_t)(fuelRegOut>>8),(uint8_t)(fuelRegOut&0xFF),
-                (uint8_t)(fuelRailV>>8),(uint8_t)(fuelRailV&0xFF),
-                (uint8_t)(fuelPSet>>8),(uint8_t)(fuelPSet&0xFF),
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00};
-            return kwpWrap(r, 18);
+                0x5C,0xAF, 0x7F,0xFF, 0x00,0x00,
+                0x2F,0xA0, 0x00,0x29, 0x00,0x29,
+                0x00,0x29, 0x00,0x29, 0x00,0x48,
+                0x00,0x23, 0x00,0x00, 0x0C,0x77};
+            return kwpWrap(r, 32);
         }
-        // Block 0x34: Transfer case, cam sync, injector bank
         if (blk == 0x34) {
-            uint16_t tcaseV = (uint16_t)(2.5f * 1000);      // Transfer Case Position Voltage
-            uint8_t camSync = 1;                              // Cam/Crank Sync (1=OK)
-            uint16_t injCap = (uint16_t)(85.0f * 10);        // Injector Bank 1 Capacitor V
+            // Real BLE: 0048 1000 0000 0004 0000x12...03FF 0003...0004 0000
             uint8_t r[] = {0x61,0x34,
-                (uint8_t)(tcaseV>>8),(uint8_t)(tcaseV&0xFF),
-                camSync, 0x00,
-                (uint8_t)(injCap>>8),(uint8_t)(injCap&0xFF),
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 18);
+                0x00,0x48, 0x10,0x00, 0x00,0x00,
+                0x00,0x04, 0x00,0x00, 0x00,0x00,
+                0x00,0x00, 0x00,0x00, 0x03,0xFF,
+                0x00,0x03, 0x00,0x00, 0x00,0x00,
+                0x00,0x03, 0x00,0x00, 0x00,0x00,
+                0x00,0x04, 0x00,0x00};
+            return kwpWrap(r, 36);
+        }
+        if (blk == 0x20) {
+            // Real BLE: 0254 0253 03FE 0000 0094 0048 01A8 0163 0108 02E5 024D 0090 00BF 03A0 01FA
+            uint8_t r[] = {0x61,0x20,
+                0x02,0x54, 0x02,0x53, 0x03,0xFE,
+                0x00,0x00, 0x00,0x94, 0x00,0x48,
+                0x01,0xA8, 0x01,0x63, 0x01,0x08,
+                0x02,0xE5, 0x02,0x4D, 0x00,0x90,
+                0x00,0xBF, 0x03,0xA0, 0x01,0xFA};
+            return kwpWrap(r, 32);
         }
         // Generic ECU block
         uint8_t r[18] = {0x61, blk};

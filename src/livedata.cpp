@@ -25,6 +25,8 @@ void LiveDataManager::stopPolling()
 {
     m_polling = false;
     m_pollTimer->stop();
+    m_fuelLhSum = 0; m_fuelLhN = 0;
+    m_fuelLkmSum = 0; m_fuelLkmN = 0;
     stopLogging();
 }
 
@@ -131,6 +133,19 @@ void LiveDataManager::pollTCM(std::function<void()> then)
         vals[0x18] = status.actualTccSlip;
         vals[0x19] = status.desTccSlip;
         vals[0x20] = status.vehicleSpeed;
+        vals[0x21] = status.frontVehicleSpd;
+        vals[0x22] = status.rearVehicleSpd;
+        vals[0x23] = status.shiftPsi;
+        vals[0x24] = status.modulationPsi;
+        vals[0x2B] = status.tcmBattery;
+        vals[0x2C] = status.sensorSupply;
+        vals[0x2D] = status.lfWheelSpd;
+        vals[0x2E] = status.rfWheelSpd;
+        vals[0x2F] = status.lrWheelSpd;
+        vals[0x30] = status.rrWheelSpd;
+        vals[0x31] = status.tccPressure;
+        vals[0x32] = status.tcmTpsPercent;
+        vals[0x33] = status.uphillGrad;
         for (auto it = vals.begin(); it != vals.end(); ++it)
             m_lastValues[it.key()] = it.value();
         emit dataUpdated(m_lastValues);
@@ -159,6 +174,59 @@ void LiveDataManager::pollECU(std::function<void()> then)
         ecuValues[0xF6] = ecu.railActual;
         ecuValues[0xF7] = ecu.injectionQty;
         ecuValues[0xF8] = ecu.batteryVoltage;
+        ecuValues[0xE0] = ecu.lowIdleSetpoint;
+        ecuValues[0xE1] = ecu.pedalPos1;
+        ecuValues[0xE2] = ecu.pedalPos2;
+        ecuValues[0xE3] = ecu.pedalV1;
+        ecuValues[0xE4] = ecu.pedalV2;
+        ecuValues[0xE5] = ecu.boostVoltage;
+        ecuValues[0xE6] = ecu.boostSetpoint;
+        ecuValues[0xE7] = ecu.fuelLevel;
+        ecuValues[0xE8] = ecu.fuelLevelV;
+        ecuValues[0xE9] = ecu.fuelRegOutput;
+        ecuValues[0xEA] = ecu.fuelPressureV;
+        ecuValues[0xEB] = ecu.fuelPressureSet;
+        ecuValues[0xEC] = ecu.fuelQtyPedal;
+        ecuValues[0xED] = ecu.fuelQtyCruise;
+        ecuValues[0xEE] = ecu.fuelDemand;
+        ecuValues[0xEF] = ecu.fuelDriver;
+        ecuValues[0xD0] = ecu.fuelActual;
+        ecuValues[0xD1] = ecu.fuelStartSet;
+        ecuValues[0xD2] = ecu.fuelLimit;
+        ecuValues[0xD3] = ecu.fuelTorque;
+        ecuValues[0xD4] = ecu.fuelIdleGov;
+        ecuValues[0xD5] = ecu.batteryTemp;
+        ecuValues[0xD6] = ecu.batteryTempV;
+        ecuValues[0xD7] = ecu.alternatorField;
+        ecuValues[0xD8] = ecu.alternatorDuty;
+        ecuValues[0xD9] = ecu.oilPressure;
+        ecuValues[0xDA] = ecu.oilPressureV;
+        ecuValues[0xDB] = ecu.coolantSensorV;
+        ecuValues[0xDC] = ecu.iatSensorV;
+        ecuValues[0xDD] = ecu.outsideAirTemp;
+        ecuValues[0xDE] = ecu.mafVoltage;
+        ecuValues[0xDF] = ecu.baroPressure;
+        ecuValues[0xC0] = ecu.baroPressureV;
+        ecuValues[0xC1] = ecu.acPressure;
+        ecuValues[0xC2] = ecu.acPressureV;
+        ecuValues[0xC3] = ecu.vehicleSpeed;
+        ecuValues[0xC4] = ecu.vehicleSpeedSet;
+        ecuValues[0xC5] = ecu.cruiseSwitchV;
+        ecuValues[0xC6] = ecu.mafEgrSetpoint;
+        ecuValues[0xC7] = ecu.wastegate;
+        ecuValues[0xC8] = ecu.transferCaseV;
+        ecuValues[0xC9] = ecu.camCrankSync;
+        ecuValues[0xCA] = ecu.injBankCap;
+        ecuValues[0xCB] = ecu.railSpec;
+        ecuValues[0xCC] = ecu.mafSpec;
+        // Fuel: we calculate from rpm*injQty, so average to smooth out
+        m_fuelLhSum += ecu.fuelFlowLH; m_fuelLhN++;
+        if (ecu.vehicleSpeed > 5.0 && ecu.fuelLPer100km > 0) {
+            m_fuelLkmSum += ecu.fuelLPer100km; m_fuelLkmN++;
+        }
+        double avgLh = m_fuelLhSum / m_fuelLhN;
+        double avgLkm = (m_fuelLkmN > 0) ? m_fuelLkmSum / m_fuelLkmN : 0;
+        ecuValues[0xCD] = (ecu.vehicleSpeed > 5.0) ? avgLkm : avgLh;
         // Merge with existing TCM values
         for (auto it = ecuValues.begin(); it != ecuValues.end(); ++it)
             m_lastValues[it.key()] = it.value();

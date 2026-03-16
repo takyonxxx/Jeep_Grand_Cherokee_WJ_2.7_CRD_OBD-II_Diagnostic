@@ -135,6 +135,9 @@ private:
     QString m_ctrlPendingCmd;
     QString m_ctrlPendingLabel;
     bool m_ctrlPendingOn = false;  // currently set J1850 header for controls
+    // Ctrl tab module activation
+    QPushButton *m_ctrlDrvBtn = nullptr, *m_ctrlPasBtn = nullptr, *m_ctrlBcmBtn = nullptr;
+    QGroupBox *m_ctrlFrontGrp = nullptr, *m_ctrlRearGrp = nullptr, *m_ctrlBodyGrp = nullptr;
     QTextEdit *m_logText;
     QPushButton *m_rawDumpBtn, *m_rawSendBtn;
     QLineEdit *m_rawCmdEdit;
