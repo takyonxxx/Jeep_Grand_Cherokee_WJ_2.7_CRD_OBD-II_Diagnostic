@@ -2247,10 +2247,80 @@ void MainWindow::runDiscoveryPhases(
         }
         if (step.action.startsWith("kwpcmd:")) {
             QString cmd = step.action.mid(7);
-            m_elm->sendCommand(cmd, [this, log, run, step](const QString &resp) {
+            m_elm->sendCommand(cmd, [this, log, run, step, cmd](const QString &resp) {
                 bool nd = resp.contains("NO DATA")||resp.contains("ERROR")||resp.contains("TIMEOUT");
                 bool nrc = resp.contains("7F");
                 log(nd ? "#666666" : (nrc ? "#ff8800" : "#00ff88"), step.label + ": " + resp.trimmed());
+
+                // === PARSED OUTPUT for verification ===
+                if (!nd && !nrc) {
+                    QStringList parts = resp.trimmed().split(' ');
+                    // Find "61 XX" header and extract data bytes
+                    int hdrIdx = -1;
+                    for (int i = 0; i < parts.size()-1; i++) {
+                        if (parts[i].compare("61", Qt::CaseInsensitive) == 0) { hdrIdx = i; break; }
+                    }
+                    if (hdrIdx >= 0 && hdrIdx + 2 < parts.size()) {
+                        uint8_t blk = parts[hdrIdx+1].toUInt(nullptr, 16);
+                        QByteArray data;
+                        for (int i = hdrIdx+2; i < parts.size(); i++) {
+                            bool ok; uint8_t b = parts[i].toUInt(&ok, 16);
+                            if (ok) data.append(b); else break;
+                        }
+                        auto u8 = [&](int i) -> uint8_t { return (i < data.size()) ? (uint8_t)data[i] : 0; };
+                        auto u16 = [&](int i) -> uint16_t { return ((uint16_t)u8(i) << 8) | u8(i+1); };
+                        auto s16 = [&](int i) -> int16_t { return (int16_t)u16(i); };
+                        int n = data.size();
+                        QString p;
+                        bool isECU = step.label.startsWith("ECU");
+
+                        if (isECU && blk == 0x12 && n >= 20) {
+                            p = QString("Coolant=%1C IAT=%2C RPM=%3 InjQty=%4 MAP=%5mbar Rail=%6Bar")
+                                .arg(u16(0)/10.0-273.1,0,'f',1).arg(u16(2)/10.0-273.1,0,'f',1)
+                                .arg(u16(10)).arg(u16(14)/100.0,0,'f',2)
+                                .arg(u16(16)).arg(u16(18)*0.101,0,'f',1);
+                        } else if (isECU && blk == 0x22 && n >= 16) {
+                            p = QString("Coolant=%1C IAT=%2C Boost=%3Bar AirIntV=%4V")
+                                .arg(u16(0)/10.0-273.1,0,'f',1).arg(u16(2)/10.0-273.1,0,'f',1)
+                                .arg(u16(14)/1000.0,0,'f',3).arg(u16(16)/1000.0,0,'f',3);
+                        } else if (isECU && blk == 0x28 && n >= 4) {
+                            p = QString("RPM=%1 InjQty=%2").arg(u16(0)).arg(u16(2)/100.0,0,'f',2);
+                        } else if (isECU && blk == 0x16 && n >= 4) {
+                            p = QString("AltRaw=%1 BattV=%2V [%3 bytes]")
+                                .arg(u16(0)).arg(u16(2)*5.0/3072,0,'f',2).arg(n);
+                        } else if (isECU && blk == 0x32 && n >= 6) {
+                            p = QString("FuelActual=%1mg/str Speed=%2km/h")
+                                .arg(u16(0)/100.0,0,'f',2).arg(u16(4));
+                        } else if (isECU && blk == 0x36 && n >= 8) {
+                            p = QString("Pedal1=%1% MAF=%2Mg/Str")
+                                .arg(u16(0)/100.0,0,'f',1).arg(u16(6)/10.0,0,'f',1);
+                        } else if (isECU && blk == 0x30 && n >= 2) {
+                            p = QString("IdleSetpoint=%1rpm").arg(u16(0));
+                        } else if (isECU && blk == 0x13 && n >= 6) {
+                            p = QString("Baro=%1 Oil=%2 AC=%3 [raw u16]")
+                                .arg(u16(0)).arg(u16(2)).arg(u16(4));
+                        } else if (!isECU && blk == 0x30 && n >= 12) {
+                            p = QString("ActTCC=%1 DesTCC=%2 OutRPM=%3 Sel=%4 Gear=%5 TTemp=%6C")
+                                .arg(s16(0)).arg(s16(2)).arg(u16(4))
+                                .arg(u8(7)).arg(u8(9)).arg(u8(11)-50);
+                        } else if (!isECU && blk == 0x31 && n >= 8) {
+                            p = QString("N2=%1 N3=%2 Turb=%3 EngRPM=%4")
+                                .arg(u16(0)).arg(u16(2)).arg(u16(4)).arg(u16(6));
+                        } else if (!isECU && blk == 0x34 && n >= 10) {
+                            p = QString("SensV=%1V SolV=%2V BattV=%3V")
+                                .arg(u16(4)*7.0/1000,0,'f',2)
+                                .arg(u16(6)/40.0,0,'f',2)
+                                .arg(u16(8)/154.5,0,'f',2);
+                        } else if (!isECU && blk == 0x33 && n >= 10) {
+                            p = QString("TCC_P=%1Bar ShiftPSI=%2Bar ModPSI=%3Bar")
+                                .arg(u16(0)/1000.0,0,'f',3)
+                                .arg(u16(6)/365.0,0,'f',3)
+                                .arg(u16(8)/462.0,0,'f',3);
+                        }
+                        if (!p.isEmpty())
+                            log("#80ffcc", "  -> " + p);
+                    }
+                }
                 (*run)();
             }, 3000);
             return;
