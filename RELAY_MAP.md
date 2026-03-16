@@ -220,119 +220,82 @@ See README.md for full ArvutaKoodi algorithm with lookup tables T1-T4.
 
 ## 11. ECU Live Data Blocks (K-Line 0x15)
 
-13 blocks read per cycle in verified order: `0x12 → 0x30 → 0x22 → 0x20 → 0x23 → 0x21 → 0x16 → 0x32 → 0x37 → 0x13 → 0x36 → 0x26 → 0x34`
+14 blocks per cycle + 4 security + ATRV. Block read order: `0x12 → 0x30 → 0x22 → 0x20 → 0x23 → 0x21 → 0x16 → 0x32 → 0x37 → 0x13 → 0x36 → 0x26 → 0x34`
 
-### Block 0x12 (34 bytes) — Primary sensors
+**All offsets verified: Real vehicle BLE full dump + WJDiag Pro screenshots + native lib (libnative-lib.so) decompile.**
+
+### Block 0x12 (32 data bytes) — Primary sensors
+| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+|--------|-------|-------|---------|-------------------|
+| [0-1] | u16 | Coolant Temp | /10 - 273.1 = °C | ✓ |
+| [2-3] | u16 | Air Intake Temp (IAT) | /10 - 273.1 = °C | ✓ |
+| [4-5] | u16 | Coolant Sensor V | /1000 = V | |
+| [6-7] | u16 | IAT Sensor V | /1000 = V | |
+| [10-11] | u16 | Engine RPM | raw (0x28 overrides) | ✓ |
+| [14-15] | u16 | Injection Qty | /100 = mg/str | |
+| [16-17] | u16 | MAP Actual | raw mbar | ✓ |
+| [18-19] | u16 | **Fuel Rail Pressure** | **×0.101 = Bar** | ✓ 294.2 Bar |
+
+### Block 0x22 (32 data bytes) — Coolant + Boost (primary source)
+| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+|--------|-------|-------|---------|-------------------|
+| [0-1] | u16 | **Coolant Temp** | /10 - 273.1 = °C | ✓ 54.7°C |
+| [2-3] | u16 | **IAT** | /10 - 273.1 = °C | ✓ |
+| [4-5] | u16 | Coolant Sensor V | /1000 = V | |
+| [6-7] | u16 | IAT Sensor V | /1000 = V | |
+| [14-15] | u16 | **Boost Pressure** | /1000 = Bar (MAP/1000) | ✓ 0.913 Bar |
+| [16-17] | u16 | Air Intake Volts | /1000 = V | (NOT Rail!) |
+
+### Block 0x28 (32 data bytes) — RPM override (native lib source)
+| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+|--------|-------|-------|---------|-------------------|
+| [0-1] | u16 | **Engine RPM** | raw (overrides 0x12) | ✓ 751 |
+| [2-3] | u16 | Injection Qty | /100 = mg/str | |
+
+### Block 0x30 (24 data bytes) — Idle setpoints
 | Offset | Bytes | Field | Formula |
 |--------|-------|-------|---------|
-| 2-3 | u16 | Coolant Temp | /10 - 273.1 °C |
-| 4-5 | u16 | Air Intake Temp | /10 - 273.1 °C |
-| 14-15 | u16 | TPS | /100 % |
-| 18-19 | u16 | MAP Actual | mbar |
-| 20-21 | u16 | Fuel Rail Actual | /10 bar |
-| 30-31 | u16 | Barometric (AAP) | mbar |
+| [0-1] | u16 | Low Idle Setpoint | raw RPM (750) |
 
-### Block 0x28 (32 bytes) — RPM/Injection
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Engine RPM | direct |
-| 4-5 | u16 | Injection Qty | /100 mg/str |
+### Block 0x32 (32 data bytes) — Fuel actual + speed
+| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+|--------|-------|-------|---------|-------------------|
+| [0-1] | u16 | **Actual Fuel Quantity** | /100 = mg/str | ✓ 8.60 |
+| [4-5] | u16 | Vehicle Speed | raw km/h | |
 
-### Block 0x30 (18 bytes) — RPM setpoints
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Engine RPM | direct |
-| 4-5 | u16 | Low Idle Setpoint | RPM |
+### Block 0x36 (38 data bytes) — Pedal + MAF
+| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+|--------|-------|-------|---------|-------------------|
+| [0-1] | u16 | Accel Pedal 1 | /100 = % | |
+| [4-5] | u16 | Accel Pedal 1 V | /1000 = V | |
+| [6-7] | u16 | **Mass Air Flow** | /10 = Mg/Str | ✓ 478.2 |
 
-### Block 0x20 (16 bytes) — MAF
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Mass Air Flow | mg/str |
-| 4-5 | u16 | MAF Voltage | /1000 V |
+### Block 0x16 (38 data bytes) — Battery / Alternator
+| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+|--------|-------|-------|---------|-------------------|
+| [0-1] | u16 | Alternator raw | — | |
+| [2-3] | u16 | **Battery Voltage** | **×5.0/3072 = V** | ✓ 13.85V |
 
-### Block 0x22 (16 bytes) — Barometric/temps
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Barometric Pressure | mbar |
-| 4-5 | u16 | Barometric Voltage | /1000 V |
-| 6-7 | u16 | Outside Air Temp | /10 - 40 °C |
-| 8-9 | u16 | Coolant Sensor Voltage | /1000 V |
-| 10-11 | u16 | Air Intake Volts | /1000 V |
-| 12-13 | u16 | MAF Voltage | /1000 V |
+### Block 0x20 (30 data bytes) — MAF/cruise detail
+Real BLE: `0254 0253 03FE 0000 0094 0048 01A8 0163 0108 02E5 024D 0090 00BF 03A0 01FA`
 
-### Block 0x23 (18 bytes) — Boost/turbo
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Boost Pressure Sensor | mbar |
-| 4-5 | u16 | Boost Pressure Voltage | /1000 V |
-| 6-7 | u16 | Boost Pressure Setpoint | mbar |
+### Block 0x23 (20 data bytes) — Boost/MAP detail
+Real BLE: `097F 0250 FFFC 0BD7 03A0 02A3 0085 0043 03FD 012A`
 
-### Block 0x21 (18 bytes) — Fuel demand
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Desired Fuel QTY Demand | /100 mg/str |
-| 4-5 | u16 | Desired Fuel QTY Driver | /100 mg/str |
-| 6-7 | u16 | Actual Fuel Quantity | /100 mg/str |
-| 8-9 | u16 | Fuel QTY Start Setpoint | /100 mg/str |
-| 10-11 | u16 | Fuel QTY Limit | /100 mg/str |
-| 12-13 | u16 | Fuel QTY Torque | /100 mg/str |
-| 14-15 | u16 | Fuel QTY Low-Idle Gov | /100 mg/str |
+### Block 0x21 (20 data bytes) — Fuel quantities (all /100 = mg/str)
+Real BLE: `017E 03E4 03FD 0038 012A 03FE 024D 01F5 00BF 01A2`
 
-### Block 0x16 (18 bytes) — Battery/alternator
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Battery Voltage | /100 V |
-| 4-5 | u16 | Battery Temp | /10 °C |
-| 6-7 | u16 | Battery Temp Voltage | /1000 V |
-| 8-9 | u16 | Alternator Field Current | /100 A |
-| 10-11 | u16 | Alternator Duty Cycle | /10 % |
+### Block 0x37 (34 data bytes) — EGR/Wastegate
+Real BLE: `0C67 105D 0079 0000 0008...`
 
-### Block 0x13 (18 bytes) — Oil/AC pressure
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Oil Pressure Sensor | /100 bar |
-| 4-5 | u16 | Oil Pressure Voltage | /1000 V |
-| 6-7 | u16 | AC System Pressure | /100 bar |
-| 8-9 | u16 | AC System Pressure Voltage | /1000 V |
+### Block 0x13 (26 data bytes) — Oil/AC/Baro
+Real BLE: `0393 024A 02E4 02E4 0000 08B7 0000 0250 FFFC 0BD7 0085 03FD 0BCC`
 
-### Block 0x36 (18 bytes) — Pedal position
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Accel Pedal Position 1 | /100 % |
-| 4-5 | u16 | Accel Pedal Position 2 | /100 % |
-| 6-7 | u16 | Accel Pedal 1 Voltage | /1000 V |
-| 8-9 | u16 | Accel Pedal 2 Voltage | /1000 V |
-| 10-11 | u16 | Desired Fuel QTY Pedal | /100 mg/str |
-| 12-13 | u16 | Desired Fuel QTY Cruise | /100 mg/str |
+### Block 0x26 (30 data bytes) — Fuel level
+Real BLE: `0000 0000 0000 5CAF 7FFF 0000 2FA0 0029 0029 0029 0029 0048 0023 0000 0C77`
 
-### Block 0x26 (18 bytes) — Fuel level/pressure
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Fuel Level | /10 % |
-| 4-5 | u16 | Fuel Level Sensor Voltage | /1000 V |
-| 6-7 | u16 | Fuel Pressure Regulator Output | /10 % |
-| 8-9 | u16 | Fuel Pressure Volts | /1000 V |
-| 10-11 | u16 | Fuel Pressure Setpoint | /10 bar |
-
-### Block 0x34 (18 bytes) — Transfer/misc
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Transfer Case Position Voltage | /1000 V |
-| 4 | u8 | Cam/Crank Synchronization | 1=OK |
-| 6-7 | u16 | Injector Bank 1 Capacitor | /10 V |
-
-### Block 0x32 (18 bytes) — Vehicle speed
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Vehicle Speed | km/h |
-| 4-5 | u16 | Vehicle Speed Setpoint | km/h |
-| 6-7 | u16 | Cruise Switch Voltage | /1000 V |
-
-### Block 0x37 (18 bytes) — EGR/wastegate
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | MAF for EGR Setpoint | mg/str |
-| 4-5 | u16 | Wastegate Solenoid | /10 % |
+### Block 0x34 (34 data bytes) — Transfer case/misc
+Real BLE: `0048 1000 0000 0004 0000...03FF 0003...0004 0000`
 
 ---
 
@@ -340,156 +303,49 @@ See README.md for full ArvutaKoodi algorithm with lookup tables T1-T4.
 
 5 blocks per cycle: `0x30 → 0x31 → 0x34 → 0x33 → 0x32`
 
-### Block 0x30 (24 bytes) — Turbine/TCC
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Turbine RPM | direct |
-| 4-5 | u16 | Des TCC slip | RPM |
-| 6-7 | u16 | Actual TCC slip | RPM |
+**All offsets verified: Real vehicle BLE + WJDiag Pro + native lib KKDiiselTagasi decompile.**
 
-### Block 0x31 (22 bytes) — Battery/supply
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Battery | /100 V |
-| 4-5 | u16 | Sensor Supply | /100 V |
-| 6-7 | u16 | Solenoid Supply | /100 V |
+### Block 0x30 (22 data bytes) — Gear, TCC slip, output RPM, trans temp
+Real BLE idle: `0017 001E 0000 0008 0400 DD60 FFF6 FFF6 0000 9618 0008`
 
-### Block 0x34 (16 bytes) — Pressures/TPS
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | Fluid Temp | /10 - 40 °C |
-| 4-5 | u16 | TCC pressure | /10 PSI |
-| 6-7 | u16 | Shift PSI | /10 PSI |
-| 8-9 | u16 | Modulation PSI | /10 PSI |
-| 10-11 | u16 | TPS percent | /10 % |
-| 12-13 | u16 | Uphill Grad | /10 ° |
+| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+|--------|-------|-------|---------|-------------------|
+| [0-1] | u16 | **Actual TCC Slip** | signed raw RPM | ✓ 20 |
+| [2-3] | u16 | **Desired TCC Slip** | signed raw RPM | ✓ 30 |
+| [4-5] | u16 | **Output RPM** | raw | ✓ 0 (idle) |
+| [7] | u8 | Selector | P=8, R=7, N=6, D=5 | ✓ |
+| [9] | u8 | **Actual Gear** | 0=P/N, 1-5=gear | ✓ |
+| [10] | u8 | Gear × 0x11 | confirm byte | |
+| [11] | u8 | **Transmission Temp** | **raw - 50 = °C** | ✓ 57°C (native lib verified) |
 
-### Block 0x33 (18 bytes) — Wheel speeds
-| Offset | Bytes | Field | Formula |
-|--------|-------|-------|---------|
-| 2-3 | u16 | LF wheel speed | direct |
-| 4-5 | u16 | RF wheel speed | direct |
-| 6-7 | u16 | LR wheel speed | direct |
-| 8-9 | u16 | RR wheel speed | direct |
-| 10-11 | u16 | Rear Vehicle speed | direct |
-| 12-13 | u16 | Front Vehicle speed | direct |
+### Block 0x31 (20 data bytes) — RPMs
+Real BLE idle: `01BB 0000 02D8 02F0 0000...`
 
-### Block 0x32 (15 bytes) — Reserved (all zeros)
+| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+|--------|-------|-------|---------|-------------------|
+| [0-1] | u16 | **Input RPM (N2)** | raw | ✓ 442 |
+| [2-3] | u16 | **Input RPM (N3)** | raw | ✓ 0 |
+| [4-5] | u16 | **Turbine RPM** | raw | ✓ 726 |
+| [6-7] | u16 | **Engine RPM** (from TCM) | raw | ✓ 750 |
 
----
+### Block 0x34 (14 data bytes) — Voltages
+Real BLE: `0217 03FF 0332 0214 0807 0001 0028`
 
-## 13. J1850 DTC PID Scan Tables (PCAP Verified)
+| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+|--------|-------|-------|---------|-------------------|
+| [0-1] | u16 | Unknown (NOT trans temp!) | — | |
+| [2-3] | u16 | Unknown (0x03FF=1023) | — | |
+| [4-5] | u16 | **Sensor Supply** | ×7/1000 = V | ✓ 5.73V |
+| [6-7] | u16 | **Solenoid Supply** | /40 = V | ✓ 13.28V |
+| [8-9] | u16 | **Battery** | /154.5 = V | ✓ 13.32V |
 
-### ABS 0x28 — 17 PIDs (2E 10 ~ 2E 30)
-Header: `ATSH242822` + `ATRA28`
+### Block 0x33 (16 data bytes) — Pressures (NOT wheel speeds!)
+Real BLE: `0024 0771 05DC 02B8 02B4 02E3 02E1 0000`
 
-| PID | DTC Code | Description | PCAP Response (clean) |
-|-----|----------|-------------|----------------------|
-| 2E 10 | C0031 | LF Sensor Circuit Failure | 00 00 FF |
-| 2E 11 | C0032 | LF Wheel Speed Signal Failure | 00 FF FF |
-| 2E 12 | C0035 | RF Sensor Circuit Failure | 00 00 00 |
-| 2E 13 | C0036 | RF Wheel Speed Signal Failure | 00 FF FF |
-| 2E 14 | C0041 | LR Sensor Circuit Failure | 00 00 00 |
-| 2E 15 | C0042 | LR Wheel Speed Signal Failure | 00 00 00 |
-| 2E 16 | C0045 | RR Sensor Circuit Failure | 00 FF FF |
-| 2E 17 | C0046 | RR Wheel Speed Signal Failure | 00 FF FF |
-| 2E 20 | C0051 | Valve Power Feed Failure | 00 00 00 |
-| 2E 21 | C0060 | Pump Motor Circuit Failure | **00 8F 00** (ACTIVE) |
-| 2E 22 | C0070 | CAB Internal Failure | 00 00 00 |
-| 2E 23 | C0080 | ABS Lamp Circuit Short | **00 8E 99** (ACTIVE) |
-| 2E 24 | C0081 | ABS Lamp Open | 00 FF FF |
-| 2E 25 | C0085 | Brake Lamp Circuit Short | 00 00 00 |
-| 2E 26 | C0110 | Brake Fluid Level Switch | 00 FF FF |
-| 2E 27 | C0111 | G-Switch / Sensor Failure | 00 00 00 |
-| 2E 30 | C1014 | ABS Messages Not Received | 00 FF FF |
+| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+|--------|-------|-------|---------|-------------------|
+| [0-1] | u16 | **TCC Pressure** | /1000 = Bar | ✓ 0.000 |
+| [6-7] | u16 | **Shift PSI** | /365 = Bar | ✓ 1.904 |
+| [8-9] | u16 | **Modulation PSI** | /462 = Bar | ✓ 1.499 |
 
-Verified across 2 PCAPs: JeepFullEcuTest.pcap + ecu_tms_abs_airbag_live.pcap
-
-### ESP 0x58 — 55 PIDs (2E 10 ~ 2F 3C, 3-step increments)
-Header: `ATSH245822` + `ATRA58`
-DTC Clear: `ATSH245814` + `01 00 00` (retry up to 7x, NO DATA is normal)
-
-| PID | DTC Code | PID | DTC Code | PID | DTC Code |
-|-----|----------|-----|----------|-----|----------|
-| 2E 10 | C0031 | 2E 52 | C1036 | 2E E2 | C2102 |
-| 2E 13 | C0032 | 2E 70 | C1041 | 2E E5 | C2103 |
-| 2E 16 | C0035 | 2E 73 | C1042 | 2E FA | C2200 |
-| 2E 19 | C0036 | 2E 76 | C1045 | 2E FD | C2201 |
-| 2E 1C | C0041 | 2E 79 | C1046 | 2F 00 | C2202 |
-| 2E 1F | C0042 | 2E 7C | C1051 | 2F 03 | C2203 |
-| 2E 22 | C0045 | 2E 7F | C1060 | 2F 06 | C2204 |
-| 2E 25 | C0046 | 2E 82 | C1070 | 2F 18 | C2300 |
-| 2E 28 | C0051 | 2E 85 | C1071 | 2F 1B | C2301 |
-| 2E 2B | C0060 | 2E 88 | C1073 | 2F 1E | C2302 |
-| 2E 2E | C0070 | 2E 8B | C1075 | 2F 21 | C2303 |
-| 2E 37 | C0110 | 2E 8E | C1080 | 2F 24 | C2304 |
-| 2E 3A | C0111 | 2E 91 | C1085 | 2F 27 | C2305 |
-| 2E 3D | C1014 | 2E 94 | C1090 | 2F 2A | C2306 |
-| 2E 43 | C1015 | 2E 97 | C1095 | 2F 2D | C2307 |
-| 2E 49 | C1031 | 2E DC | C2100 | 2F 30 | C2308 |
-| 2E 4C | C1032 | 2E DF | C2101 | 2F 33 | C2309 |
-| 2E 4F | C1035 | | | 2F 36 | C2310 |
-| | | | | 2F 39 | C2311 |
-| | | | | 2F 3C | C2312 |
-
-Verified: dtc.pcap — all 55 PIDs scanned, all returned 00 00 00 A8 (clean vehicle)
-
-### Body Computer 0x40 — 7 PIDs
-Header: `ATSH244022` + `ATRA40`
-
-| PID | DTC Code | Description |
-|-----|----------|-------------|
-| 2E 00 | B1A00 | Interior Lamp Circuit |
-| 2E 01 | B1A10 | Door Ajar Switch Circuit |
-| 2E 02 | B2100 | SKIM Communication Error |
-| 2E 03 | B2101 | Bus Communication Error |
-| 2E 05 | B2102 | Key-In Circuit |
-| 2E 0D | B2200 | Door Lock Circuit |
-| 2E 12 | B2300 | Horn Relay Circuit |
-
-Verified: body_computer.pcap — all returned 00 00 00 31 (clean)
-
-### HVAC/ATC 0x98 — 4 PIDs
-
-| PID | DTC Code | Description |
-|-----|----------|-------------|
-| 2E 03 | B1001 | A/C Pressure Sensor Circuit |
-| 2E 04 | B1002 | A/C Clutch Relay Circuit |
-| 2E 05 | B1003 | Blend Door Actuator Circuit |
-| 2E 06 | B1004 | Mode Door Actuator Circuit |
-
-### Overhead Console 0x68 — 3 PIDs
-
-| PID | DTC Code | Description |
-|-----|----------|-------------|
-| 2E 02 | B1100 | Compass Calibration Error |
-| 2E 05 | B1101 | Temperature Sensor Circuit |
-| 2E 08 | B1102 | Display Circuit Error |
-
-### Rain Sensor 0xA7 — 1 PID
-Verified: rain_sensor.pcap — returned 00 00 00 47 (clean)
-
-| PID | DTC Code | Description |
-|-----|----------|-------------|
-| 2E 10 | B1200 | Rain Sensor Circuit |
-
-### SKIM 0xC0 — 1 PID
-
-| PID | DTC Code | Description |
-|-----|----------|-------------|
-| 2E 00 | B2500 | Transponder Communication Error |
-
----
-
-## PCAP Sources (2026-03-14)
-- `JeepFullEcuTest.pcap` — Full module scan (ABS DTC PIDs, all 20 modules)
-- `dtc.pcap` — ESP 0x58 DTC PID scan (55 PIDs) + DTC clear
-- `ecu_tms_abs_airbag_live.pcap` — ABS DTC PIDs cross-validation
-- `body_computer.pcap` — Body 0x40 DTC PIDs + actuators
-- `rain_sensor.pcap` — Rain 0xA7 DTC PID + clear
-- `doors_driver_passenger.pcap` — Door window control
-- `faults.pcap` — K-Line ECU/TCM DTC read/clear
-- `modules_activation.pcap` — Module identification
-- `door_hazard_horn.pcap` — Body actuator commands
-- `viper.pcap` — Wiper actuator
-- `tmc_gear_change.pcap` — TCM gear data
+### Block 0x32 (13 data bytes) — Reserved (all zeros at idle)

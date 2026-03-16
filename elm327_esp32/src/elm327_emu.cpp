@@ -710,14 +710,14 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                 // [7]=selector [9]=gearNum [10]=gearX11
                 int16_t tccActual = (selector==5) ? 20 : 0;
                 int16_t tccDesired = (selector==5) ? 30 : 0;
-                uint8_t traw = (uint8_t)(transTemp + 40);
+                uint8_t traw = (uint8_t)(transTemp + 50); // NAG1: raw = C + 50
                 uint8_t r[] = {0x61, 0x30,
                     (uint8_t)((uint16_t)tccActual>>8), (uint8_t)((uint16_t)tccActual&0xFF),
                     (uint8_t)((uint16_t)tccDesired>>8), (uint8_t)((uint16_t)tccDesired&0xFF),
                     (uint8_t)(outputRpm>>8), (uint8_t)(outputRpm&0xFF),
                     0x00, selector, 0x04,           // [6-8]
                     gearNum,                         // [9] ACTUAL GEAR
-                    gearX11, traw,                   // [10-11] gear*0x11, transTemp+40
+                    gearX11, traw,                   // [10-11] gear*0x11, transTemp+50
                     0xFF,0xF6, 0xFF,0xF6,           // [12-15]
                     0x00,0x00, 0x96,0x18, 0x00,0x08}; // [16-21]
                 return kwpWrap(r, 24);

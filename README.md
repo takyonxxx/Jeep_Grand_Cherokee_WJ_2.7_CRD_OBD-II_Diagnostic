@@ -3,7 +3,7 @@
 ## Vehicle: 2003 EU-spec WJ 2.7 CRD (OM612 / NAG1)
 
 Qt6 cross-platform diagnostic application + ESP32-S2 ELM327 emulator.
-All commands and responses verified from real vehicle PCAP captures (11 PCAPs, 2025-03-11/12).
+All commands and responses verified from real vehicle PCAP captures + BLE full block dumps + WJDiag Pro APK reverse engineering.
 
 ## Complete Module Address Map (Scan Order, PCAP-Verified)
 
@@ -32,15 +32,49 @@ All commands and responses verified from real vehicle PCAP captures (11 PCAPs, 2
 
 20 modules total. All connectable.
 
-## Real Vehicle PCAP Findings
+## Dashboard Gauges (Verified: Real Vehicle BLE + WJDiag Pro + Native Lib Decompile)
 
-- ABS 0x28 PID `20 00 00`: Valid response `62 56 04 00`, NOT NRC
-- ESP 0x58: Background bus traffic (`B8 58 02 2B`, `2D 58 00 40`, `A3 58 00 89`)
-- ESP 0x58 DTC Clear (mode 0x14): Returns NO DATA
-- ECU Block 0x62: Values vary between sessions
-- ECU DTC: 1 DTC (0x0702)
-- TCM DTC Clear: First attempt returns `7F 14 78`, retry needed
-- 0x60: ALL commands return NRC `7F 22 22`
+### ECU Dashboard
+
+| Gauge | Block | Offset | Formula | WJDiag Pro | Native Lib Constant |
+|-------|-------|--------|---------|-----------|-------------------|
+| RPM | 0x28 (0x12 fallback) | data[0-1] | raw | 751 | — |
+| M-TEMP | 0x22 | data[0-1] | /10 - 273.1 = °C | 54.7°C | — |
+| BOOST | 0x22 | data[14-15] | /1000 = Bar | 0.913 | — |
+| RAIL | 0x12 | data[18-19] | **×0.101 = Bar** | 294.236 | 0.101 |
+| MAF | 0x36 | data[6-7] | /10 = Mg/Str | 478.2 | — |
+| INJ-Q | 0x32 | data[0-1] | /100 = mg/str | 8.60 | — |
+| BATT | 0x16 | data[2-3] | **×5/3072 = V** | 13.85 | — |
+| FUEL | calculated | rpm × fuelActual | L/h | — | — |
+
+### TCM Dashboard
+
+| Gauge | Block | Offset | Formula | WJDiag Pro |
+|-------|-------|--------|---------|-----------|
+| SPEED | 0x30 | data[4-5] | outputRPM × 0.0385 | 0 km/h |
+| GEAR | 0x30 | data[9] | 0=P, 1-5=gear | P |
+| TURBIN | 0x31 | data[4-5] | raw RPM | 726 |
+| T-TEMP | 0x30 | data[11] | **raw - 50 = °C** | 57°C |
+| LIMP | 0x30 | data[9]+maxGear | logic | Normal |
+| LINE-P | 0x30 | data[9-10] | signed raw | — |
+| TCC | 0x30 | data[0-1] | signed raw RPM | 20 |
+| SOL V | 0x34 | data[6-7] | /40 = V | 13.28 |
+| BATT | 0x34 | data[8-9] | /154.5 = V | 13.32 |
+
+## Native Lib Constants (libnative-lib.so decompiled)
+
+| Address | Value | Usage |
+|---------|-------|-------|
+| 0x80870 | 0.0049 | Voltage ADC factor (V = raw × 0.0049) |
+| 0x808a8 | 0.101 | Pressure factor (Bar = raw × 0.101) |
+| 0x808a0 | 0.0236 | Secondary ADC factor |
+| 0x808b0 | 0.011 | Temp/voltage factor |
+| 0x80828 | 0.25 | TCM current factor |
+| 0x808e0 | 0.007 | TCM multiplier |
+| 0x80838 | -41.0 | TCM offset (for some params) |
+| 0x80848 | 10.0 | Common divisor |
+| 0x80850 | 100.0 | Common divisor |
+| 0x808d0 | 1000.0 | Common divisor |
 
 ## Controls Tab
 
@@ -61,12 +95,6 @@ SID 0x3A: `3A 00 80`=Speedo, `3A 00 40`=Tacho, `3A 00 08`=Fuel, `3A 00 04`=Temp
 4-table lookup: T1-T4 (16 bytes each). See RELAY_MAP.md for algorithm.
 TCM: Static seed `68 24 89` -> Key `CC 21`
 
-## Live Data
-
-ECU: 14 blocks + 4 security + ATRV per cycle
-TCM: 5 blocks + ATRV per cycle
-See RELAY_MAP.md for byte offset/formula tables.
-
 ## DTC
 
 K-Line: `18 02 00 00` read, `14 00 00` clear
@@ -75,47 +103,12 @@ ESP 0x58 DTC clear: NO DATA
 
 ## ESP32-S2 Emulator
 
-WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000. All responses matched to real vehicle PCAPs.
+WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000. All block responses use exact real vehicle BLE hex data. Dynamic fields: RPM (0x12/0x28), coolant temp (0x12/0x22), fuel qty (0x32), TCM gear cycling, TCM RPMs.
 
-## J1850 DTC Read — PID Scan Method (NEW)
+## APK Reverse Engineering
 
-WJDiag Pro and this app read J1850 DTCs via **PID scanning**, not mode 0x18.
-Mode 0x18 returns NRC on all WJ J1850 modules (ABS, ESP, Body, etc).
-
-**How it works:**
-1. Switch to module's read header: `ATSH24xx22` + `ATRAxx`
-2. Send each DTC PID: `2E xx 00` (or `2F xx 00` for ESP extended range)
-3. Parse response: `26 <src> 62 <D0> <D1> <D2> <CRC>`
-4. If D0:D1 != 0x0000 and != 0xFFFF → DTC is active at that PID slot
-5. DTC code is mapped from the PID number via a lookup table
-
-**Response patterns:**
-- `00 00 00` or `00 00 FF` → No fault (cleared)
-- `00 FF FF` → Unlearned (slot never had a fault)
-- `00 8F 00` → Active fault, occurrence count = 0x8F
-- `7F 22 21` → NRC (PID not supported)
-
-**DTC PID counts per module (PCAP verified):**
-- ABS 0x28: 17 PIDs (2E 10~2E 30)
-- ESP 0x58: 55 PIDs (2E 10~2F 3C, 3-step increments) — dtc.pcap verified all 55
-- Body 0x40: 7 PIDs (2E 00~2E 12)
-- HVAC 0x98: 4 PIDs (2E 03~2E 06)
-- Overhead 0x68: 3 PIDs (2E 02~2E 08)
-- Rain 0xA7: 1 PID (2E 10)
-- SKIM 0xC0: 1 PID (2E 00)
-
-See [RELAY_MAP.md](RELAY_MAP.md) for full PID→DTC code mapping tables.
-
-**DTC clear** uses mode 0x14:
-- ESP 0x58: `ATSH245814` + `01 00 00` (retry up to 7x, NO DATA is normal before success)
-- Others: `ATSH24xx14` + `FF 00 00`
-
-## Raw Data Test Button
-
-Log tab "Raw Data" button runs a comprehensive vehicle scan including:
-- K-Line ECU/TCM: identification, security, live data blocks, actuators, DTC
-- J1850 all 20 modules: identification, live data, actuators, DTC
-- **DTC PID Scan**: 113 PID scan steps across 10 modules (7 known + 3 discovery)
-- Discovery scan for DriverDoor, PassengerDoor, Cluster (unknown DTC PIDs)
-
-Use **COPY LOG** after test to capture all results for analysis.
+Package: com.jeepswj.WJdiagPro v12.0
+Architecture: Java UI → JNI → libnative-lib.so
+ECU parser: `MDiiselTagasi` (concatenated buffer: 0x62+0x12+0x28+0xB0+0xB1+0xB2)
+TCM parser: `KKDiiselTagasi` (reads 0x34 via native, Java reads 0x30+0x31+0x33+0x32)
+Trans Temp: `ValiBaitInt2L(str, 0x11)` reads 0x30 byte[11], formula: raw - 50 = °C

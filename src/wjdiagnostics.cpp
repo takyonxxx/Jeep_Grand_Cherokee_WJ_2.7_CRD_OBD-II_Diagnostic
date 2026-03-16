@@ -1838,7 +1838,7 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
     tcm.outputRPM = outputRPM;
 
     // Trans Temp
-    tcm.transTemp = u8(11) - 40;
+    tcm.transTemp = u8(11) - 50;  // NAG1 encoding: raw = C + 50 (native lib verified)
 
     // Line pressure (signed, byte 9-10)
     int16_t rawLP = static_cast<int16_t>(u16(9));
