@@ -22,6 +22,8 @@ void ELM327Emu::reset() {
     ecuUnlocked = false; tcmUnlocked = false; ecuDtcCleared = false;
     memset(j1850DtcCleared, 0, sizeof(j1850DtcCleared));
     lastHeader = ""; cmdCount = 0; _t0 = millis();
+    klBusInitDone = false;  // PCAP FIX: track if K-Line bus was initialized
+    j1850NoiseCounter = 0;  // PCAP FIX: bus noise injection counter
 }
 
 void ELM327Emu::tick() {
@@ -63,7 +65,7 @@ String ELM327Emu::handleAT(const String &cmd) {
     if (c.startsWith("ATH")) { headers = (c.indexOf('1') >= 0); return "OK"; }
     if (c.startsWith("ATRA") || c.startsWith("ATAR")) return "OK";
     if (c.startsWith("ATWM")) return "OK";
-    if (c.startsWith("ATFI")) return "OK"; // framing handled in main.cpp
+    if (c.startsWith("ATFI")) { klBusInitDone = true; return "OK"; } // framing handled in main.cpp
     if (c.startsWith("ATIFR") || c.startsWith("ATL") || c.startsWith("ATM") ||
         c.startsWith("ATAT") || c.startsWith("ATST") || c.startsWith("ATS")) return "OK";
     if (c.startsWith("ATDP")) return protocol == 2 ? "SAE J1850 VPW" : "ISO 14230-4";
@@ -94,8 +96,26 @@ String ELM327Emu::processCommand(const String &rawCmd) {
         // J1850: try PCAP lookup first, then generic fallback
         String cmdUpper = cmd; cmdUpper.toUpperCase(); cmdUpper.trim();
         String pcap = j1850_pcap_lookup(targetModule, headerMode, cmdUpper);
-        if (pcap.length() > 0) return pcap;
-        return j1850_generic(targetModule, headerMode, bytes[0], bytes + 1, nBytes - 1);
+        String resp;
+        if (pcap.length() > 0) resp = pcap;
+        else resp = j1850_generic(targetModule, headerMode, bytes[0], bytes + 1, nBytes - 1);
+
+        // PCAP FIX: Inject unsolicited J1850 bus traffic (~15% of responses)
+        // Real vehicle has periodic 2D 28 xx xx frames on the bus
+        // This tests Qt parser robustness (must filter these out)
+        j1850NoiseCounter++;
+        if (j1850NoiseCounter % 7 == 0 && resp.length() > 0 && !resp.startsWith("NO")) {
+            String noise = (j1850NoiseCounter % 14 == 0) ? "2D 28 0A B9" : "2D 28 02 51";
+            resp = noise + "\r" + resp;
+        }
+
+        // PCAP FIX: Simulate NRC 0x21 (busyRepeatRequest) ~5% of mode 0x22 reads
+        if (headerMode == 0x22 && j1850NoiseCounter % 20 == 3 && resp.indexOf("62") > 0) {
+            // Return NRC 0x21 instead — Qt must retry
+            resp = "26 " + hex8(targetModule) + " 7F 22 21 00 78";
+        }
+
+        return resp;
     }
     return kwpProcess(bytes[0], bytes + 1, nBytes - 1);
 }
@@ -633,8 +653,15 @@ String ELM327Emu::kwpWrap(const uint8_t *p, int plen) {
 String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
     // StartCommunication
     if (sid == 0x81) {
-        uint8_t r[] = {0xC1, 0xEF, 0x8F};
-        return kwpWrap(r, 3);
+        String resp = kwpWrap((const uint8_t[]){0xC1, 0xEF, 0x8F}, 3);
+        // PCAP FIX: First 81 after ATSP5 triggers BUS INIT on real ELM327
+        // K-Line TCM (0x20) uses "81" for bus init instead of ATFI
+        // Wire: "81\rBUS INIT: OK\rC1 EF 8F \r\r>"
+        if (!klBusInitDone) {
+            klBusInitDone = true;
+            return "BUS INIT: OK\r" + resp;
+        }
+        return resp;
     }
     // TesterPresent
     if (sid == 0x3E) {
@@ -649,13 +676,32 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                 uint8_t r[] = {0x67, 0x01, 0x68, 0x24, 0x89};
                 return kwpWrap(r, 5);
             } else {
-                // ECU: dynamic seed
+                // ECU: PCAP FIX — real vehicle sometimes returns seed=0000
+                // when ECU security is already unlocked (e.g. after previous session)
+                // After 3 seed requests with 0000, switch to dynamic seed
+                ecuSeedZeroCount++;
+                if (ecuUnlocked || ecuSeedZeroCount <= 3) {
+                    // Already unlocked or simulating "already unlocked" state
+                    // CRITICAL: seed=0000 means ECU IS unlocked — set the flag
+                    // so blocks 0x62/0xB0/0xB1/0xB2 don't return NRC 0x33
+                    ecuUnlocked = true;
+                    uint8_t r[] = {0x67, 0x01, 0x00, 0x00};
+                    return kwpWrap(r, 4);
+                }
+                // Normal: dynamic seed
                 ecuSeed = random(0x0100, 0xFFFE);
                 uint8_t r[] = {0x67, 0x01, (uint8_t)(ecuSeed >> 8), (uint8_t)(ecuSeed & 0xFF)};
                 return kwpWrap(r, 4);
             }
         }
-        if (dlen >= 3 && data[0] == 0x02) {
+        if (dlen >= 1 && data[0] == 0x02) {
+            // PCAP FIX: APK sends bare "27 02" (dlen=1, no key bytes) when seed=0000
+            // Also sends "27 02 9C C9" as static fallback — both get NRC 0x12
+            if (dlen == 1) {
+                // Bare 27 02 with no key — NRC subFunctionNotSupported
+                uint8_t r[] = {0x7F, 0x27, 0x12};
+                return kwpWrap(r, 3);
+            }
             if (klTarget == 0x20) {
                 if (data[1] == 0xCC && data[2] == 0x21) {
                     tcmUnlocked = true;
@@ -815,15 +861,30 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         if (blk == 0x28) {
             tick();
             uint16_t rpm = (uint16_t)engineRpm;
-            // Real BLE: 02EF 03B9 then zeros
+            uint16_t iq = (uint16_t)(9.25f * 100); // idle injection qty matching PCAP
+            // PCAP FIX: Full 28-byte format (verified 2026-03-17)
+            // 02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 002F 0000
+            // [0-1]=RPM [2-3]=InjQty [4-13]=5x per-cyl RPM [14-15]=0
+            // [16-17]=0x0016 [18-19]=varies [20-25]=inj corrections(s16) [26-27]=0
+            int16_t corr1 = -142 + random(-10,10);  // per-cylinder correction 1
+            int16_t corr2 = 54 + random(-5,5);
+            int16_t corr3 = 47 + random(-5,5);
             uint8_t r[] = {0x61,0x28,
-                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),  // [0-1] RPM
-                0x03,0xB9,                               // [2-3] InjQty
-                0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x00,0x00, 0x00,0x00};
-            return kwpWrap(r, 34);
+                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),      // [0-1] RPM
+                (uint8_t)(iq>>8),(uint8_t)(iq&0xFF),         // [2-3] InjQty /100
+                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),       // [4-5] Cyl1 RPM
+                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),       // [6-7] Cyl2 RPM
+                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),       // [8-9] Cyl3 RPM
+                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),       // [10-11] Cyl4 RPM
+                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),       // [12-13] Cyl5 RPM
+                0x00,0x00,                                    // [14-15]
+                0x00,0x16,                                    // [16-17] constant
+                0x00,0x11,                                    // [18-19] varies
+                (uint8_t)((uint16_t)corr1>>8),(uint8_t)((uint16_t)corr1&0xFF), // [20-21] injCorr1
+                (uint8_t)((uint16_t)corr2>>8),(uint8_t)((uint16_t)corr2&0xFF), // [22-23] injCorr2
+                (uint8_t)((uint16_t)corr3>>8),(uint8_t)((uint16_t)corr3&0xFF), // [24-25] injCorr3
+                0x00,0x00};                                   // [26-27]
+            return kwpWrap(r, 30);
         }
         if (blk == 0x62) {
             if (!ecuUnlocked) { uint8_t r[]={0x7F,0x21,0x33}; return kwpWrap(r,3); }
@@ -1037,9 +1098,22 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             return kwpWrap(r, 3);
         }
         // ECU: full parameter echo (real vehicle: 70 PID 07 PARAM1 PARAM2)
-        uint8_t r[6]; r[0] = 0x70;
-        for (int i = 0; i < dlen && i < 5; i++) r[i+1] = data[i];
-        return kwpWrap(r, 1 + (dlen < 5 ? dlen : 5));
+        // PCAP FIX: Some actuator commands get NRC 0x78 (ResponsePending) first
+        // then the actual positive response. E.g. "30 3A 08 00 00" -> "7F 30 78" + "70 3A 08 00 00"
+        // Multi-byte actuator params (dlen >= 3) trigger this
+        String posResp;
+        {
+            uint8_t r[6]; r[0] = 0x70;
+            int plen = (dlen < 5) ? dlen : 5;
+            for (int i = 0; i < plen; i++) r[i+1] = data[i];
+            posResp = kwpWrap(r, 1 + plen);
+        }
+        if (dlen >= 3 && data[0] == 0x3A && data[1] >= 0x08) {
+            // Prepend NRC 0x78 before positive response (PCAP: "30 3A 08 00 00")
+            String nrc78 = kwpWrap((const uint8_t[]){0x7F, 0x30, 0x78}, 3);
+            return nrc78 + "\r" + posResp;
+        }
+        return posResp;
     }
     // SID 0x31 RoutineControl (TCM reset/store adaptives)
     if (sid == 0x31) {

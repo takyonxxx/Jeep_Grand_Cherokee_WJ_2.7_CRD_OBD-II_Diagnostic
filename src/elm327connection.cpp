@@ -349,10 +349,37 @@ void ELM327Connection::onDataReady()
         // Remove first line if it matches the sent command
         if (!m_currentCommand.command.isEmpty()) {
             QStringList lines = response.split(QRegularExpression("[\\r\\n]+"), Qt::SkipEmptyParts);
+
+            // PCAP FIX: Filter J1850 unsolicited bus traffic (2D xx frames)
+            // Real vehicle J1850 bus has periodic keepalive/status frames
+            // that appear mixed in with our query responses
+            QStringList filtered;
+            for (const QString &line : lines) {
+                QString trimmed = line.trimmed();
+                if (trimmed.startsWith("2D ", Qt::CaseInsensitive))
+                    continue; // skip unsolicited bus noise
+                filtered.append(trimmed);
+            }
+            lines = filtered;
+
             if (lines.size() > 1 && lines.first().trimmed().compare(
                     m_currentCommand.command.trimmed(), Qt::CaseInsensitive) == 0) {
                 lines.removeFirst();
             }
+
+            // PCAP FIX: Handle NRC 0x78 (ResponsePending) multi-frame
+            // Real ECU sends "7F xx 78\r" followed by actual positive response
+            // in the same ELM327 frame (before the > prompt)
+            // Example: "7F 30 78\r70 3A 08 00 00" or "7F 14 78\r54 00 00"
+            if (lines.size() >= 2) {
+                QString firstLine = lines.first().trimmed();
+                if (firstLine.contains("7F") && firstLine.contains("78")) {
+                    // NRC 0x78 = ResponsePending, use the next line as actual response
+                    lines.removeFirst();
+                    emit logMessage("NRC 0x78 ResponsePending - using deferred response");
+                }
+            }
+
             response = lines.join("\n").trimmed();
         }
 

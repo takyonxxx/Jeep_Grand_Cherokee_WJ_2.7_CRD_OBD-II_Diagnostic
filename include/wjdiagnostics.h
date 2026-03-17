@@ -94,6 +94,7 @@ public:
         double mafActual=0, mafSpec=0;
         double railActual=0, railSpec=0, mapSpec=0;
         double injCorr[5]={0,0,0,0,0};
+        double cylRpm[5]={0,0,0,0,0};  // per-cylinder RPM from block 0x28
         double boostPressure=0, boostSetpoint=0;
         double batteryVoltage=0;
         // Block 0x10 - Idle/limits

@@ -34,10 +34,13 @@ private:
     bool     ecuDtcCleared = false;
     bool     tcmUnlocked  = false;
     uint16_t ecuSeed      = 0;
+    int      ecuSeedZeroCount = 0;  // PCAP FIX: track seed=0 requests
+    bool     klBusInitDone = false; // PCAP FIX: first 81 includes BUS INIT
 
     // Per-module J1850 DTC cleared flags
     bool j1850DtcCleared[256] = {};
     int espClearAttempts = 0;
+    int j1850NoiseCounter = 0;  // PCAP FIX: bus noise injection counter
 
     float  engineRpm    = 750.0f;
     float  coolantTemp  = 82.0f;

@@ -44,11 +44,11 @@ void KWP2000Handler::sendTesterPresent()
 {
     if (!m_sessionActive) return;
 
-    // 3E 01 - TesterPresent, responseRequired=false (bazı ECU'lar 3E 00 bekler)
-    QByteArray data;
-    data.append(static_cast<char>(0x01));
-
-    sendKWPRequest(TesterPresent, data, nullptr, 1000);
+    // PCAP FIX: Real APK uses SID 0x81 (StartCommunication) as keepalive
+    // NOT 0x3E (TesterPresent) - verified from full_modules.pcap
+    // ECU responds with C1 EF 8F each time, keeping the K-Line session alive
+    QByteArray hexCmd = "81";
+    m_elm->sendOBDCommand(hexCmd, nullptr, 1000);
 }
 
 // --- DTC İşlemleri ---

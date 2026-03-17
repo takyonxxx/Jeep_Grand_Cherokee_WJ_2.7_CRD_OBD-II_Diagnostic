@@ -106,6 +106,7 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                 m_elm->sendCommand("ATH1", [this, info, done, targetMod](const QString&) {
 
                 // ATWM - wakeup message (ATSP5'ten ONCE)
+                // PCAP FIX: APK sends ATWM twice for K-Line TCM (0x20) reliability
                 auto afterWakeup = [this, info, done, targetMod]() {
                     // ATSH - header set (ATSP5'ten ONCE)
                     m_elm->sendCommand(info.atshHeader, [this, info, done, targetMod](const QString&) {
@@ -198,6 +199,18 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                                             uint8_t s1 = parts[6].toUInt(&ok1, 16);
                                             uint8_t s2 = (parts.size() >= 8) ? parts[7].toUInt(&ok2, 16) : 0;
 
+                                            // PCAP FIX: seed=0x0000 means ECU already unlocked
+                                            // Real vehicle returns 67 01 00 00 when security is inactive
+                                            // APK sends bare "27 02" (NRC), then continues without unlock
+                                            if (ok0 && ok1 && s0 == 0 && s1 == 0) {
+                                                emit logMessage("Security seed=0000: ECU already unlocked");
+                                                if (targetMod == Module::MotorECU)
+                                                    m_ecuSecurityUnlocked = true;
+                                                emit logMessage("K-Line session active (ECU ready)");
+                                                if (done) done(true);
+                                                return;
+                                            }
+
                                             bool isTCM = (targetMod == Module::KLineTCM);
 
                                             if (isTCM && ok0 && ok1) {
@@ -264,8 +277,15 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                 };
 
                 if (!info.atwmWakeup.isEmpty()) {
-                    m_elm->sendCommand(info.atwmWakeup, [afterWakeup](const QString&) {
-                        afterWakeup();
+                    m_elm->sendCommand(info.atwmWakeup, [this, info, afterWakeup, targetMod](const QString&) {
+                        // PCAP FIX: APK sends ATWM twice for K-Line TCM (0x20) reliability
+                        if (targetMod == Module::KLineTCM) {
+                            m_elm->sendCommand(info.atwmWakeup, [afterWakeup](const QString&) {
+                                afterWakeup();
+                            });
+                        } else {
+                            afterWakeup();
+                        }
                     });
                 } else {
                     afterWakeup();
@@ -275,13 +295,15 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                 });
             }, 7500); // ATZ timeout
         } else {
-            // J1850'ye gecis - ATZ ile temiz baslat + ATIFR0
+            // J1850'ye gecis - PCAP FIX: exact APK init order
+            // APK sends: ATZ -> ATZ -> ATSP2 -> ATIFR0 -> ATH1 -> ATSH -> ATRA
+            // Double ATZ for clone ELM327 reliability
             emit logMessage("J1850 switch: ATZ reset...");
             m_elm->sendCommand("ATZ", [this, info, done, targetMod](const QString&) {
-                m_elm->sendCommand("ATE1", [this, info, done, targetMod](const QString&) {
-                m_elm->sendCommand("ATH1", [this, info, done, targetMod](const QString&) {
-                m_elm->sendCommand("ATIFR0", [this, info, done, targetMod](const QString&) {
+            m_elm->sendCommand("ATZ", [this, info, done, targetMod](const QString&) {
                 m_elm->sendCommand("ATSP2", [this, info, done, targetMod](const QString&) {
+                m_elm->sendCommand("ATIFR0", [this, info, done, targetMod](const QString&) {
+                m_elm->sendCommand("ATH1", [this, info, done, targetMod](const QString&) {
                     m_activeBus = BusType::J1850;
                     emit logMessage("J1850 VPW active");
                     // Header set
@@ -355,9 +377,11 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
             // Even if m_activeModule matches, the bus may have timed out
             if (targetMod == m_activeModule) {
                 // Same module - verify session is alive with a quick test
-                m_elm->sendCommand("3E", [this, done, targetMod](const QString &resp) {
-                    // TesterPresent (3E) - if we get 7E back, session is alive
-                    if (resp.contains("7E") || resp.contains("7e")) {
+                // PCAP FIX: Use 81 (StartCommunication) instead of 3E (TesterPresent)
+                // Real APK never sends 3E, uses 81 for both keepalive and session check
+                m_elm->sendCommand("81", [this, done, targetMod](const QString &resp) {
+                    // StartComm (81) - if we get C1 back, session is alive
+                    if (resp.contains("C1") || resp.contains("c1")) {
                         // Session alive, skip reinit
                         if (done) done(true);
                     } else {
@@ -651,7 +675,22 @@ void WJDiagnostics::readJ1850DTCsByPIDScan(Module mod, std::function<void(const 
             .arg(pid.pidHi, 2, 16, QChar('0'))
             .arg(pid.pidLo, 2, 16, QChar('0')).toUpper();
 
-        m_elm->sendCommand(cmd, [this, mod, results, pidList, idx, cb, scanNext, pid](const QString &resp) {
+        m_elm->sendCommand(cmd, [this, mod, results, pidList, idx, cb, scanNext, pid, cmd](const QString &resp) {
+            // PCAP FIX: Handle NRC 0x21 (busyRepeatRequest) - retry same PID
+            // Real J1850 bus returns 7F 22 21 when module is busy
+            // APK retries up to 3 times
+            if (resp.contains("7F") && resp.contains("21") && !resp.contains("NO DATA")) {
+                static int nrc21retries = 0;
+                if (nrc21retries < 3) {
+                    nrc21retries++;
+                    emit logMessage(QString("J1850 NRC 0x21 busyRepeat - retry %1/3").arg(nrc21retries));
+                    // Re-send same command (don't advance idx)
+                    QTimer::singleShot(100, this, [scanNext]() { (*scanNext)(); });
+                    return;
+                }
+                nrc21retries = 0; // reset for next PID
+            }
+
             // Parse response: "26 xx 62 D0 D1 D2 CRC" or NRC/NO DATA
             if (!resp.contains("NO DATA") && !resp.contains("7F") && !resp.contains("ERROR")) {
                 // Extract data bytes from response
@@ -1211,8 +1250,10 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x28:
-        // Block 0x28: RPM + Fuel injection (WJDiag Pro APK native lib)
-        // Overrides 0x12 values if present
+        // Block 0x28: RPM + Fuel injection + per-cylinder (PCAP verified 2026-03-17)
+        // PCAP: 02 EF 03 9D 02 EE 02 EE 02 EE 02 EE 02 EE 00 00 00 16 00 11 FF 72 00 36 00 2F 00 00
+        // [0-1]=RPM [2-3]=InjQty/100 [4-13]=5x per-cyl RPM [14-15]=0 [16-17]=const
+        // [18-19]=varies [20-21]=injCorr1(s16) [22-23]=injCorr2 [24-25]=injCorr3
         if (n >= 6) {
             uint16_t rpmVal = u16(2);
             double iqVal = u16(4) / 100.0;
@@ -1220,9 +1261,15 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
                 ecu.rpm = rpmVal;
                 ecu.injectionQty = iqVal;
             }
-            if (n >= 28) {
+            // Per-cylinder RPMs (5 cylinders, OM612)
+            if (n >= 16) {
                 for (int i = 0; i < 5; i++)
-                    ecu.injCorr[i] = s16(18 + i*2) / 100.0;
+                    ecu.cylRpm[i] = u16(6 + i*2);
+            }
+            // Per-cylinder injection corrections (signed, PCAP offsets 20-25)
+            if (n >= 28) {
+                for (int i = 0; i < 3; i++)
+                    ecu.injCorr[i] = s16(22 + i*2) / 100.0;
             }
         }
         break;
