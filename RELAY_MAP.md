@@ -1,8 +1,33 @@
 # WJ 2.7 CRD — Complete Actuator Command Reference
 
-All commands verified from real vehicle captures and simulator testing.
-ATRA mandatory for J1850. Init: ATSP2 → ATIFR0 → ATH1 → ATSH24xx22 → ATRAxx → ATSH24xxMM → command.
-Controller sends ATSH24xx22 (read mode) after each relay command.
+All commands verified from real vehicle PCAP captures (full_modules.pcap, 3308 messages) and simulator testing.
+
+## Init Sequences (PCAP-Verified 2026-03-17)
+
+### J1850 VPW Init
+```
+ATZ → ATZ → ATSP2 → ATIFR0 → ATH1 → ATSH24xx22 → ATRAxx → ATSH24xxMM → command
+```
+Double ATZ for clone ELM327 reliability. ATH1 comes AFTER ATSP2/ATIFR0.
+
+### K-Line ECU Init (0x15)
+```
+ATZ → ATE1 → ATH1 → ATWM8115F13E → ATSH8115F1 → ATSP5 → ATFI → 81 → 27 01/02
+```
+
+### K-Line TCM Init (0x20)
+```
+ATZ → ATE1 → ATH1 → ATWM8120F13E → ATWM8120F13E → ATSH8120F1 → ATSP5 → ATFI → 81 → 27 01/02
+```
+Double ATWM for TCM reliability. PCAP also shows APK uses `81` for bus init (first `81` triggers `BUS INIT: OK`).
+
+### Keepalive: `81` (NOT `3E`)
+Real APK uses SID 0x81 (StartCommunication) as K-Line keepalive. Zero `3E` in 957s capture.
+
+### NRC Handling (PCAP-Verified)
+- **NRC 0x78 (ResponsePending)**: ECU sends `7F xx 78` followed by actual positive response in same frame. Common on actuator SID 0x30 and DTC clear SID 0x14.
+- **NRC 0x21 (busyRepeatRequest)**: J1850 modules return this when bus is busy. APK retries same command up to 3 times.
+- **J1850 Bus Noise**: Real bus has periodic unsolicited `2D 28 xx xx` frames (~119 in 957s capture). Must be filtered from response parsing.
 
 ---
 
@@ -92,7 +117,15 @@ Header: `ATSH246122` | Filter: `ATRA61`
 
 ## 4. ECU 0x15 K-Line — SID 0x30 IOControl
 
-Init: `ATWM8115F13E` → `ATSH8115F1` → `ATSP5` → `81` → security unlock (SID 0x27)
+Init: `ATWM8115F13E` → `ATSH8115F1` → `ATSP5` → `ATFI` → `81` → security unlock (SID 0x27)
+
+**NRC 0x78 note**: Some actuator commands (e.g. `30 3A 08 00 00`) trigger NRC 0x78
+(ResponsePending) before the positive response. Both arrive in the same ELM327 frame:
+`7F 30 78\r70 3A 08 00 00\r\r>`
+
+**Security note**: When ECU returns seed=`00 00`, it is already unlocked.
+ArvutaKoodi with seed=0 produces key `9C C9` which the ECU accepts.
+Blocks 0x62/0xB0/0xB1/0xB2 are readable in this state.
 
 | # | Function | ON | OFF |
 |---|----------|-----|-----|
@@ -106,13 +139,17 @@ Init: `ATWM8115F13E` → `ATSH8115F1` → `ATSP5` → `81` → security unlock (
 | 8 | Hyd Fan Low Speed | `30 18 07 08 34` | `30 18 07 00 00` |
 | 9 | Hyd Fan Full Speed | `30 18 07 21 34` | `30 18 07 00 00` |
 
-Other: Fuel correction (`31 25 00`), Injector Learn (`21 28` monitor), Max values (`30 3A 01`), Compression test (`21 12`), Adaptation (`21 B0/B1/B2`)
+Other: Fuel correction (`31 25 00` start, `32 25` stop), Max values (`30 3A 01` enable, `30 3A 08 00 00` set),
+Compression test (`21 28` per-cylinder RPM monitoring), Adaptation (`21 B0/B1/B2` read calibration constants)
 
 ---
 
 ## 5. TCM 0x20 K-Line — SID 0x30/0x31
 
-Init: `ATWM8120F13E` → `ATSH8120F1` → `ATSP5` → `81`
+Init: `ATWM8120F13E` → `ATWM8120F13E` → `ATSH8120F1` → `ATSP5` → `ATFI` → `81` → `27 01/02`
+
+Double ATWM for reliability. Keepalive: `81` between each polling cycle.
+TCM seed is static: `68 24 89` → Key `CC 21`.
 
 | # | Function | Command |
 |---|----------|---------|
@@ -246,11 +283,26 @@ See README.md for full ArvutaKoodi algorithm with lookup tables T1-T4.
 | [14-15] | u16 | **Boost Pressure** | /1000 = Bar (MAP/1000) | ✓ 0.913 Bar |
 | [16-17] | u16 | Air Intake Volts | /1000 = V | (NOT Rail!) |
 
-### Block 0x28 (32 data bytes) — RPM override (native lib source)
+### Block 0x28 (28 data bytes) — RPM + Per-Cylinder + Injection Corrections (PCAP-verified 2026-03-17)
+
+PCAP: `02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 002F 0000`
+
 | Offset | Bytes | Field | Formula | WJDiag Pro Verify |
 |--------|-------|-------|---------|-------------------|
 | [0-1] | u16 | **Engine RPM** | raw (overrides 0x12) | ✓ 751 |
-| [2-3] | u16 | Injection Qty | /100 = mg/str | |
+| [2-3] | u16 | **Injection Qty** | /100 = mg/str | ✓ 9.25 |
+| [4-5] | u16 | Cyl 1 RPM | raw | 750 |
+| [6-7] | u16 | Cyl 2 RPM | raw | 750 |
+| [8-9] | u16 | Cyl 3 RPM | raw | 750 |
+| [10-11] | u16 | Cyl 4 RPM | raw | 750 |
+| [12-13] | u16 | Cyl 5 RPM | raw | 750 |
+| [14-15] | u16 | (padding) | 0 | |
+| [16-17] | u16 | (constant) | 0x0016 = 22 | |
+| [18-19] | u16 | (varies) | 17/13/11 per cycle | |
+| [20-21] | s16 | Inj Correction 1 | /100 = mg/str | -1.42 |
+| [22-23] | s16 | Inj Correction 2 | /100 = mg/str | +0.54 |
+| [24-25] | s16 | Inj Correction 3 | /100 = mg/str | +0.47 |
+| [26-27] | u16 | (padding) | 0 | |
 
 ### Block 0x30 (24 data bytes) — Idle setpoints
 | Offset | Bytes | Field | Formula |

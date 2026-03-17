@@ -3,7 +3,40 @@
 ## Vehicle: 2003 EU-spec WJ 2.7 CRD (OM612 / NAG1)
 
 Qt6 cross-platform diagnostic application + ESP32-S2 ELM327 emulator.
-All commands and responses verified from real vehicle PCAP captures + BLE full block dumps + WJDiag Pro APK reverse engineering.
+All commands and responses verified from real vehicle PCAP captures (full_modules.pcap, 3308 messages, 957s),
+BLE full block dumps, and WJDiag Pro APK reverse engineering.
+
+## Protocol & Init Sequences (PCAP-Verified 2026-03-17)
+
+### J1850 VPW Init (exact APK order)
+```
+ATZ → ATZ → ATSP2 → ATIFR0 → ATH1 → ATSH24xx22 → ATRAxx
+```
+Double ATZ for clone ELM327 reliability. ATE1 not sent (echo stays on from ATZ default).
+ATH1 comes AFTER ATSP2/ATIFR0, not before.
+
+### K-Line ECU Init (0x15)
+```
+ATZ → ATE1 → ATH1 → ATWM8115F13E → ATSH8115F1 → ATSP5 → ATFI → 81 → 27 01/02
+```
+ATFI sends two-part response: `BUS INIT:\r` + 200ms delay + `OK\r\r>`.
+
+### K-Line TCM Init (0x20)
+```
+ATZ → ATE1 → ATH1 → ATWM8120F13E → ATWM8120F13E → ATSH8120F1 → ATSP5 → ATFI → 81 → 27 01/02
+```
+Double ATWM for TCM reliability. PCAP shows APK also uses `81` (StartCommunication) directly
+for bus init instead of ATFI — first `81` triggers `BUS INIT: OK` on ELM327.
+
+### Keepalive
+Real APK uses `81` (StartCommunication) as keepalive, NOT `3E` (TesterPresent).
+Zero `3E` commands in entire 957-second PCAP capture. ECU responds with `C1 EF 8F` each time.
+
+### ECU Security — Seed=0x0000 Handling
+When ECU is already unlocked, it returns seed `67 01 00 00`. This means security is inactive.
+APK sends bare `27 02` (no key bytes) → NRC 0x12, then continues without security.
+APK also tries static key `27 02 9C C9` (ArvutaKoodi with seed=0) which succeeds on real vehicle.
+Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when seed=0.
 
 ## Complete Module Address Map (Scan Order, PCAP-Verified)
 
@@ -38,12 +71,12 @@ All commands and responses verified from real vehicle PCAP captures + BLE full b
 
 | Gauge | Block | Offset | Formula | WJDiag Pro | Native Lib Constant |
 |-------|-------|--------|---------|-----------|-------------------|
-| RPM | 0x28 (0x12 fallback) | data[0-1] | raw | 751 | — |
+| RPM | 0x28 (0x12 fallback) | data[0-1] | raw | 751 | per-cyl RPMs at [4-13] |
 | M-TEMP | 0x22 | data[0-1] | /10 - 273.1 = °C | 54.7°C | — |
 | BOOST | 0x22 | data[14-15] | /1000 = Bar | 0.913 | — |
 | RAIL | 0x12 | data[18-19] | **×0.101 = Bar** | 294.236 | 0.101 |
 | MAF | 0x36 | data[6-7] | /10 = Mg/Str | 478.2 | — |
-| INJ-Q | 0x32 | data[0-1] | /100 = mg/str | 8.60 | — |
+| INJ-Q | 0x32 (0x28 alt) | data[0-1] | /100 = mg/str | 8.60 | 0x28[2-3] for actual |
 | BATT | 0x16 | data[2-3] | **×5/3072 = V** | 13.85 | — |
 | FUEL | calculated | rpm × fuelActual | L/h | — | — |
 
@@ -93,17 +126,33 @@ SID 0x3A: `3A 00 80`=Speedo, `3A 00 40`=Tacho, `3A 00 08`=Fuel, `3A 00 04`=Temp
 ## ECU Security — ArvutaKoodi
 
 4-table lookup: T1-T4 (16 bytes each). See RELAY_MAP.md for algorithm.
-TCM: Static seed `68 24 89` -> Key `CC 21`
+
+- **ECU 0x15**: Dynamic seed. ArvutaKoodi computes 2-byte key. When seed=`00 00` (ECU already unlocked), key=`9C C9` which ECU accepts. Qt code skips key computation and sets `ecuSecurityUnlocked=true`.
+- **TCM 0x20**: Static seed `68 24 89` → Key `CC 21` (EGS52 algorithm: swap, XOR 0x5AA5, multiply 0x5AA5)
 
 ## DTC
 
-K-Line: `18 02 00 00` read, `14 00 00` clear
+K-Line: `18 02 00 00` read (ECU), `18 02 FF 00` read (TCM), `14 00 00` clear
 J1850: `ATSH24xx18` + `FF 00 00` read, `ATSH24xx14` + `FF 00 00` clear
-ESP 0x58 DTC clear: NO DATA
+ESP 0x58 DTC clear: `01 00 00` (7 retries before positive response, PCAP-verified)
+
+**NRC 0x78 on DTC clear**: ECU may return `7F 14 78` (ResponsePending) before `54 00 00` (success). Both arrive in same ELM327 frame.
 
 ## ESP32-S2 Emulator
 
-WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000. All block responses use exact real vehicle BLE hex data. Dynamic fields: RPM (0x12/0x28), coolant temp (0x12/0x22), fuel qty (0x32), TCM gear cycling, TCM RPMs.
+WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000. All block responses use exact real vehicle BLE hex data.
+
+### PCAP-Verified Behaviors (2026-03-17)
+- **ATFI two-part response**: `ATFI\rBUS INIT:\r` + 300ms delay + `OK\r\r>` (matches real ELM327 wire format)
+- **First `81` = BUS INIT**: When K-Line TCM uses `81` for bus init (no ATFI), first `81` response includes `BUS INIT: OK\r` prefix
+- **Seed=0x0000 mode**: ECU returns `67 01 00 00` for first 3 seed requests (simulates already-unlocked state), then switches to dynamic seed. `ecuUnlocked=true` when seed=0 so blocks 62/B0/B1/B2 respond
+- **Bare `27 02` handling**: Returns NRC 0x12 for `27 02` with no key bytes (APK behavior when seed=0)
+- **Block 0x28 full format**: 28 data bytes with per-cylinder RPMs [4-13] and signed injection corrections [20-25]
+- **J1850 bus noise injection**: Random `2D 28 02 51` / `2D 28 0A B9` frames prepended to ~15% of J1850 responses
+- **NRC 0x21 simulation**: ~5% of J1850 mode 0x22 reads return `7F 22 21` (busyRepeatRequest) to test retry logic
+- **NRC 0x78 for actuators**: `30 3A 08+` commands get `7F 30 78` + positive response in same frame
+
+Dynamic fields: RPM (0x12/0x28 with per-cyl), coolant temp (0x12/0x22), fuel qty (0x32), TCM gear cycling, TCM RPMs, injection corrections.
 
 ## APK Reverse Engineering
 
