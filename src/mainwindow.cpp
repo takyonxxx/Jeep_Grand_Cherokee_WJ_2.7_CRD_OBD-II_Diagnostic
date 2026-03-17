@@ -1745,8 +1745,11 @@ void MainWindow::onLogMessage(const QString &msg)
 void MainWindow::updateStatusLabels(const TCMDiagnostics::TCMStatus &st)
 {
     m_dashGearVal->setText(gearToString(st.currentGear));
-    m_dashRpmVal->setText(QString::number(st.turbineRpm,'f',0));
-    m_dashSpeedVal->setText(QString::number(st.vehicleSpeed,'f',0));
+    // Only update shared widgets if in TCM mode (not DUAL ECU+TCM)
+    if (m_activeModId == WJDiagnostics::Module::KLineTCM) {
+        m_dashRpmVal->setText(QString::number(st.turbineRpm,'f',0));
+        m_dashSpeedVal->setText(QString::number(st.vehicleSpeed,'f',0));
+    }
     m_dashSolVoltVal->setText(QString::number(st.solenoidSupply,'f',1));
     m_dashCoolantVal->setText(QString::number(st.transTemp,'f',0));      // Trans temp
     m_dashLimpVal->setText(st.limpMode ? "ACTIVE!" : "Normal");
