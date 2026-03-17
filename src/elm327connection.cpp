@@ -350,7 +350,7 @@ void ELM327Connection::onDataReady()
         if (!m_currentCommand.command.isEmpty()) {
             QStringList lines = response.split(QRegularExpression("[\\r\\n]+"), Qt::SkipEmptyParts);
 
-            // PCAP FIX: Filter J1850 unsolicited bus traffic (2D xx frames)
+            // Filter J1850 unsolicited bus traffic (2D xx frames)
             // Real vehicle J1850 bus has periodic keepalive/status frames
             // that appear mixed in with our query responses
             QStringList filtered;
@@ -367,7 +367,7 @@ void ELM327Connection::onDataReady()
                 lines.removeFirst();
             }
 
-            // PCAP FIX: Handle NRC 0x78 (ResponsePending) multi-frame
+            // Handle NRC 0x78 (ResponsePending) multi-frame
             // Real ECU sends "7F xx 78\r" followed by actual positive response
             // in the same ELM327 frame (before the > prompt)
             // Example: "7F 30 78\r70 3A 08 00 00" or "7F 14 78\r54 00 00"
@@ -450,7 +450,7 @@ void ELM327Connection::setState(ConnectionState state)
 
 void ELM327Connection::initializeELM()
 {
-    // === APK uyumlu init sirasi ===
+    // === Verified init sirasi ===
 
     // 1) Reset
     sendCommand("ATZ", [this](const QString &resp) {
@@ -458,19 +458,19 @@ void ELM327Connection::initializeELM()
         emit logMessage("ELM327 Version: " + resp);
     }, 5000);
 
-    // 2) Echo on (APK: ATE1)
+    // 2) Echo on (ATE1)
     sendCommand("ATE1", nullptr);
 
-    // 3) Headers on (APK: ATH1)
+    // 3) Headers on (ATH1)
     sendCommand("ATH1", nullptr);
 
-    // 4) Disable IFR for J1850 VPW (APK: ATIFR0)
+    // 4) Disable IFR for J1850 VPW (ATIFR0)
     sendCommand("ATIFR0", [this](const QString &resp) {
         if (resp.contains("?"))
             emit logMessage("ATIFR0 not supported (not critical)");
     });
 
-    // 5) Default: J1850 VPW (APK: ATSP2)
+    // 5) Default: J1850 VPW (ATSP2)
     sendCommand("ATSP2", [this](const QString &resp) {
         if (resp.contains("OK")) {
             emit logMessage("Protocol: SAE J1850 VPW (ATSP2)");

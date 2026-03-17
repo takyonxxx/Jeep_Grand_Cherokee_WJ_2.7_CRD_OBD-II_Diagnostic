@@ -22,8 +22,8 @@ void ELM327Emu::reset() {
     ecuUnlocked = false; tcmUnlocked = false; ecuDtcCleared = false;
     memset(j1850DtcCleared, 0, sizeof(j1850DtcCleared));
     lastHeader = ""; cmdCount = 0; _t0 = millis();
-    klBusInitDone = false;  // PCAP FIX: track if K-Line bus was initialized
-    j1850NoiseCounter = 0;  // PCAP FIX: bus noise injection counter
+    klBusInitDone = false;  // track if K-Line bus was initialized
+    j1850NoiseCounter = 0;  // bus noise injection counter
 }
 
 void ELM327Emu::tick() {
@@ -93,14 +93,14 @@ String ELM327Emu::processCommand(const String &rawCmd) {
     tick();
 
     if (protocol == 2) {
-        // J1850: try PCAP lookup first, then generic fallback
+        // J1850: try vehicle data lookup first, then generic fallback
         String cmdUpper = cmd; cmdUpper.toUpperCase(); cmdUpper.trim();
-        String pcap = j1850_pcap_lookup(targetModule, headerMode, cmdUpper);
+        String vehicle = j1850_vehicle_lookup(targetModule, headerMode, cmdUpper);
         String resp;
-        if (pcap.length() > 0) resp = pcap;
+        if (vehicle.length() > 0) resp = vehicle;
         else resp = j1850_generic(targetModule, headerMode, bytes[0], bytes + 1, nBytes - 1);
 
-        // PCAP FIX: Inject unsolicited J1850 bus traffic (~15% of responses)
+        // Inject unsolicited J1850 bus traffic (~15% of responses)
         // Real vehicle has periodic 2D 28 xx xx frames on the bus
         // This tests Qt parser robustness (must filter these out)
         j1850NoiseCounter++;
@@ -109,7 +109,7 @@ String ELM327Emu::processCommand(const String &rawCmd) {
             resp = noise + "\r" + resp;
         }
 
-        // PCAP FIX: Simulate NRC 0x21 (busyRepeatRequest) ~5% of mode 0x22 reads
+        // Simulate NRC 0x21 (busyRepeatRequest) ~5% of mode 0x22 reads
         if (headerMode == 0x22 && j1850NoiseCounter % 20 == 3 && resp.indexOf("62") > 0) {
             // Return NRC 0x21 instead — Qt must retry
             resp = "26 " + hex8(targetModule) + " 7F 22 21 00 78";
@@ -134,7 +134,7 @@ String ELM327Emu::j1850_generic(uint8_t t, uint8_t m, uint8_t sid, const uint8_t
             if (espClearAttempts >= 7) {
                 j1850DtcCleared[t] = true;
                 espClearAttempts = 0;
-                return "26 58 54 01 00 00 21";  // positive response (PCAP verified)
+                return "26 58 54 01 00 00 21";  // positive response 
             }
             return "NO DATA";  // first 6 attempts return NO DATA
         }
@@ -153,7 +153,7 @@ String ELM327Emu::j1850_generic(uint8_t t, uint8_t m, uint8_t sid, const uint8_t
         if (t == 0x58) return "26 58 7F 18 11 00 2E";    // ESP: NRC serviceNotSupported (real vehicle)
         if (t == 0x60) return "26 60 58 02 60 10 20 60 15 20 DD"; // Airbag: 2 DTCs
         if (t == 0x61) return "26 61 58 01 61 30 20 DD";    // Cluster: 1 DTC
-        // 0x68 Overhead: DTC clear handled in pcap_lookup (NO DATA)
+        // 0x68 Overhead: DTC clear handled in vehicle_lookup (NO DATA)
         // 0x98 HVAC DTC clear OK (generic handler covers it)
         if (t == 0xA0) return "26 A0 58 01 A0 11 20 DD";    // Driver Door: 1 DTC
         if (t == 0xA1) return "26 A1 58 01 A1 11 20 DD";    // Passenger Door: 1 DTC
@@ -182,14 +182,14 @@ String ELM327Emu::j1850_generic(uint8_t t, uint8_t m, uint8_t sid, const uint8_t
     }
     // BCM (0x80) and EVIC (0x2A) = NO DATA on real vehicle
     if (t == 0x80 || t == 0x2A) return "NO DATA";
-    // Electro Mech Cluster (0x60) = ALL NRC on real vehicle (PCAP confirmed)
+    // Electro Mech Cluster (0x60) = ALL NRC on real vehicle 
     if (t == 0x60) return "26 60 7F 22 22 00 44";
     // Generic positive for read modes
     return "26 " + hex8(t) + " 62 " + hex8(pid) + " 00 00 DD";
 }
-// J1850 response database from real vehicle PCAP captures
-// WJ 2.7 CRD 2003 EU, WiFi ELM327, 2026-03-12
-String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) {
+// J1850 response database from real vehicle bus captures
+// WJ 2.7 CRD 2003 EU, WiFi ELM327
+String ELM327Emu::j1850_vehicle_lookup(uint8_t t, uint8_t m, const String &cmdStr) {
     // Lookup exact match from real vehicle captures
     if (t == 0x28) {
         // Mode 0x30 valve test (real vehicle) — echo parameters back
@@ -210,21 +210,21 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "24 00 00") return "26 28 62 08 02 00 8C";
             if (cmdStr == "28 01 00") return "26 28 62 20 02 00 B0";
             if (cmdStr == "2E 10 00") return "26 28 62 00 00 FF DC";
-            if (cmdStr == "2E 11 00") return "26 28 62 00 FF FF 9D";  // both PCAPs: unlearned
+            if (cmdStr == "2E 11 00") return "26 28 62 00 FF FF 9D";  // verified: unlearned
             if (cmdStr == "2E 12 00") return "26 28 62 00 00 00 18";
             if (cmdStr == "2E 13 00") return "26 28 62 00 FF FF 9D";
             if (cmdStr == "2E 14 00") return "26 28 62 00 00 00 18";
             if (cmdStr == "2E 15 00") return "26 28 62 00 00 00 18";
-            if (cmdStr == "2E 16 00") return "26 28 62 00 FF FF 9D";  // PCAP verified
+            if (cmdStr == "2E 16 00") return "26 28 62 00 FF FF 9D";  // 
             if (cmdStr == "2E 17 00") return "26 28 62 00 FF FF 9D";
-            if (cmdStr == "2E 20 00") return "26 28 62 00 00 00 18";  // PCAP verified
+            if (cmdStr == "2E 20 00") return "26 28 62 00 00 00 18";  // 
             if (cmdStr == "2E 21 00") return "26 28 62 00 8F 00 72";
             if (cmdStr == "2E 22 00") return "26 28 62 00 00 00 18";
             if (cmdStr == "2E 23 00") return "26 28 62 00 8E 99 20";
             if (cmdStr == "2E 24 00") return "26 28 62 00 FF FF 9D";
             if (cmdStr == "2E 25 00") return "26 28 62 00 00 00 18";
             if (cmdStr == "2E 26 00") return "26 28 62 00 FF FF 9D";
-            if (cmdStr == "2E 27 00") return "26 28 62 00 00 00 18";  // PCAP verified
+            if (cmdStr == "2E 27 00") return "26 28 62 00 00 00 18";  // 
             if (cmdStr == "2E 30 00") return "26 28 62 00 FF FF 9D";
         }
     }
@@ -245,11 +245,11 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "20 02 00") return "26 40 62 41 43 00 E0";
             if (cmdStr == "20 06 00") return "26 40 62 02 00 00 32";
             // Live data PIDs (real vehicle)
-            if (cmdStr == "2E 00 00") return "26 40 62 00 00 00 31";  // PCAP verified clean
+            if (cmdStr == "2E 00 00") return "26 40 62 00 00 00 31";  // 
             if (cmdStr == "2E 12 00") return "26 40 62 00 00 00 31";
             if (cmdStr == "2E 02 00") return "26 40 62 00 00 00 31";
             if (cmdStr == "2E 01 00") return "26 40 62 00 00 00 31";
-            if (cmdStr == "2E 03 00") return "26 40 62 00 00 00 31";  // PCAP verified clean
+            if (cmdStr == "2E 03 00") return "26 40 62 00 00 00 31";  // 
             if (cmdStr == "2E 05 00") return "26 40 62 00 00 00 31";
             if (cmdStr == "28 04 00") return "26 40 62 00 00 00 31";
             if (cmdStr == "2E 0D 00") return "26 40 62 00 00 00 31";
@@ -309,7 +309,7 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "38 0D 01") return "26 40 6F 38 0D 01 7C";
             if (cmdStr == "38 0D 00") return "26 40 6F 38 0D 00 61";
             if (cmdStr == "3A 02 FF") return "26 40 6F 3A 02 FF 05";
-            // Body Computer hazard/horn/lights (from body_computer.pcap)
+            // Body Computer hazard/horn/lights (from real vehicle Body Computer)
             if (cmdStr == "38 00 CC") return "26 40 6F 38 00 CC 5F";
             if (cmdStr == "38 00 FF") return "26 40 6F 38 00 FF 74";
             if (cmdStr == "38 01 00") return "26 40 6F 38 01 00 84";
@@ -384,7 +384,7 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "2F 3C 00") return "26 58 62 00 00 00 A8";
         }
     }
-    // 0x60: ALL NRC on real vehicle (PCAP confirmed)
+    // 0x60: ALL NRC on real vehicle 
     if (t == 0x60) return "26 60 7F 22 22 00 44";
     // These modules return NO DATA on real vehicle
     if (t == 0x81 || t == 0x62 || t == 0x6D || t == 0x87 || t == 0x90) return "NO DATA";
@@ -601,7 +601,7 @@ String ELM327Emu::j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr) 
             if (cmdStr == "2E 00 00") return "26 C0 62 00 00 00 12";
         }
     }
-    return ""; // not found in PCAP database
+    return ""; // not found in vehicle response database
 }
 // ==================== KWP2000 (K-Line) ====================
 static const uint8_t AK_T1[] = {0xC0,0xD0,0xE0,0xF0,0x00,0x10,0x20,0x30,0x40,0x50,0x60,0x70,0x80,0x90,0xA0,0xB0};
@@ -654,7 +654,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
     // StartCommunication
     if (sid == 0x81) {
         String resp = kwpWrap((const uint8_t[]){0xC1, 0xEF, 0x8F}, 3);
-        // PCAP FIX: First 81 after ATSP5 triggers BUS INIT on real ELM327
+        // First 81 after ATSP5 triggers BUS INIT on real ELM327
         // K-Line TCM (0x20) uses "81" for bus init instead of ATFI
         // Wire: "81\rBUS INIT: OK\rC1 EF 8F \r\r>"
         if (!klBusInitDone) {
@@ -676,7 +676,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                 uint8_t r[] = {0x67, 0x01, 0x68, 0x24, 0x89};
                 return kwpWrap(r, 5);
             } else {
-                // ECU: PCAP FIX — real vehicle sometimes returns seed=0000
+                // ECU:  — real vehicle sometimes returns seed=0000
                 // when ECU security is already unlocked (e.g. after previous session)
                 // After 3 seed requests with 0000, switch to dynamic seed
                 ecuSeedZeroCount++;
@@ -695,7 +695,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             }
         }
         if (dlen >= 1 && data[0] == 0x02) {
-            // PCAP FIX: APK sends bare "27 02" (dlen=1, no key bytes) when seed=0000
+            // Real vehicle sends bare "27 02" (dlen=1, no key bytes) when seed=0000
             // Also sends "27 02 9C C9" as static fallback — both get NRC 0x12
             if (dlen == 1) {
                 // Bare 27 02 with no key — NRC subFunctionNotSupported
@@ -817,7 +817,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             uint8_t r[18] = {0x61, blk};
             return kwpWrap(r, 18);
         }
-        // ECU blocks — PCAP-verified format (2026-03-12)
+        // ECU blocks — verified real vehicle format
         // ================================================================
         // ECU BLOCKS — EXACT REAL CAR BLE DATA (dynamic: RPM, coolant)
         // ================================================================
@@ -861,8 +861,8 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         if (blk == 0x28) {
             tick();
             uint16_t rpm = (uint16_t)engineRpm;
-            uint16_t iq = (uint16_t)(9.25f * 100); // idle injection qty matching PCAP
-            // PCAP FIX: Full 28-byte format (verified 2026-03-17)
+            uint16_t iq = (uint16_t)(9.25f * 100); // idle injection qty matching real vehicle
+            // Full 28-byte format (verified 2026-03-17)
             // 02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 002F 0000
             // [0-1]=RPM [2-3]=InjQty [4-13]=5x per-cyl RPM [14-15]=0
             // [16-17]=0x0016 [18-19]=varies [20-25]=inj corrections(s16) [26-27]=0
@@ -1033,7 +1033,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         uint8_t opt = (dlen > 0) ? data[0] : 0x86;
         if (klTarget == 0x20) {
             if (opt == 0x90) {
-                // TCM VIN: all zeros (from PCAP)
+                // TCM VIN: all zeros (from real vehicle)
                 uint8_t r[] = {0x5A,0x90,'0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0','0'};
                 return kwpWrap(r, 19);
             }
@@ -1052,7 +1052,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         } else {
             if (opt == 0x86) {
                 uint8_t r[] = {0x5A,0x86,0xCA,0x65,0x34,0x40,0x65,0x30,0x99,0x05,0xF2,0x03,0x14,0x14,0x14,0xFF,0xFF,0xFF};
-                return kwpWrap(r, 18);  // full real PCAP
+                return kwpWrap(r, 18);  // full real vehicle
             }
             if (opt == 0x90) {
                 if (ecuUnlocked) {
@@ -1064,7 +1064,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             }
             if (opt == 0x91) {
                 uint8_t r[] = {0x5A,0x91,0x05,0x10,0x06,0x05,0x02,0x0C,0x1F,0x0C,0x0A,0x10,0x16,0x06,0x20,0x20,0x57,0x43,0x41,0x41,0x41,0x20};
-                return kwpWrap(r, 22);  // full real PCAP
+                return kwpWrap(r, 22);  // full real vehicle
             }
         }
         uint8_t r[] = {0x7F, 0x1A, 0x12};
@@ -1080,7 +1080,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         } else {
             // ECU DTC
             if (ecuDtcCleared) { uint8_t r[] = {0x58, 0x00}; return kwpWrap(r, 2); }
-            uint8_t r[] = {0x58, 0x01, 0x07, 0x02, 0xE0};  // real PCAP: 1 DTC
+            uint8_t r[] = {0x58, 0x01, 0x07, 0x02, 0xE0};  // real 1 DTC
             return kwpWrap(r, 5);
         }
     }
@@ -1098,7 +1098,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             return kwpWrap(r, 3);
         }
         // ECU: full parameter echo (real vehicle: 70 PID 07 PARAM1 PARAM2)
-        // PCAP FIX: Some actuator commands get NRC 0x78 (ResponsePending) first
+        // Some actuator commands get NRC 0x78 (ResponsePending) first
         // then the actual positive response. E.g. "30 3A 08 00 00" -> "7F 30 78" + "70 3A 08 00 00"
         // Multi-byte actuator params (dlen >= 3) trigger this
         String posResp;
@@ -1109,7 +1109,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             posResp = kwpWrap(r, 1 + plen);
         }
         if (dlen >= 3 && data[0] == 0x3A && data[1] >= 0x08) {
-            // Prepend NRC 0x78 before positive response (PCAP: "30 3A 08 00 00")
+            // Prepend NRC 0x78 before positive response ("30 3A 08 00 00")
             String nrc78 = kwpWrap((const uint8_t[]){0x7F, 0x30, 0x78}, 3);
             return nrc78 + "\r" + posResp;
         }

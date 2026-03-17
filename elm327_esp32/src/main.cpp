@@ -120,7 +120,7 @@ void httpHandleRoot() {
         "</div>"
 
         "<div class='card'>"
-        "<div class='row'><span class='lbl'>PCAP Responses</span><span class='val'>252 verified</span></div>"
+        "<div class='row'><span class='lbl'>Verified Responses</span><span class='val'>252 real vehicle</span></div>"
         "<div class='row'><span class='lbl'>J1850 Modules</span><span class='val'>15 (0x28-0xC0)</span></div>"
         "<div class='row'><span class='lbl'>K-Line Targets</span><span class='val'>ECU 0x15, TCM 0x20</span></div>"
         "<div class='row'><span class='lbl'>WiFi AP</span><span class='val'>" + String(AP_SSID) + "</span></div>"
@@ -262,10 +262,10 @@ void loop() {
                     cmdUpper.toUpperCase();
 
                     if (cmdUpper.startsWith("ATZ")) {
-                        // ATZ: echo + 0xFC + delay + version (PCAP verified)
+                        // ATZ: echo + 0xFC + delay + version 
                         frame = "ATZ\r\xFC\r\r" + resp + "\r\r>";
                     } else if (cmdUpper.startsWith("ATFI")) {
-                        // ATFI: echo + "BUS INIT:" + delay + "OK" (two-part, PCAP verified)
+                        // ATFI: echo + "BUS INIT:" + delay + "OK" (two-part, )
                         String part1;
                         if (emu.echo) part1 = rxBuf + "\r";
                         part1 += "BUS INIT:\r";

@@ -529,7 +529,7 @@ QWidget* MainWindow::createConnectionTab()
         bool verified;
     };
     QList<ModEntry> modEntries = {
-        // Exact order from real vehicle full module scan (PCAP verified)
+        // Exact order from real vehicle full module scan 
         // 1-2: K-Line
         {WJDiagnostics::Module::MotorECU, "1. Engine ECU",
          "K-Line 0x15 | EDC15C2 OM612 | 9 actuators + 14-block live data", true},
@@ -970,7 +970,7 @@ void MainWindow::sendActuatorCmd(const QString &label, const QString &cmd, bool 
 
 // Controls Tab — Actuator relay controls via J1850 VPW
 // ================================================================
-// PCAP-verified relay sequence (from real vehicle 2026-03-12):
+// verified relay sequence from real vehicle:
 //   0xA0/0x40: ATSH24xx2F -> 38 cmd -> ATSH24xx22 (no DiagSession!)
 //   0x80 mode 0x2F: ATSH24802F -> 38 cmd (no DiagSession needed)
 //   0x80 mode 0xB4: ATSH248022 -> 28 0D 00 -> ATSH2480B4 -> 28 0D 01 -> 38 cmd

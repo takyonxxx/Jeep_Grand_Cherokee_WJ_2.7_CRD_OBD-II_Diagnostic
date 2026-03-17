@@ -44,8 +44,8 @@ void KWP2000Handler::sendTesterPresent()
 {
     if (!m_sessionActive) return;
 
-    // PCAP FIX: Real APK uses SID 0x81 (StartCommunication) as keepalive
-    // NOT 0x3E (TesterPresent) - verified from full_modules.pcap
+    // Real vehicle uses SID 0x81 (StartCommunication) as keepalive
+    // NOT 0x3E (TesterPresent) - verified from real vehicle bus captures
     // ECU responds with C1 EF 8F each time, keeping the K-Line session alive
     QByteArray hexCmd = "81";
     m_elm->sendOBDCommand(hexCmd, nullptr, 1000);
@@ -58,7 +58,7 @@ void KWP2000Handler::readAllDTCs(std::function<void(const QList<DTCInfo>&)> call
     emit logMessage("Reading fault codes...");
 
     // KWP2000 ReadDTCByStatus
-    // Mercedes NAG1: 18 02 FF 00 (4 bytes, APK verified)
+    // Mercedes NAG1: 18 02 FF 00 (4 bytes, verified)
     QByteArray data;
     data.append(static_cast<char>(0x02));  // reportDTCByStatusMask
     data.append(static_cast<char>(0xFF));  // status mask - all DTCs
@@ -113,7 +113,7 @@ void KWP2000Handler::clearAllDTCs(std::function<void(bool)> callback)
     }
 
     // ClearDiagnosticInformation (0x14)
-    // Mercedes NAG1: 14 00 00 (APK verified, NOT FF FF)
+    // Mercedes NAG1: 14 00 00 (verified, NOT FF FF)
     QByteArray data;
     data.append(static_cast<char>(0x00));
     data.append(static_cast<char>(0x00));

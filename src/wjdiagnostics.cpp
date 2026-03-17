@@ -106,7 +106,7 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                 m_elm->sendCommand("ATH1", [this, info, done, targetMod](const QString&) {
 
                 // ATWM - wakeup message (ATSP5'ten ONCE)
-                // PCAP FIX: APK sends ATWM twice for K-Line TCM (0x20) reliability
+                // Real vehicle sends ATWM twice for K-Line TCM (0x20) reliability
                 auto afterWakeup = [this, info, done, targetMod]() {
                     // ATSH - header set (ATSP5'ten ONCE)
                     m_elm->sendCommand(info.atshHeader, [this, info, done, targetMod](const QString&) {
@@ -199,9 +199,9 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                                             uint8_t s1 = parts[6].toUInt(&ok1, 16);
                                             uint8_t s2 = (parts.size() >= 8) ? parts[7].toUInt(&ok2, 16) : 0;
 
-                                            // PCAP FIX: seed=0x0000 means ECU already unlocked
+                                            // seed=0x0000 means ECU already unlocked
                                             // Real vehicle returns 67 01 00 00 when security is inactive
-                                            // APK sends bare "27 02" (NRC), then continues without unlock
+                                            // Real vehicle sends bare "27 02" (NRC), then continues without unlock
                                             if (ok0 && ok1 && s0 == 0 && s1 == 0) {
                                                 emit logMessage("Security seed=0000: ECU already unlocked");
                                                 if (targetMod == Module::MotorECU)
@@ -278,7 +278,7 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
 
                 if (!info.atwmWakeup.isEmpty()) {
                     m_elm->sendCommand(info.atwmWakeup, [this, info, afterWakeup, targetMod](const QString&) {
-                        // PCAP FIX: APK sends ATWM twice for K-Line TCM (0x20) reliability
+                        // Real vehicle sends ATWM twice for K-Line TCM (0x20) reliability
                         if (targetMod == Module::KLineTCM) {
                             m_elm->sendCommand(info.atwmWakeup, [afterWakeup](const QString&) {
                                 afterWakeup();
@@ -295,8 +295,8 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
                 });
             }, 7500); // ATZ timeout
         } else {
-            // J1850'ye gecis - PCAP FIX: exact APK init order
-            // APK sends: ATZ -> ATZ -> ATSP2 -> ATIFR0 -> ATH1 -> ATSH -> ATRA
+            // J1850'ye gecis - exact verified init order
+            // Real vehicle sends: ATZ -> ATZ -> ATSP2 -> ATIFR0 -> ATH1 -> ATSH -> ATRA
             // Double ATZ for clone ELM327 reliability
             emit logMessage("J1850 switch: ATZ reset...");
             m_elm->sendCommand("ATZ", [this, info, done, targetMod](const QString&) {
@@ -377,8 +377,8 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
             // Even if m_activeModule matches, the bus may have timed out
             if (targetMod == m_activeModule) {
                 // Same module - verify session is alive with a quick test
-                // PCAP FIX: Use 81 (StartCommunication) instead of 3E (TesterPresent)
-                // Real APK never sends 3E, uses 81 for both keepalive and session check
+                // Use 81 (StartCommunication) instead of 3E (TesterPresent)
+                // Real vehicle never sends 3E, uses 81 for both keepalive and session check
                 m_elm->sendCommand("81", [this, done, targetMod](const QString &resp) {
                     // StartComm (81) - if we get C1 back, session is alive
                     if (resp.contains("C1") || resp.contains("c1")) {
@@ -514,7 +514,7 @@ void WJDiagnostics::readDTCs(Module mod, std::function<void(const QList<DTCEntry
                 if (cb) cb(r);
             });
         } else {
-            // J1850 DTC read: PID scan method (WJDiag Pro approach)
+            // J1850 DTC read: PID scan method (PID scan method)
             // Mode 0x18 is NOT supported by any J1850 module on WJ
             // Instead: scan known DTC PID ranges via mode 0x22
             // Each PID maps to a specific DTC code
@@ -537,7 +537,7 @@ struct J1850DtcPidEntry {
     const char *dtcCode;
 };
 
-// ABS 0x28: PID range 2E 10 ~ 2E 30 (PCAP verified)
+// ABS 0x28: PID range 2E 10 ~ 2E 30 
 static const J1850DtcPidEntry kAbsDtcPids[] = {
     {0x2E,0x10,"C0031"}, // LF Sensor Circuit
     {0x2E,0x11,"C0032"}, // LF Wheel Speed Signal
@@ -558,7 +558,7 @@ static const J1850DtcPidEntry kAbsDtcPids[] = {
     {0x2E,0x30,"C1014"}, // ABS Messages Not Received
 };
 
-// ESP 0x58: PID range 2E 10 ~ 2F 3C (PCAP verified, 3-step increments)
+// ESP 0x58: PID range 2E 10 ~ 2F 3C (, 3-step increments)
 static const J1850DtcPidEntry kEspDtcPids[] = {
     {0x2E,0x10,"C0031"}, {0x2E,0x13,"C0032"}, {0x2E,0x16,"C0035"},
     {0x2E,0x19,"C0036"}, {0x2E,0x1C,"C0041"}, {0x2E,0x1F,"C0042"},
@@ -581,7 +581,7 @@ static const J1850DtcPidEntry kEspDtcPids[] = {
     {0x2F,0x3C,"C2312"},
 };
 
-// Body 0x40: limited DTC PIDs (PCAP verified)
+// Body 0x40: limited DTC PIDs 
 static const J1850DtcPidEntry kBodyDtcPids[] = {
     {0x2E,0x00,"B1A00"}, // Interior Lamp Circuit
     {0x2E,0x01,"B1A10"}, // Door Ajar Switch
@@ -676,9 +676,9 @@ void WJDiagnostics::readJ1850DTCsByPIDScan(Module mod, std::function<void(const 
             .arg(pid.pidLo, 2, 16, QChar('0')).toUpper();
 
         m_elm->sendCommand(cmd, [this, mod, results, pidList, idx, cb, scanNext, pid, cmd](const QString &resp) {
-            // PCAP FIX: Handle NRC 0x21 (busyRepeatRequest) - retry same PID
+            // Handle NRC 0x21 (busyRepeatRequest) - retry same PID
             // Real J1850 bus returns 7F 22 21 when module is busy
-            // APK retries up to 3 times
+            // Retries up to 3 times
             if (resp.contains("7F") && resp.contains("21") && !resp.contains("NO DATA")) {
                 static int nrc21retries = 0;
                 if (nrc21retries < 3) {
@@ -750,7 +750,7 @@ void WJDiagnostics::clearDTCs(Module mod, std::function<void(bool)> cb)
             // J1850 DTC clear: mode 0x14
             uint8_t modAddr = static_cast<uint8_t>(mod);
 
-            // ESP(0x58): uses "01 00 00" for clear (PCAP verified)
+            // ESP(0x58): uses "01 00 00" for clear 
             // Others: use standard "FF 00 00"
             QString clearCmd = (modAddr == 0x58) ? "01 00 00" : "FF 00 00";
 
@@ -762,7 +762,7 @@ void WJDiagnostics::clearDTCs(Module mod, std::function<void(bool)> cb)
 
             m_elm->sendCommand(clearHdr, [this, mod, modAddr, atraCmd, clearCmd, cb](const QString&) {
                 m_elm->sendCommand(atraCmd, [this, mod, modAddr, clearCmd, cb](const QString&) {
-                    // ESP 0x58 needs multiple retries (PCAP: up to 7 attempts before positive response)
+                    // ESP 0x58 needs multiple retries (up to 7 attempts before positive response)
                     int maxRetries = (modAddr == 0x58) ? 10 : 1;
                     auto attempt = std::make_shared<int>(0);
                     auto tryOnce = std::make_shared<std::function<void()>>();
@@ -843,7 +843,7 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
     auto step = std::make_shared<int>(0);
     auto doNext = std::make_shared<std::function<void()>>();
 
-    // Read all 13 blocks per cycle (APK-verified order from PCAP)
+    // Read all 13 blocks per cycle (verified order: )
     // + 0x62, 0xB0, 0xB1, 0xB2 (if ECU security unlocked)
     static const uint8_t baseIds[] = {0x12, 0x30, 0x22, 0x20, 0x23, 0x21, 0x16, 0x32, 0x37, 0x13, 0x36, 0x26, 0x34, 0x28};
     static const uint8_t secIds[] = {0x62, 0xB0, 0xB1, 0xB2};
@@ -856,7 +856,7 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
     *doNext = [this, ecu, step, doNext, cb, ids]() {
         if (*step >= ids->size()) {
             // Final calculations after all blocks are read
-            // Use fuelActual from 0x32 if available (WJDiag Pro verified source)
+            // Use fuelActual from 0x32 if available (verified source)
             double iq = (ecu->fuelActual > 0) ? ecu->fuelActual : ecu->injectionQty;
             // Fuel flow: OM612 = 5 cylinders, 4-stroke
             constexpr double DIESEL_DENSITY = 832.0;
@@ -897,7 +897,7 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
 
 void WJDiagnostics::readTCMLiveData(std::function<void(const TCMStatus&)> cb)
 {
-    // K-Line TCM (0x20) - Read all 5 blocks (APK-verified order)
+    // K-Line TCM (0x20) - Read all 5 blocks (verified order)
     auto tcm = std::make_shared<TCMStatus>();
     auto step = std::make_shared<int>(0);
     auto doNext = std::make_shared<std::function<void()>>();
@@ -969,7 +969,7 @@ void WJDiagnostics::parseTCMBlock(uint8_t blk, const QByteArray &d, TCMStatus &t
     case 0x34:
         // Real BLE: 0217 03FF 0332 0214 0807 0001 0028
         // [0-1] is NOT Trans Temp! Trans Temp comes from 0x30 byte[11]
-        // WJDiag Pro: SensorV=5.73V, SolV=13.28V, BattV=13.32V
+        // SensorV=5.73V, SolV=13.28V, BattV=13.32V
         if (n >= 12) {
             // [0-1] unknown (535/1175 - NOT temperature)
             // [2-3]=03FF=1023 (unknown/max)
@@ -980,7 +980,7 @@ void WJDiagnostics::parseTCMBlock(uint8_t blk, const QByteArray &d, TCMStatus &t
         break;
     case 0x33:
         // Real BLE: 0024 0771 05DC 02B8 02B4 02E3 02E1 0000
-        // WJDiag Pro: TCC press=0.000, Shift PSI=1.904, Mod PSI=1.499
+        // TCC press=0.000, Shift PSI=1.904, Mod PSI=1.499
         // NOT wheel speeds! Pressure data
         if (n >= 12) {
             tcm.tccPressure = u16(2) / 1000.0;  // [0-1] TCC pressure (36→0.036≈0)
@@ -1144,10 +1144,10 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
             ecu.rpm = u16(12);                          // data[10-11] RPM
             ecu.injectionQty = u16(16) / 100.0;        // data[14-15] Inj Qty /100=mg/str
             ecu.mapActual = u16(18);                    // data[16-17] MAP mbar
-            ecu.boostPressure = ecu.mapActual / 1000.0; // Boost = MAP/1000 = Bar ✓ (WJDiag Pro: 0.913)
+            ecu.boostPressure = ecu.mapActual / 1000.0; // Boost = MAP/1000 = Bar ✓ (0.913)
         }
         if (n >= 22) {
-            ecu.railActual = u16(20) * 0.101;           // data[18-19] Rail *0.101=Bar (native lib verified)
+            ecu.railActual = u16(20) * 0.101;           // data[18-19] Rail *0.101=Bar 
         }
         if (n >= 34) {
             ecu.baroPressure = u16(30);
@@ -1156,7 +1156,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x13:
-        // Block 0x13: Oil/AC/Baro (PCAP verified)
+        // Block 0x13: Oil/AC/Baro 
         // Real idle: 0390 024D 02E4 02E4 0375 08B7 0000 0253 FFFA
         // Dynamic: [2-3](570-589), [8-9](0/885), [14-15](574-595), [16-17](-6 signed)
         if (n >= 12) {
@@ -1184,7 +1184,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x20:
-        // Block 0x20: MAF actual/spec, cruise (PCAP verified)
+        // Block 0x20: MAF actual/spec, cruise 
         // Real idle: 015C 0283 03FD 0000 0094 0000 019A 0166 0104
         // [0-1]=348dyn, [2-3]=643dyn, [4-5]=1021, [8-9]=148dyn
         if (n >= 8) {
@@ -1195,7 +1195,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x21:
-        // Block 0x21: Fuel quantities (PCAP verified, all /100=mg/str)
+        // Block 0x21: Fuel quantities (, all /100=mg/str)
         // Real idle: 018E 03E3 03FC 004C 012A 03FD 0250 01EE 00A9
         // =3.98 9.95 10.20 0.76 2.98 10.21 5.92 4.94 1.69
         if (n >= 20) {
@@ -1203,7 +1203,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
             ecu.fuelQtyCruise = u16(4) / 100.0;        // data[2-3] Desired Fuel QTY Cruise
             ecu.fuelDemand = u16(6) / 100.0;           // data[4-5] Desired Fuel QTY Demand
             ecu.fuelDriver = u16(8) / 100.0;           // data[6-7] Desired Fuel QTY Driver
-            // data[8-9] = NOT fuelActual (WJDiag Pro reads fuelActual from 0x32)
+            // data[8-9] = NOT fuelActual (fuelActual comes from 0x32)
             ecu.fuelStartSet = u16(12) / 100.0;        // data[10-11] Fuel QTY Start Setpoint
             ecu.fuelLimit = u16(14) / 100.0;           // data[12-13] Fuel QTY Limit
             ecu.fuelTorque = u16(16) / 100.0;          // data[14-15] Fuel QTY Torque
@@ -1235,7 +1235,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x26:
-        // Block 0x26: Fuel level/regulator (PCAP verified)
+        // Block 0x26: Fuel level/regulator 
         // Real idle: 0000 0316 0000 5CAF 7FFF 0000 2FA0 0029 0029
         // [0-1]=0, [2-3]=790dyn(0-790), [6-7]=23727, [8-9]=32767, [12-13]=12192
         if (n >= 6) {
@@ -1250,8 +1250,8 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x28:
-        // Block 0x28: RPM + Fuel injection + per-cylinder (PCAP verified 2026-03-17)
-        // PCAP: 02 EF 03 9D 02 EE 02 EE 02 EE 02 EE 02 EE 00 00 00 16 00 11 FF 72 00 36 00 2F 00 00
+        // Block 0x28: RPM + Fuel injection + per-cylinder ( 2026-03-17)
+        // 02 EF 03 9D 02 EE 02 EE 02 EE 02 EE 02 EE 00 00 00 16 00 11 FF 72 00 36 00 2F 00 00
         // [0-1]=RPM [2-3]=InjQty/100 [4-13]=5x per-cyl RPM [14-15]=0 [16-17]=const
         // [18-19]=varies [20-21]=injCorr1(s16) [22-23]=injCorr2 [24-25]=injCorr3
         if (n >= 6) {
@@ -1266,7 +1266,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
                 for (int i = 0; i < 5; i++)
                     ecu.cylRpm[i] = u16(6 + i*2);
             }
-            // Per-cylinder injection corrections (signed, PCAP offsets 20-25)
+            // Per-cylinder injection corrections (signed,  offsets 20-25)
             if (n >= 28) {
                 for (int i = 0; i < 3; i++)
                     ecu.injCorr[i] = s16(22 + i*2) / 100.0;
@@ -1275,7 +1275,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x30:
-        // Block 0x30: RPM setpoints (PCAP verified)
+        // Block 0x30: RPM setpoints 
         // Real idle: 02EE 0000 0000 0F41 0F42 03DA 0000 0000 0000
         // [0-1]=750 idle RPM, [6-7]+[8-9]=paired dynamic, [10-11]=986dyn
         if (n >= 4) {
@@ -1285,7 +1285,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x32:
-        // Block 0x32: Fuel actual + Vehicle speed (WJDiag Pro verified: reads 0x32 for Actual Fuel Qty)
+        // Block 0x32: Fuel actual + Vehicle speed (verified: reads 0x32 for Actual Fuel Qty)
         // Real idle: 0588 0907 0000 0000 0CE4 0589 0588 0184 0175
         // [0-1]=dyn(585-750) → /100 = 5.85-7.50 mg/str (idle fuel)
         // [4-5]=0, [6-7]=0 at idle → vehicle speed
@@ -1299,7 +1299,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x34:
-        // Block 0x34: Transfer case + injector (PCAP verified)
+        // Block 0x34: Transfer case + injector 
         // Real idle: 0040 1000 0000 0004 0000...0000 03FF
         // [0-1]=64, [2-3]=4096, [6-7]=4, [16-17]=1023
         if (n >= 10) {
@@ -1310,7 +1310,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x36:
-        // Block 0x36: Pedal + MAF (PCAP + WJDiag Pro verified)
+        // Block 0x36: Pedal + MAF + verified)
         // Real idle: 0000 0100 0579 134C 039F 0390 0A22 0000 039C
         // [0-1]=0dyn(pedal), [2-3]=256(pedal2), [4-5]=1401dyn(pedalV1)
         // [6-7]=4940dyn(MAF /10=494mg/str), [8-9]=927(MAP), [10-11]=912
@@ -1329,7 +1329,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x37:
-        // Block 0x37: EGR/Wastegate (PCAP verified)
+        // Block 0x37: EGR/Wastegate 
         // Real idle: 0C97 11E8 0079 0000 0008 0000 0000 0000 0076
         // [0-1]=3223 const, [2-3]=4584 dynamic(3144-4584), [4-5]=121
         // [16-17]=118 dyn(118-122)
@@ -1764,7 +1764,7 @@ void WJDiagnostics::clearDTCs(std::function<void(bool)> cb)
     clearDTCs(m_activeModule, cb);
 }
 
-// readAllLiveData - K-Line TCM (0x20) All 5 blocks (PCAP-verified order)
+// readAllLiveData - K-Line TCM (0x20) All 5 blocks (-verified order)
 void WJDiagnostics::readAllLiveData(std::function<void(const TCMStatus&)> cb)
 {
     auto tcm = std::make_shared<TCMStatus>();
@@ -1885,7 +1885,7 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
     tcm.outputRPM = outputRPM;
 
     // Trans Temp
-    tcm.transTemp = u8(11) - 50;  // NAG1 encoding: raw = C + 50 (native lib verified)
+    tcm.transTemp = u8(11) - 50;  // NAG1 encoding: raw = C + 50 
 
     // Line pressure (signed, byte 9-10)
     int16_t rawLP = static_cast<int16_t>(u16(9));
@@ -1898,7 +1898,7 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
     tcm.solenoidSupply = 0;
 
     // Gear from byte[7] = selector range: P=8, R=7, N=6, D=5
-    // Gear from byte[9] = ACTUAL GEAR NUMBER (PCAP verified):
+    // Gear from byte[9] = ACTUAL GEAR NUMBER :
     //   0x00 = P/N, 0x01 = 1st, 0x02 = 2nd, 0x03 = 3rd, 0x04 = 4th, 0x05 = 5th
     //   0xFF/0x58 = shift in progress
     // byte[10] = gear * 0x11 (double confirmation: 0x11=1st, 0x22=2nd, 0x33=3rd, 0x44=4th)

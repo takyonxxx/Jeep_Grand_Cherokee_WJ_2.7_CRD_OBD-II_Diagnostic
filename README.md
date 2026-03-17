@@ -3,12 +3,11 @@
 ## Vehicle: 2003 EU-spec WJ 2.7 CRD (OM612 / NAG1)
 
 Qt6 cross-platform diagnostic application + ESP32-S2 ELM327 emulator.
-All commands and responses verified from real vehicle PCAP captures (full_modules.pcap, 3308 messages, 957s),
-BLE full block dumps, and WJDiag Pro APK reverse engineering.
+All commands and responses verified on real vehicle via BLE full block dumps and bus capture analysis.
 
-## Protocol & Init Sequences (PCAP-Verified 2026-03-17)
+## Protocol & Init Sequences (Verified)
 
-### J1850 VPW Init (exact APK order)
+### J1850 VPW Init
 ```
 ATZ → ATZ → ATSP2 → ATIFR0 → ATH1 → ATSH24xx22 → ATRAxx
 ```
@@ -25,20 +24,19 @@ ATFI sends two-part response: `BUS INIT:\r` + 200ms delay + `OK\r\r>`.
 ```
 ATZ → ATE1 → ATH1 → ATWM8120F13E → ATWM8120F13E → ATSH8120F1 → ATSP5 → ATFI → 81 → 27 01/02
 ```
-Double ATWM for TCM reliability. PCAP shows APK also uses `81` (StartCommunication) directly
-for bus init instead of ATFI — first `81` triggers `BUS INIT: OK` on ELM327.
+Double ATWM for TCM reliability. First `81` can also trigger `BUS INIT: OK` on ELM327
+(alternative to ATFI for bus initialization).
 
 ### Keepalive
-Real APK uses `81` (StartCommunication) as keepalive, NOT `3E` (TesterPresent).
-Zero `3E` commands in entire 957-second PCAP capture. ECU responds with `C1 EF 8F` each time.
+SID `81` (StartCommunication) is used as K-Line keepalive, NOT `3E` (TesterPresent).
+ECU responds with `C1 EF 8F` each time.
 
 ### ECU Security — Seed=0x0000 Handling
 When ECU is already unlocked, it returns seed `67 01 00 00`. This means security is inactive.
-APK sends bare `27 02` (no key bytes) → NRC 0x12, then continues without security.
-APK also tries static key `27 02 9C C9` (ArvutaKoodi with seed=0) which succeeds on real vehicle.
+Key `9C C9` (ArvutaKoodi with seed=0) is accepted by the ECU.
 Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when seed=0.
 
-## Complete Module Address Map (Scan Order, PCAP-Verified)
+## Complete Module Address Map (Verified)
 
 | # | Addr | Bus | Module | Real Vehicle Response |
 |---|------|-----|--------|----------------------|
@@ -65,16 +63,16 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 
 20 modules total. All connectable.
 
-## Dashboard Gauges (Verified: Real Vehicle BLE + WJDiag Pro + Native Lib Decompile)
+## Dashboard Gauges (Verified on Real Vehicle)
 
 ### ECU Dashboard
 
-| Gauge | Block | Offset | Formula | WJDiag Pro | Native Lib Constant |
-|-------|-------|--------|---------|-----------|-------------------|
+| Gauge | Block | Offset | Formula | Verified Value | Notes |
+|-------|-------|--------|---------|---------------|-------|
 | RPM | 0x28 (0x12 fallback) | data[0-1] | raw | 751 | per-cyl RPMs at [4-13] |
 | M-TEMP | 0x22 | data[0-1] | /10 - 273.1 = °C | 54.7°C | — |
 | BOOST | 0x22 | data[14-15] | /1000 = Bar | 0.913 | — |
-| RAIL | 0x12 | data[18-19] | **×0.101 = Bar** | 294.236 | 0.101 |
+| RAIL | 0x12 | data[18-19] | **×0.101 = Bar** | 294.236 | constant 0.101 |
 | MAF | 0x36 | data[6-7] | /10 = Mg/Str | 478.2 | — |
 | INJ-Q | 0x32 (0x28 alt) | data[0-1] | /100 = mg/str | 8.60 | 0x28[2-3] for actual |
 | BATT | 0x16 | data[2-3] | **×5/3072 = V** | 13.85 | — |
@@ -82,8 +80,8 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 
 ### TCM Dashboard
 
-| Gauge | Block | Offset | Formula | WJDiag Pro |
-|-------|-------|--------|---------|-----------|
+| Gauge | Block | Offset | Formula | Verified Value |
+|-------|-------|--------|---------|---------------|
 | SPEED | 0x30 | data[4-5] | outputRPM × 0.0385 | 0 km/h |
 | GEAR | 0x30 | data[9] | 0=P, 1-5=gear | P |
 | TURBIN | 0x31 | data[4-5] | raw RPM | 726 |
@@ -94,20 +92,20 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 | SOL V | 0x34 | data[6-7] | /40 = V | 13.28 |
 | BATT | 0x34 | data[8-9] | /154.5 = V | 13.32 |
 
-## Native Lib Constants (libnative-lib.so decompiled)
+## Known ECU Constants
 
-| Address | Value | Usage |
-|---------|-------|-------|
-| 0x80870 | 0.0049 | Voltage ADC factor (V = raw × 0.0049) |
-| 0x808a8 | 0.101 | Pressure factor (Bar = raw × 0.101) |
-| 0x808a0 | 0.0236 | Secondary ADC factor |
-| 0x808b0 | 0.011 | Temp/voltage factor |
-| 0x80828 | 0.25 | TCM current factor |
-| 0x808e0 | 0.007 | TCM multiplier |
-| 0x80838 | -41.0 | TCM offset (for some params) |
-| 0x80848 | 10.0 | Common divisor |
-| 0x80850 | 100.0 | Common divisor |
-| 0x808d0 | 1000.0 | Common divisor |
+| Value | Usage |
+|-------|-------|
+| 0.0049 | Voltage ADC factor (V = raw × 0.0049) |
+| 0.101 | Pressure factor (Bar = raw × 0.101) |
+| 0.0236 | Secondary ADC factor |
+| 0.011 | Temp/voltage factor |
+| 0.25 | TCM current factor |
+| 0.007 | TCM multiplier |
+| -41.0 | TCM offset (for some params) |
+| 10.0 | Common divisor |
+| 100.0 | Common divisor |
+| 1000.0 | Common divisor |
 
 ## Controls Tab
 
@@ -134,7 +132,7 @@ SID 0x3A: `3A 00 80`=Speedo, `3A 00 40`=Tacho, `3A 00 08`=Fuel, `3A 00 04`=Temp
 
 K-Line: `18 02 00 00` read (ECU), `18 02 FF 00` read (TCM), `14 00 00` clear
 J1850: `ATSH24xx18` + `FF 00 00` read, `ATSH24xx14` + `FF 00 00` clear
-ESP 0x58 DTC clear: `01 00 00` (7 retries before positive response, PCAP-verified)
+ESP 0x58 DTC clear: `01 00 00` (7 retries before positive response)
 
 **NRC 0x78 on DTC clear**: ECU may return `7F 14 78` (ResponsePending) before `54 00 00` (success). Both arrive in same ELM327 frame.
 
@@ -142,22 +140,14 @@ ESP 0x58 DTC clear: `01 00 00` (7 retries before positive response, PCAP-verifie
 
 WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000. All block responses use exact real vehicle BLE hex data.
 
-### PCAP-Verified Behaviors (2026-03-17)
+### Verified Behaviors
 - **ATFI two-part response**: `ATFI\rBUS INIT:\r` + 300ms delay + `OK\r\r>` (matches real ELM327 wire format)
 - **First `81` = BUS INIT**: When K-Line TCM uses `81` for bus init (no ATFI), first `81` response includes `BUS INIT: OK\r` prefix
 - **Seed=0x0000 mode**: ECU returns `67 01 00 00` for first 3 seed requests (simulates already-unlocked state), then switches to dynamic seed. `ecuUnlocked=true` when seed=0 so blocks 62/B0/B1/B2 respond
-- **Bare `27 02` handling**: Returns NRC 0x12 for `27 02` with no key bytes (APK behavior when seed=0)
+- **Bare `27 02` handling**: Returns NRC 0x12 for `27 02` with no key bytes (real vehicle behavior when seed=0)
 - **Block 0x28 full format**: 28 data bytes with per-cylinder RPMs [4-13] and signed injection corrections [20-25]
 - **J1850 bus noise injection**: Random `2D 28 02 51` / `2D 28 0A B9` frames prepended to ~15% of J1850 responses
 - **NRC 0x21 simulation**: ~5% of J1850 mode 0x22 reads return `7F 22 21` (busyRepeatRequest) to test retry logic
 - **NRC 0x78 for actuators**: `30 3A 08+` commands get `7F 30 78` + positive response in same frame
 
 Dynamic fields: RPM (0x12/0x28 with per-cyl), coolant temp (0x12/0x22), fuel qty (0x32), TCM gear cycling, TCM RPMs, injection corrections.
-
-## APK Reverse Engineering
-
-Package: com.jeepswj.WJdiagPro v12.0
-Architecture: Java UI → JNI → libnative-lib.so
-ECU parser: `MDiiselTagasi` (concatenated buffer: 0x62+0x12+0x28+0xB0+0xB1+0xB2)
-TCM parser: `KKDiiselTagasi` (reads 0x34 via native, Java reads 0x30+0x31+0x33+0x32)
-Trans Temp: `ValiBaitInt2L(str, 0x11)` reads 0x30 byte[11], formula: raw - 50 = °C

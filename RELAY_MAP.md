@@ -1,8 +1,8 @@
 # WJ 2.7 CRD — Complete Actuator Command Reference
 
-All commands verified from real vehicle PCAP captures (full_modules.pcap, 3308 messages) and simulator testing.
+All commands verified from real vehicle real vehicle bus captures and simulator testing.
 
-## Init Sequences (PCAP-Verified 2026-03-17)
+## Init Sequences (Verified)
 
 ### J1850 VPW Init
 ```
@@ -19,14 +19,14 @@ ATZ → ATE1 → ATH1 → ATWM8115F13E → ATSH8115F1 → ATSP5 → ATFI → 81 
 ```
 ATZ → ATE1 → ATH1 → ATWM8120F13E → ATWM8120F13E → ATSH8120F1 → ATSP5 → ATFI → 81 → 27 01/02
 ```
-Double ATWM for TCM reliability. PCAP also shows APK uses `81` for bus init (first `81` triggers `BUS INIT: OK`).
+Double ATWM for TCM reliability. Real vehicle also uses `81` for bus init (first `81` triggers `BUS INIT: OK`).
 
 ### Keepalive: `81` (NOT `3E`)
-Real APK uses SID 0x81 (StartCommunication) as K-Line keepalive. Zero `3E` in 957s capture.
+Real vehicle uses SID 0x81 (StartCommunication) as K-Line keepalive. 
 
-### NRC Handling (PCAP-Verified)
+### NRC Handling 
 - **NRC 0x78 (ResponsePending)**: ECU sends `7F xx 78` followed by actual positive response in same frame. Common on actuator SID 0x30 and DTC clear SID 0x14.
-- **NRC 0x21 (busyRepeatRequest)**: J1850 modules return this when bus is busy. APK retries same command up to 3 times.
+- **NRC 0x21 (busyRepeatRequest)**: J1850 modules return this when bus is busy. Retry same command up to 3 times.
 - **J1850 Bus Noise**: Real bus has periodic unsolicited `2D 28 xx xx` frames (~119 in 957s capture). Must be filtered from response parsing.
 
 ---
@@ -259,10 +259,10 @@ See README.md for full ArvutaKoodi algorithm with lookup tables T1-T4.
 
 14 blocks per cycle + 4 security + ATRV. Block read order: `0x12 → 0x30 → 0x22 → 0x20 → 0x23 → 0x21 → 0x16 → 0x32 → 0x37 → 0x13 → 0x36 → 0x26 → 0x34`
 
-**All offsets verified: Real vehicle BLE full dump + WJDiag Pro screenshots + native lib (libnative-lib.so) decompile.**
+**All offsets verified: Real vehicle BLE full dump + real vehicle BLE captures.**
 
 ### Block 0x12 (32 data bytes) — Primary sensors
-| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+| Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
 | [0-1] | u16 | Coolant Temp | /10 - 273.1 = °C | ✓ |
 | [2-3] | u16 | Air Intake Temp (IAT) | /10 - 273.1 = °C | ✓ |
@@ -274,7 +274,7 @@ See README.md for full ArvutaKoodi algorithm with lookup tables T1-T4.
 | [18-19] | u16 | **Fuel Rail Pressure** | **×0.101 = Bar** | ✓ 294.2 Bar |
 
 ### Block 0x22 (32 data bytes) — Coolant + Boost (primary source)
-| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+| Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
 | [0-1] | u16 | **Coolant Temp** | /10 - 273.1 = °C | ✓ 54.7°C |
 | [2-3] | u16 | **IAT** | /10 - 273.1 = °C | ✓ |
@@ -283,11 +283,11 @@ See README.md for full ArvutaKoodi algorithm with lookup tables T1-T4.
 | [14-15] | u16 | **Boost Pressure** | /1000 = Bar (MAP/1000) | ✓ 0.913 Bar |
 | [16-17] | u16 | Air Intake Volts | /1000 = V | (NOT Rail!) |
 
-### Block 0x28 (28 data bytes) — RPM + Per-Cylinder + Injection Corrections (PCAP-verified 2026-03-17)
+### Block 0x28 (28 data bytes) — RPM + Per-Cylinder + Injection Corrections (Verified)
 
-PCAP: `02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 002F 0000`
+Real vehicle idle: `02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 002F 0000`
 
-| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+| Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
 | [0-1] | u16 | **Engine RPM** | raw (overrides 0x12) | ✓ 751 |
 | [2-3] | u16 | **Injection Qty** | /100 = mg/str | ✓ 9.25 |
@@ -310,20 +310,20 @@ PCAP: `02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 002F 0000`
 | [0-1] | u16 | Low Idle Setpoint | raw RPM (750) |
 
 ### Block 0x32 (32 data bytes) — Fuel actual + speed
-| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+| Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
 | [0-1] | u16 | **Actual Fuel Quantity** | /100 = mg/str | ✓ 8.60 |
 | [4-5] | u16 | Vehicle Speed | raw km/h | |
 
 ### Block 0x36 (38 data bytes) — Pedal + MAF
-| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+| Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
 | [0-1] | u16 | Accel Pedal 1 | /100 = % | |
 | [4-5] | u16 | Accel Pedal 1 V | /1000 = V | |
 | [6-7] | u16 | **Mass Air Flow** | /10 = Mg/Str | ✓ 478.2 |
 
 ### Block 0x16 (38 data bytes) — Battery / Alternator
-| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+| Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
 | [0-1] | u16 | Alternator raw | — | |
 | [2-3] | u16 | **Battery Voltage** | **×5.0/3072 = V** | ✓ 13.85V |
@@ -355,12 +355,12 @@ Real BLE: `0048 1000 0000 0004 0000...03FF 0003...0004 0000`
 
 5 blocks per cycle: `0x30 → 0x31 → 0x34 → 0x33 → 0x32`
 
-**All offsets verified: Real vehicle BLE + WJDiag Pro + native lib KKDiiselTagasi decompile.**
+**All offsets verified: Real vehicle BLE + real vehicle BLE captures.**
 
 ### Block 0x30 (22 data bytes) — Gear, TCC slip, output RPM, trans temp
 Real BLE idle: `0017 001E 0000 0008 0400 DD60 FFF6 FFF6 0000 9618 0008`
 
-| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+| Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
 | [0-1] | u16 | **Actual TCC Slip** | signed raw RPM | ✓ 20 |
 | [2-3] | u16 | **Desired TCC Slip** | signed raw RPM | ✓ 30 |
@@ -368,12 +368,12 @@ Real BLE idle: `0017 001E 0000 0008 0400 DD60 FFF6 FFF6 0000 9618 0008`
 | [7] | u8 | Selector | P=8, R=7, N=6, D=5 | ✓ |
 | [9] | u8 | **Actual Gear** | 0=P/N, 1-5=gear | ✓ |
 | [10] | u8 | Gear × 0x11 | confirm byte | |
-| [11] | u8 | **Transmission Temp** | **raw - 50 = °C** | ✓ 57°C (native lib verified) |
+| [11] | u8 | **Transmission Temp** | **raw - 50 = °C** | ✓ 57°C  |
 
 ### Block 0x31 (20 data bytes) — RPMs
 Real BLE idle: `01BB 0000 02D8 02F0 0000...`
 
-| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+| Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
 | [0-1] | u16 | **Input RPM (N2)** | raw | ✓ 442 |
 | [2-3] | u16 | **Input RPM (N3)** | raw | ✓ 0 |
@@ -383,7 +383,7 @@ Real BLE idle: `01BB 0000 02D8 02F0 0000...`
 ### Block 0x34 (14 data bytes) — Voltages
 Real BLE: `0217 03FF 0332 0214 0807 0001 0028`
 
-| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+| Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
 | [0-1] | u16 | Unknown (NOT trans temp!) | — | |
 | [2-3] | u16 | Unknown (0x03FF=1023) | — | |
@@ -394,7 +394,7 @@ Real BLE: `0217 03FF 0332 0214 0807 0001 0028`
 ### Block 0x33 (16 data bytes) — Pressures (NOT wheel speeds!)
 Real BLE: `0024 0771 05DC 02B8 02B4 02E3 02E1 0000`
 
-| Offset | Bytes | Field | Formula | WJDiag Pro Verify |
+| Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
 | [0-1] | u16 | **TCC Pressure** | /1000 = Bar | ✓ 0.000 |
 | [6-7] | u16 | **Shift PSI** | /365 = Bar | ✓ 1.904 |

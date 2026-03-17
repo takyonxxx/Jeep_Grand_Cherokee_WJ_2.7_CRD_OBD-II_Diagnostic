@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 
-// ELM327 Emulator for WJ 2.7 CRD — PCAP-verified responses
+// ELM327 Emulator for WJ 2.7 CRD — verified real vehicle responses
 // WiFi AP: 192.168.0.10:35000
 // Response database: 252 real vehicle captures (2026-03-12)
 
@@ -21,8 +21,8 @@ public:
 private:
     String handleAT(const String &cmd);
 
-    // J1850 — PCAP lookup + generic fallback
-    String j1850_pcap_lookup(uint8_t t, uint8_t m, const String &cmdStr);
+    // J1850 — vehicle data lookup + generic fallback
+    String j1850_vehicle_lookup(uint8_t t, uint8_t m, const String &cmdStr);
     String j1850_generic(uint8_t t, uint8_t m, uint8_t sid, const uint8_t *data, int dlen);
 
     // KWP2000 (K-Line)
@@ -34,13 +34,13 @@ private:
     bool     ecuDtcCleared = false;
     bool     tcmUnlocked  = false;
     uint16_t ecuSeed      = 0;
-    int      ecuSeedZeroCount = 0;  // PCAP FIX: track seed=0 requests
-    bool     klBusInitDone = false; // PCAP FIX: first 81 includes BUS INIT
+    int      ecuSeedZeroCount = 0;  // track seed=0 requests
+    bool     klBusInitDone = false; // first 81 includes BUS INIT
 
     // Per-module J1850 DTC cleared flags
     bool j1850DtcCleared[256] = {};
     int espClearAttempts = 0;
-    int j1850NoiseCounter = 0;  // PCAP FIX: bus noise injection counter
+    int j1850NoiseCounter = 0;  // bus noise injection counter
 
     float  engineRpm    = 750.0f;
     float  coolantTemp  = 82.0f;

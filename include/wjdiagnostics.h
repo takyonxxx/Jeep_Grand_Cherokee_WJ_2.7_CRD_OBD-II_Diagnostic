@@ -35,7 +35,7 @@ public:
         BodyComputer = 0x40,   // Body Computer (hazard/horn/mirrors)
         Airbag       = 0x60,   // Airbag (ORC/AOSIM)
         SKIM         = 0xC0,   // SKIM/Immobilizer 
-        ATC          = 0x98,   // HVAC/ATC (APK verified, same as MemSeat)
+        ATC          = 0x98,   // HVAC/ATC (verified, same as MemSeat)
         Radio80      = 0x80,   // Radio (NO DATA on EU)
         Radio        = 0x81,   // CD Changer
         // MemSeat uses same address as ATC (0x98)
@@ -118,11 +118,11 @@ public:
         double idleAdapt=0;
         // Block 0xB2 - Fuel trims / cold start
         double fuelAdapt=0;
-        // Block 0x30 - RPM setpoints (APK: Engine RPM, Low Idle Setpoint)
+        // Block 0x30 - RPM setpoints (Engine RPM, Low Idle Setpoint)
         double lowIdleSetpoint=0;
-        // Block 0x23 - Boost (APK: Boost Pressure Sensor/Voltage/Setpoint)
+        // Block 0x23 - Boost (Boost Pressure Sensor/Voltage/Setpoint)
         double boostVoltage=0;
-        // Block 0x21 - Fuel demand (APK: Desired/Actual Fuel QTY)
+        // Block 0x21 - Fuel demand (Desired/Actual Fuel QTY)
         double fuelDemand=0, fuelDriver=0, fuelActual=0;
         double fuelStartSet=0, fuelLimit=0, fuelTorque=0, fuelIdleGov=0;
         // Block 0x16 - Battery/alternator
