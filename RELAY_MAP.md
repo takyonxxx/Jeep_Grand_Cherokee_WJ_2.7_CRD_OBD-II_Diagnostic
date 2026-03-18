@@ -334,8 +334,21 @@ Real BLE: `0254 0253 03FE 0000 0094 0048 01A8 0163 0108 02E5 024D 0090 00BF 03A0
 ### Block 0x23 (20 data bytes) — Boost/MAP detail
 Real BLE: `097F 0250 FFFC 0BD7 03A0 02A3 0085 0043 03FD 012A`
 
-### Block 0x21 (20 data bytes) — Fuel quantities (all /100 = mg/str)
-Real BLE: `017E 03E4 03FD 0038 012A 03FE 024D 01F5 00BF 01A2`
+### Block 0x21 (20 data bytes) — Fuel quantities + Fuel Level (Verified 2026-03-18)
+Real vehicle idle: `018F 03E3 03FD 004A 012A 03FD 024A 01EF 00B4 015D`
+
+| Offset | Bytes | Field | Formula | Verified |
+|--------|-------|-------|---------|----------|
+| [0-1] | u16 | Desired Fuel QTY Pedal | /100 = mg/str | 3.99 |
+| [2-3] | u16 | Fuel QTY Limit | /100 = mg/str | 9.95 |
+| [4-5] | u16 | Fuel QTY Demand | /100 = mg/str | 10.21 |
+| [6-7] | u16 | Fuel QTY Driver | /100 = mg/str | 0.74 |
+| [8-9] | u16 | Fuel QTY Start Setpoint | /100 = mg/str | 2.98 |
+| [10-11] | u16 | (reserved) | /100 | 10.21 |
+| [12-13] | u16 | (reserved) | /100 | 5.86 |
+| [14-15] | u16 | **Fuel Level** | **/10 = %** | **49.5% = 39.0L** |
+| [16-17] | u16 | **Fuel Level Sensor Voltage** | **/100 = V** | **1.80V** |
+| [18-19] | u16 | (reserved) | /100 | 3.49 |
 
 ### Block 0x37 (34 data bytes) — EGR/Wastegate
 Real BLE: `0C67 105D 0079 0000 0008...`
@@ -343,8 +356,17 @@ Real BLE: `0C67 105D 0079 0000 0008...`
 ### Block 0x13 (26 data bytes) — Oil/AC/Baro
 Real BLE: `0393 024A 02E4 02E4 0000 08B7 0000 0250 FFFC 0BD7 0085 03FD 0BCC`
 
-### Block 0x26 (30 data bytes) — Fuel level
-Real BLE: `0000 0000 0000 5CAF 7FFF 0000 2FA0 0029 0029 0029 0029 0048 0023 0000 0C77`
+### Block 0x26 (30 data bytes) — Vehicle Speed + misc (Verified 2026-03-18)
+Real vehicle idle: `0000 0000 0000 5CB1 7FFF 0000 2FA0 0029 0029 0029 0029 0048 0023 0000 0CE5`
+Real vehicle driving: `0000 0465 0000 5CB1 7FFF ...` (11.2 km/h)
+
+| Offset | Bytes | Field | Formula | Verified |
+|--------|-------|-------|---------|----------|
+| [0-1] | u16 | (always 0) | — | 0 |
+| [2-3] | u16 | **Vehicle Speed** | **raw / 100 = km/h** | **0-80+ km/h** |
+| [4-5] | u16 | (always 0) | — | 0 |
+| [6-7] | u16 | (constant) | — | 23729 |
+| [8-9] | u16 | (sentinel 0x7FFF) | — | 32767 |
 
 ### Block 0x34 (34 data bytes) — Transfer case/misc
 Real BLE: `0048 1000 0000 0004 0000...03FF 0003...0004 0000`
@@ -400,4 +422,10 @@ Real BLE: `0024 0771 05DC 02B8 02B4 02E3 02E1 0000`
 | [6-7] | u16 | **Shift PSI** | /365 = Bar | ✓ 1.904 |
 | [8-9] | u16 | **Modulation PSI** | /462 = Bar | ✓ 1.499 |
 
-### Block 0x32 (13 data bytes) — Reserved (all zeros at idle)
+### Block 0x32 (13 data bytes) — Vehicle Speed (Verified 2026-03-18)
+Real vehicle idle: all zeros. Driving: `17 00 ...` (23 km/h), `1F 00 ...` (31 km/h)
+
+| Offset | Bytes | Field | Formula | Verified |
+|--------|-------|-------|---------|----------|
+| [0] | u8 | **Vehicle Speed** | **single byte = km/h** | 0, 23, 31 |
+| [1-12] | — | (reserved) | all zeros | — |

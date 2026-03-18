@@ -112,6 +112,7 @@ private:
     QLabel *m_dashWgVal=nullptr,*m_dashWgUnit=nullptr;
     QLabel *m_dashInjAdaptVal=nullptr,*m_dashInjAdaptUnit=nullptr;
     QLabel *m_dashFuelAdaptVal=nullptr,*m_dashFuelAdaptUnit=nullptr;
+    QLabel *m_dashFuelLevelVal=nullptr,*m_dashFuelLevelUnit=nullptr;
     QLabel *m_dashBoostAdaptVal=nullptr,*m_dashBoostAdaptUnit=nullptr;
     QLabel *m_dashOilPressVal=nullptr,*m_dashOilPressUnit=nullptr;
     // Dashboard container

@@ -69,28 +69,31 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 
 | Gauge | Block | Offset | Formula | Verified Value | Notes |
 |-------|-------|--------|---------|---------------|-------|
-| RPM | 0x28 (0x12 fallback) | data[0-1] | raw | 751 | per-cyl RPMs at [4-13] |
-| M-TEMP | 0x22 | data[0-1] | /10 - 273.1 = °C | 54.7°C | — |
-| BOOST | 0x22 | data[14-15] | /1000 = Bar | 0.913 | — |
-| RAIL | 0x12 | data[18-19] | **×0.101 = Bar** | 294.236 | constant 0.101 |
-| MAF | 0x36 | data[6-7] | /10 = Mg/Str | 478.2 | — |
-| INJ-Q | 0x32 (0x28 alt) | data[0-1] | /100 = mg/str | 8.60 | 0x28[2-3] for actual |
+| SPEED | 0x26 | data[2-3] | **raw / 100 = km/h** | 0-80+ | verified: 10000→100km/h |
+| RPM | 0x28 (0x12 fallback) | data[0-1] | raw | 750 | per-cyl RPMs at [4-13] |
+| FUEL L/h | calculated | rpm × fuelActual | L/h or L/100km | 1.2 | — |
+| FUEL LEVEL | 0x21 | data[14-15] | **raw / 10 = %** | 49.5% = 39.0L | 78.7L tank |
+| FUEL SENS V | 0x21 | data[16-17] | **raw / 100 = V** | 1.80V | — |
+| INJ-Q | 0x32 (0x28 alt) | data[0-1] | /100 = mg/str | 8.81 | 0x28[2-3] for actual |
+| M-TEMP | 0x22 | data[0-1] | /10 - 273.1 = °C | 57.8°C | — |
+| BOOST | 0x22 | data[14-15] | /1000 = Bar | 0.910 | — |
+| RAIL | 0x12 | data[18-19] | **×0.101 = Bar** | 245.5 | constant 0.101 |
+| MAF | 0x36 | data[6-7] | /10 = Mg/Str | 473 | — |
 | BATT | 0x16 | data[2-3] | **×5/3072 = V** | 13.85 | — |
-| FUEL | calculated | rpm × fuelActual | L/h | — | — |
 
 ### TCM Dashboard
 
 | Gauge | Block | Offset | Formula | Verified Value |
 |-------|-------|--------|---------|---------------|
-| SPEED | 0x30 | data[4-5] | outputRPM × 0.0385 | 0 km/h |
+| SPEED | 0x32 | data[0] | **single byte km/h** | 0-31+ |
 | GEAR | 0x30 | data[9] | 0=P, 1-5=gear | P |
-| TURBIN | 0x31 | data[4-5] | raw RPM | 726 |
-| T-TEMP | 0x30 | data[11] | **raw - 50 = °C** | 57°C |
+| TURBIN | 0x31 | data[4-5] | raw RPM | 738 |
+| T-TEMP | 0x30 | data[11] | **raw - 50 = °C** | 58°C |
 | LIMP | 0x30 | data[9]+maxGear | logic | Normal |
 | LINE-P | 0x30 | data[9-10] | signed raw | — |
-| TCC | 0x30 | data[0-1] | signed raw RPM | 20 |
-| SOL V | 0x34 | data[6-7] | /40 = V | 13.28 |
-| BATT | 0x34 | data[8-9] | /154.5 = V | 13.32 |
+| TCC | 0x30 | data[0-1] | signed raw RPM | 12 |
+| SOL V | 0x34 | data[6-7] | /40 = V | 13.05 |
+| BATT | 0x34 | data[8-9] | /154.5 = V | 13.30 |
 
 ## Known ECU Constants
 

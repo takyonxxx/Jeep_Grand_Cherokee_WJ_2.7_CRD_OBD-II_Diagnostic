@@ -990,7 +990,13 @@ void WJDiagnostics::parseTCMBlock(uint8_t blk, const QByteArray &d, TCMStatus &t
         }
         break;
     case 0x32:
-        // Block 0x32: all zeros at idle
+        // Block 0x32: Vehicle speed + misc
+        // Real vehicle verified: data[0] = vehicle speed (single byte, km/h)
+        // d[] includes 61 32 prefix, so data[0] = u8(2)
+        // Idle: all zeros. Driving: 8,13,19,20,26,28 km/h
+        if (n >= 3) {
+            tcm.vehicleSpeed = u8(2);  // data[0] = speed km/h (single byte)
+        }
         break;
     }
 }
@@ -1195,9 +1201,11 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x21:
-        // Block 0x21: Fuel quantities (, all /100=mg/str)
-        // Real idle: 018E 03E3 03FC 004C 012A 03FD 0250 01EE 00A9
-        // =3.98 9.95 10.20 0.76 2.98 10.21 5.92 4.94 1.69
+        // Block 0x21: Fuel quantities + Fuel Level
+        // VERIFIED on simulator and real vehicle:
+        //   data[14-15] / 10 = Fuel Level % (501/10 = 50%)
+        //   data[16-17] / 100 = Fuel Level Sensor Voltage (191/100 = 1.91V)
+        //   data[0-13] = fuel quantity fields (/100 = mg/str)
         if (n >= 20) {
             ecu.fuelQtyPedal = u16(2) / 100.0;         // data[0-1] Desired Fuel QTY Pedal
             ecu.fuelQtyCruise = u16(4) / 100.0;        // data[2-3] Desired Fuel QTY Cruise
@@ -1206,8 +1214,8 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
             // data[8-9] = NOT fuelActual (fuelActual comes from 0x32)
             ecu.fuelStartSet = u16(12) / 100.0;        // data[10-11] Fuel QTY Start Setpoint
             ecu.fuelLimit = u16(14) / 100.0;           // data[12-13] Fuel QTY Limit
-            ecu.fuelTorque = u16(16) / 100.0;          // data[14-15] Fuel QTY Torque
-            ecu.fuelIdleGov = u16(18) / 100.0;         // data[16-17] Fuel QTY Low-Idle Gov
+            ecu.fuelLevel = u16(16) / 10.0;            // data[14-15] Fuel Level % (verified: 501→50%)
+            ecu.fuelLevelV = u16(18) / 100.0;          // data[16-17] Fuel Level Sensor V (verified: 191→1.91V)
         }
         break;
 
@@ -1235,12 +1243,13 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x26:
-        // Block 0x26: Fuel level/regulator 
-        // Real idle: 0000 0316 0000 5CAF 7FFF 0000 2FA0 0029 0029
-        // [0-1]=0, [2-3]=790dyn(0-790), [6-7]=23727, [8-9]=32767, [12-13]=12192
+        // Block 0x26: Vehicle speed + fuel pressure regulator + misc
+        // VERIFIED: data[2-3] / 100 = Vehicle Speed (km/h)
+        //   10000 → 100 km/h ✓, 430 → 4 km/h ✓, 0 → 0 km/h (idle) ✓
+        // d[] includes 61 26 prefix, so data[2-3] = u16(4)
+        // [0-1]=always 0, [4-5]=always 0, [6-7]=23727(const), [8-9]=0x7FFF(sentinel)
         if (n >= 6) {
-            ecu.fuelLevel = u16(2);                     // data[0-1] Fuel Level raw (0 at idle)
-            ecu.fuelLevelV = u16(4) / 1000.0;          // data[2-3] Fuel Level Sensor V
+            ecu.vehicleSpeed = u16(4) / 100.0;         // data[2-3] speed (raw/100 = km/h)
         }
         if (n >= 12) {
             ecu.fuelRegOutput = u16(6);                 // data[4-5] Fuel Pressure Raw
@@ -1881,7 +1890,8 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
     uint16_t outputRPM = u16(4);
     // Vehicle speed from output RPM: NAG1 722.6 final drive ~3.27, tire ~2.1m circ
     // speed_kmh = outputRPM * 60 * 2.1 / (3.27 * 1000) = outputRPM * 0.0385
-    tcm.vehicleSpeed = outputRPM * 0.0385;
+    // Vehicle speed: from block 0x32 data[0] (already parsed above)
+    // tcm.vehicleSpeed is set in parseTCMBlock case 0x32
     tcm.outputRPM = outputRPM;
 
     // Trans Temp

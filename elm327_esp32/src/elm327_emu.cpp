@@ -784,33 +784,37 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                     0x00,0x00, 0x00,0x00, 0x00,0x00};
                 return kwpWrap(r, 22);
             }
-            // TCM block 0x34: Real BLE: 0217 03FF 0332 0214 0807 0001 0028
+            // TCM block 0x34: Real vehicle: 020C 03FF 0332 020A 0807 0001 0028
             if (blk == 0x34) {
-                // Real BLE: 0217 03FF 0332 0214 0807 0001 0028
-                // [0-1] is NOT transTemp (dynamic, unknown purpose)
+                // SensV: 0x0332*7/1000=5.73V, SolV: 0x020A/40=13.05V, BattV: 0x0807/154.5=13.30V
                 uint8_t r[] = {0x61,0x34,
-                    0x02,0x17,  // [0-1] unknown dynamic
+                    0x02,0x0C,  // [0-1] unknown dynamic
                     0x03,0xFF,
-                    0x03,0x32,  // Sensor Supply
-                    0x02,0x14,  // Solenoid Supply
-                    0x08,0x07,  // Battery
+                    0x03,0x32,  // Sensor Supply *7/1000
+                    0x02,0x0A,  // Solenoid Supply /40
+                    0x08,0x07,  // Battery /154.5
                     0x00,0x01, 0x00,0x28};
                 return kwpWrap(r, 16);
             }
-            // TCM block 0x33: Real BLE: 0024 0771 05DC 02B8 02B4 02E3 02E1 0000
+            // TCM block 0x33: Real vehicle: 0024 0771 05DC 02AE 02A7 02D7 02D1 0000
             if (blk == 0x33) {
                 uint8_t r[] = {0x61,0x33,
-                    0x00,0x24,  // TCC pressure
-                    0x07,0x71,  // ?
-                    0x05,0xDC,  // ?
-                    0x02,0xB8,  // Shift PSI
-                    0x02,0xB4,  // Modulation PSI
-                    0x02,0xE3, 0x02,0xE1, 0x00,0x00};
+                    0x00,0x24,  // TCC pressure /1000=0.036Bar
+                    0x07,0x71,
+                    0x05,0xDC,
+                    0x02,0xAE,  // Shift PSI
+                    0x02,0xA7,  // Modulation PSI
+                    0x02,0xD7, 0x02,0xD1, 0x00,0x00};
                 return kwpWrap(r, 18);
             }
-            // TCM block 0x32: Real BLE: all zeros
+            // TCM block 0x32: Vehicle speed in data[0] (single byte km/h)
             if (blk == 0x32) {
-                uint8_t r[] = {0x61,0x32,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
+                // Simulate slow city driving: 0-30 km/h cycling
+                static uint8_t simSpeed = 0;
+                static bool speedUp = true;
+                if (speedUp) { simSpeed += 3; if (simSpeed >= 30) speedUp = false; }
+                else { simSpeed -= 3; if (simSpeed <= 0) { simSpeed = 0; speedUp = true; } }
+                uint8_t r[] = {0x61,0x32,simSpeed,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
                 return kwpWrap(r, 15);
             }
             // Other TCM blocks: return generic
@@ -829,7 +833,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             // Real BLE: 0C79 0BE7 08B7 08B7 0000 02EC 0000 0210 038E 0B60 02A6 012A 0042 097F 03A0 0000
             uint8_t r[] = {0x61,0x12,
                 (uint8_t)(cr>>8),(uint8_t)(cr&0xFF),    // [0-1] Coolant
-                0x0B,0xE7,                               // [2-3] IAT
+                0x0B,0xD9,                               // [2-3] IAT (real: 30.2C)
                 0x08,0xB7, 0x08,0xB7,                   // [4-7] Voltages
                 0x00,0x00,                               // [8-9]
                 (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),  // [10-11] RPM
@@ -847,7 +851,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             // Real BLE: 0C79 0BE7 08B7 08B7 0000 0000 0211 038E 0B97 0394 024E 02E4 02E4 02BF 08B7 000F
             uint8_t r[] = {0x61,0x22,
                 (uint8_t)(cr>>8),(uint8_t)(cr&0xFF),    // [0-1] Coolant
-                0x0B,0xE7,                               // [2-3] IAT
+                0x0B,0xD9,                               // [2-3] IAT (real: 30.2C)
                 0x08,0xB7, 0x08,0xB7,                   // [4-7] Voltages
                 0x00,0x00, 0x00,0x00,                   // [8-11]
                 0x02,0x11,                               // [12-13] InjQty spec
@@ -861,7 +865,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         if (blk == 0x28) {
             tick();
             uint16_t rpm = (uint16_t)engineRpm;
-            uint16_t iq = (uint16_t)(9.25f * 100); // idle injection qty matching real vehicle
+            uint16_t iq = (uint16_t)(8.84f * 100); // idle injection qty matching real vehicle
             // Full 28-byte format (verified 2026-03-17)
             // 02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 002F 0000
             // [0-1]=RPM [2-3]=InjQty [4-13]=5x per-cyl RPM [14-15]=0
@@ -888,7 +892,8 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         }
         if (blk == 0x62) {
             if (!ecuUnlocked) { uint8_t r[]={0x7F,0x21,0x33}; return kwpWrap(r,3); }
-            uint8_t r[] = {0x61,0x62, 0x50,0x52,0x8F,0x84};
+            // Real vehicle: 33 4A 94 84 (EGR=51%, WG=74%)
+            uint8_t r[] = {0x61,0x62, 0x33,0x4A,0x94,0x84};
             return kwpWrap(r, 6);
         }
         if (blk == 0xB0) {
@@ -916,25 +921,27 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             return kwpWrap(r, 26);
         }
         if (blk == 0x23) {
-            // Real BLE: 097F 0250 FFFC 0BD7 03A0 02A3 0085 0043 03FD 012A
+            // Real vehicle: 097F 024D FFF9 0BD1 039F 027A 007E 0030 03FD 012A
             uint8_t r[] = {0x61,0x23,
-                0x09,0x7F, 0x02,0x50, 0xFF,0xFC,
-                0x0B,0xD7, 0x03,0xA0, 0x02,0xA3,
-                0x00,0x85, 0x00,0x43, 0x03,0xFD, 0x01,0x2A};
+                0x09,0x7F, 0x02,0x4D, 0xFF,0xF9,
+                0x0B,0xD1, 0x03,0x9F, 0x02,0x7A,
+                0x00,0x7E, 0x00,0x30, 0x03,0xFD, 0x01,0x2A};
             return kwpWrap(r, 22);
         }
         if (blk == 0x21) {
-            // Real BLE: 017E 03E4 03FD 0038 012A 03FE 024D 01F5 00BF 01A2
+            // Real vehicle idle: 018F 03E3 03FD 004A 012A 03FD 024A 01EF 00B4 015D
+            // [14-15]=0x01EF=495 → /10=49.5% fuel level
+            // [16-17]=0x00B4=180 → /100=1.80V sensor voltage
             uint8_t r[] = {0x61,0x21,
-                0x01,0x7E, 0x03,0xE4, 0x03,0xFD,
-                0x00,0x38, 0x01,0x2A, 0x03,0xFE,
-                0x02,0x4D, 0x01,0xF5, 0x00,0xBF, 0x01,0xA2};
+                0x01,0x8F, 0x03,0xE3, 0x03,0xFD,
+                0x00,0x4A, 0x01,0x2A, 0x03,0xFD,
+                0x02,0x4A, 0x01,0xEF, 0x00,0xB4, 0x01,0x5D};
             return kwpWrap(r, 22);
         }
         if (blk == 0x16) {
-            // Real BLE: 251C 2138 0000x18...2710 07DA...01F4...
+            // Real vehicle: 012C 2140 012C... (BattV=13.85V)
             uint8_t r[] = {0x61,0x16,
-                0x25,0x1C, 0x21,0x38,
+                0x01,0x2C, 0x21,0x40,
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
                 0x00,0x00, 0x00,0x00, 0x00,0x00,
@@ -947,7 +954,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         }
         if (blk == 0x32) {
             tick();
-            uint16_t fuelAct = (uint16_t)(5.50f * 100); // idle fuel
+            uint16_t fuelAct = (uint16_t)(8.81f * 100); // real vehicle idle fuel
             // Real BLE: 03C3 0AD8 0000 0000 0CE4 03C4 03C3 0189 01A2 00FA 0030 026E 02C9 0000 0000 0000
             uint8_t r[] = {0x61,0x32,
                 (uint8_t)(fuelAct>>8),(uint8_t)(fuelAct&0xFF), // [0-1] Actual Fuel Qty
@@ -994,10 +1001,16 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             return kwpWrap(r, 40);
         }
         if (blk == 0x26) {
-            // Real BLE: 0000 0000 0000 5CAF 7FFF 0000 2FA0 0029 0029 0029 0029 0048 0023 0000 0C77
+            // Block 0x26: Vehicle Speed in data[2-3] (raw / 100 = km/h)
+            // VERIFIED: 10000 → 100 km/h, 430 → 4.3 km/h
+            // Simulate city driving: 0-80 km/h cycling
+            static uint16_t simSpeedRaw = 0;
+            static bool spdUp = true;
+            if (spdUp) { simSpeedRaw += 500; if (simSpeedRaw >= 8000) spdUp = false; }
+            else { simSpeedRaw -= 500; if (simSpeedRaw <= 0) { simSpeedRaw = 0; spdUp = true; } }
             uint8_t r[] = {0x61,0x26,
-                0x00,0x00, 0x00,0x00, 0x00,0x00,
-                0x5C,0xAF, 0x7F,0xFF, 0x00,0x00,
+                0x00,0x00, (uint8_t)(simSpeedRaw>>8),(uint8_t)(simSpeedRaw&0xFF), 0x00,0x00,
+                0x5C,0xB1, 0x7F,0xFF, 0x00,0x00,
                 0x2F,0xA0, 0x00,0x29, 0x00,0x29,
                 0x00,0x29, 0x00,0x29, 0x00,0x48,
                 0x00,0x23, 0x00,0x00, 0x0C,0x77};

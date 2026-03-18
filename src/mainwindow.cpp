@@ -249,6 +249,7 @@ void MainWindow::rebuildDashboard()
     m_dashWgVal=m_dashWgUnit=nullptr;
     m_dashInjAdaptVal=m_dashInjAdaptUnit=nullptr;
     m_dashFuelAdaptVal=m_dashFuelAdaptUnit=nullptr;
+    m_dashFuelLevelVal=m_dashFuelLevelUnit=nullptr;
     m_dashBoostAdaptVal=m_dashBoostAdaptUnit=nullptr;
     m_dashOilPressVal=m_dashOilPressUnit=nullptr;
 
@@ -305,14 +306,15 @@ void MainWindow::rebuildDashboard()
     } else if (isECU) {
         // === ECU DASHBOARD: Big FUEL center, engine gauges around ===
         // Layout (4 cols):
-        //   Row 0:  RPM     | FUEL(2x2)      | INJ-Q
-        //   Row 1:  BOOST   | FUEL(cont)     | RAIL
-        //   Row 2:  M-TEMP  | MAF  | TPS     | BATT
+        //   Row 0:  SPEED   | FUEL(2x2)      | INJ-Q
+        //   Row 1:  RPM     | FUEL(cont)     | RAIL
+        //   Row 2:  BOOST   | M-TEMP | MAF   | BATT
+        // Vehicle Speed: ECU block 0x26 data[2-3] / 100 = km/h (verified)
 
         // Row 0
-        g->addWidget(createGaugeCard("RPM", "---", "rpm", &m_dashMotRpmVal, &m_dashMotRpmUnit), 0, 0);
+        g->addWidget(createGaugeCard("SPEED", "---", "km/h", &m_dashSpeedVal, &m_dashSpeedUnit), 0, 0);
 
-        // Big FUEL display (spans 2 rows, 2 cols) — like TCM gear
+        // Big FUEL display (spans 2 rows, 2 cols) — consumption + fuel level
         QFrame *fuelCard = new QFrame();
         fuelCard->setFrameShape(QFrame::StyledPanel);
         fuelCard->setStyleSheet("QFrame{background:#0a1420;border:2px solid #00806a;border-radius:10px;}");
@@ -324,26 +326,38 @@ void MainWindow::rebuildDashboard()
         fl->addWidget(ft);
         m_dashFuelAdaptVal = new QLabel("---");
         m_dashFuelAdaptVal->setAlignment(Qt::AlignCenter);
-        m_dashFuelAdaptVal->setStyleSheet("color:#00ffa0;font-size:72px;font-weight:bold;"
+        m_dashFuelAdaptVal->setStyleSheet("color:#00ffa0;font-size:60px;font-weight:bold;"
             "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;");
         fl->addWidget(m_dashFuelAdaptVal);
         m_dashFuelAdaptUnit = new QLabel("L/h");
         m_dashFuelAdaptUnit->setAlignment(Qt::AlignCenter);
-        m_dashFuelAdaptUnit->setStyleSheet("color:#406888;font-size:13px;border:none;background:transparent;");
+        m_dashFuelAdaptUnit->setStyleSheet("color:#406888;font-size:12px;border:none;background:transparent;");
         fl->addWidget(m_dashFuelAdaptUnit);
+
+        // Fuel Level sub-row (liters remaining)
+        m_dashFuelLevelVal = new QLabel("---");
+        m_dashFuelLevelVal->setAlignment(Qt::AlignCenter);
+        m_dashFuelLevelVal->setStyleSheet("color:#60b8a0;font-size:28px;font-weight:bold;"
+            "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;");
+        fl->addWidget(m_dashFuelLevelVal);
+        m_dashFuelLevelUnit = new QLabel("L");
+        m_dashFuelLevelUnit->setAlignment(Qt::AlignCenter);
+        m_dashFuelLevelUnit->setStyleSheet("color:#406888;font-size:11px;border:none;background:transparent;");
+        fl->addWidget(m_dashFuelLevelUnit);
+
         g->addWidget(fuelCard, 0, 1, 2, 2);
 
-        g->addWidget(createGaugeCard("INJ-Q", "---", "mg/str", &m_dashSpeedVal, &m_dashSpeedUnit), 0, 3);
+        g->addWidget(createGaugeCard("INJ-Q", "---", "mg/str", &m_dashLimpVal, &m_dashLimpUnit), 0, 3);
 
         // Row 1
-        g->addWidget(createGaugeCard("BOOST", "---", "Bar", &m_dashMotBoostVal, &m_dashMotBoostUnit), 1, 0);
+        g->addWidget(createGaugeCard("RPM", "---", "rpm", &m_dashMotRpmVal, &m_dashMotRpmUnit), 1, 0);
         // FUEL spans here
         g->addWidget(createGaugeCard("RAIL", "---", "bar", &m_dashMotRailVal, &m_dashMotRailUnit), 1, 3);
 
-        // Row 2: M-Temp | MAF | TPS | Batt
-        g->addWidget(createGaugeCard("M-TEMP", "---", "C", &m_dashMotCoolVal, &m_dashMotCoolUnit), 2, 0);
-        g->addWidget(createGaugeCard("MAF", "---", "mg/s", &m_dashMotMafVal, &m_dashMotMafUnit), 2, 1);
-        g->addWidget(createGaugeCard("TPS", "---", "%", &m_dashLimpVal, &m_dashLimpUnit), 2, 2);
+        // Row 2: Boost | M-Temp | MAF | Batt
+        g->addWidget(createGaugeCard("BOOST", "---", "Bar", &m_dashMotBoostVal, &m_dashMotBoostUnit), 2, 0);
+        g->addWidget(createGaugeCard("M-TEMP", "---", "C", &m_dashMotCoolVal, &m_dashMotCoolUnit), 2, 1);
+        g->addWidget(createGaugeCard("MAF", "---", "mg/s", &m_dashMotMafVal, &m_dashMotMafUnit), 2, 2);
         g->addWidget(createGaugeCard("BATT", "---", "V", &m_dashBatVoltVal, &m_dashBatVoltUnit), 2, 3);
 
         for(int c=0; c<4; ++c) g->setColumnStretch(c, 1);
@@ -1181,6 +1195,8 @@ QWidget* MainWindow::createControlsTab()
     drvLay->addWidget(makeHoldBtn("Front DOWN", "38 02 12", "38 02 00", "L-Front Down", hdrL), 0, 1);
     drvLay->addWidget(makeHoldBtn("Rear UP",    "38 03 12", "38 03 00", "L-Rear Up",    hdrL), 1, 0);
     drvLay->addWidget(makeHoldBtn("Rear DOWN",  "38 04 12", "38 04 00", "L-Rear Down",  hdrL), 1, 1);
+    drvLay->addWidget(makeHoldBtn("LOCK",       "38 05 12", "38 05 00", "L-Lock",       hdrL), 2, 0);
+    drvLay->addWidget(makeHoldBtn("UNLOCK",     "38 06 12", "38 06 00", "L-Unlock",     hdrL), 2, 1);
     innerLay->addWidget(m_ctrlFrontGrp);
 
     // === PASSENGER DOOR group (Right side windows only) ===
@@ -1711,16 +1727,27 @@ void MainWindow::onECUDataUpdated(const TCMDiagnostics::ECUStatus &ecu)
     // IAT -> m_dashCoolantVal (reused in ECU mode)
     ESET(m_dashCoolantVal, QString::number(ecu.iat, 'f', 0));
 
-    // TPS -> m_dashLimpVal (reused in ECU mode)
-    ESET(m_dashLimpVal, QString::number(ecu.tps, 'f', 1));
+    // Vehicle Speed from ECU block 0x26 data[2-3] / 100 = km/h
+    ESET(m_dashSpeedVal, QString::number(ecu.vehicleSpeed, 'f', 0));
 
-    // Injection quantity -> m_dashSpeedVal (reused in ECU mode)
-    ESET(m_dashSpeedVal, QString::number(
+    // Injection quantity -> m_dashLimpVal (reused in ECU mode for INJ-Q card)
+    ESET(m_dashLimpVal, QString::number(
         (ecu.fuelActual > 0) ? ecu.fuelActual : ecu.injectionQty, 'f', 1));
 
     // Protected data gauges (only populated if security unlocked)
     ESET(m_dashEgrVal, QString::number(ecu.egrDuty, 'f', 0));
     ESET(m_dashWgVal, QString::number(ecu.wastegate, 'f', 0));
+
+    // Fuel Level (liters) from block 0x21 data[14-15] / 10 = %
+    // Tank: 78.7L, liters = pct * 78.7 / 100
+    if (m_dashFuelLevelVal && ecu.fuelLevel > 0) {
+        double liters = ecu.fuelLevel * 78.7 / 100.0;
+        m_dashFuelLevelVal->setText(QString::number(liters, 'f', 1));
+        m_dashFuelLevelUnit->setText(QString("L (%1%)").arg(ecu.fuelLevel, 0, 'f', 0));
+        QString col = liters < 10 ? "#e04040" : liters < 20 ? "#d09030" : "#60b8a0";
+        m_dashFuelLevelVal->setStyleSheet(QString("color:%1;font-size:28px;font-weight:bold;"
+            "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;").arg(col));
+    }
     // Fuel display handled by updateDashboardFromLiveData (averaged values)
 
     // Battery voltage (ATRV)
@@ -2286,22 +2313,81 @@ void MainWindow::runDiscoveryPhases(
                             p = QString("Coolant=%1C IAT=%2C Boost=%3Bar AirIntV=%4V")
                                 .arg(u16(0)/10.0-273.1,0,'f',1).arg(u16(2)/10.0-273.1,0,'f',1)
                                 .arg(u16(14)/1000.0,0,'f',3).arg(u16(16)/1000.0,0,'f',3);
-                        } else if (isECU && blk == 0x28 && n >= 4) {
-                            p = QString("RPM=%1 InjQty=%2").arg(u16(0)).arg(u16(2)/100.0,0,'f',2);
+                        } else if (isECU && blk == 0x28 && n >= 14) {
+                            p = QString("RPM=%1 InjQty=%2 Cyl1=%3 Cyl2=%4 Cyl3=%5 Cyl4=%6 Cyl5=%7")
+                                .arg(u16(0)).arg(u16(2)/100.0,0,'f',2)
+                                .arg(u16(4)).arg(u16(6)).arg(u16(8)).arg(u16(10)).arg(u16(12));
+                            if (n >= 26) {
+                                p += QString(" InjCorr1=%1 InjCorr2=%2 InjCorr3=%3")
+                                    .arg(s16(20)/100.0,0,'f',2).arg(s16(22)/100.0,0,'f',2).arg(s16(24)/100.0,0,'f',2);
+                            }
                         } else if (isECU && blk == 0x16 && n >= 4) {
                             p = QString("AltRaw=%1 BattV=%2V [%3 bytes]")
                                 .arg(u16(0)).arg(u16(2)*5.0/3072,0,'f',2).arg(n);
                         } else if (isECU && blk == 0x32 && n >= 6) {
-                            p = QString("FuelActual=%1mg/str Speed=%2km/h")
-                                .arg(u16(0)/100.0,0,'f',2).arg(u16(4));
+                            p = QString("FuelActual=%1mg/str [2-3]=%2 [4-5]=%3 [6-7]=%4")
+                                .arg(u16(0)/100.0,0,'f',2).arg(u16(2)).arg(u16(4)).arg(u16(6));
                         } else if (isECU && blk == 0x36 && n >= 8) {
                             p = QString("Pedal1=%1% MAF=%2Mg/Str")
                                 .arg(u16(0)/100.0,0,'f',1).arg(u16(6)/10.0,0,'f',1);
                         } else if (isECU && blk == 0x30 && n >= 2) {
                             p = QString("IdleSetpoint=%1rpm").arg(u16(0));
+                        } else if (isECU && blk == 0x26 && n >= 4) {
+                            double spd = u16(2) / 100.0;
+                            p = QString("Speed=%1km/h [0-1]=%2 [2-3]=%3(raw) [4-5]=%4")
+                                .arg(spd, 0, 'f', 1).arg(u16(0)).arg(u16(2)).arg(u16(4));
+                            if (n >= 12) {
+                                p += QString(" [6-7]=%1 [8-9]=%2 [10-11]=%3")
+                                    .arg(u16(6)).arg(u16(8)).arg(u16(10));
+                            }
+                            if (n >= 28) {
+                                p += QString(" [12-13]=%1 [14-15]=%2 [16-17]=%3 [18-19]=%4 [20-21]=%5 [22-23]=%6 [24-25]=%7 [26-27]=%8")
+                                    .arg(u16(12)).arg(u16(14)).arg(u16(16)).arg(u16(18))
+                                    .arg(u16(20)).arg(u16(22)).arg(u16(24)).arg(u16(26));
+                            }
                         } else if (isECU && blk == 0x13 && n >= 6) {
-                            p = QString("Baro=%1 Oil=%2 AC=%3 [raw u16]")
+                            p = QString("Baro=%1 Oil=%2 AC=%3")
                                 .arg(u16(0)).arg(u16(2)).arg(u16(4));
+                            if (n >= 12) {
+                                p += QString(" [6-7]=%1 MAP=%2 BaroV=%3")
+                                    .arg(u16(6)).arg(u16(8)).arg(u16(10));
+                            }
+                        } else if (isECU && blk == 0x20 && n >= 6) {
+                            p = QString("MAFact=%1 MAFspec=%2 [4-5]=%3")
+                                .arg(u16(0)).arg(u16(2)).arg(u16(4));
+                            if (n >= 16) {
+                                p += QString(" [6-7]=%1 [8-9]=%2 [10-11]=%3 [12-13]=%4 [14-15]=%5")
+                                    .arg(u16(6)).arg(u16(8)).arg(u16(10)).arg(u16(12)).arg(u16(14));
+                            }
+                        } else if (isECU && blk == 0x21 && n >= 10) {
+                            p = QString("FuelDes=%1 FuelLim=%2 [4-5]=%3 FuelStart=%4 FuelTorq=%5")
+                                .arg(u16(0)/100.0,0,'f',2).arg(u16(2)/100.0,0,'f',2)
+                                .arg(u16(4)/100.0,0,'f',2).arg(u16(6)/100.0,0,'f',2).arg(u16(8)/100.0,0,'f',2);
+                            if (n >= 20) {
+                                double fuelPct = u16(14) / 10.0;
+                                double fuelV = u16(16) / 100.0;
+                                double fuelL = fuelPct * 78.7 / 100.0;
+                                p += QString(" FuelLevel=%1%(%2L) SensorV=%3V [18-19]=%4")
+                                    .arg(fuelPct,0,'f',1).arg(fuelL,0,'f',1)
+                                    .arg(fuelV,0,'f',2).arg(u16(18)/100.0,0,'f',2);
+                            }
+                        } else if (isECU && blk == 0x23 && n >= 10) {
+                            p = QString("BoostSens=%1mbar MAP=%2 [4-5]=%3(s16=%4) BoostSet=%5mbar")
+                                .arg(u16(0)).arg(u16(2)).arg(u16(4)).arg(s16(4)).arg(u16(6));
+                            if (n >= 16) {
+                                p += QString(" [8-9]=%1 [10-11]=%2 [12-13]=%3 [14-15]=%4")
+                                    .arg(u16(8)).arg(u16(10)).arg(u16(12)).arg(u16(14));
+                            }
+                        } else if (isECU && blk == 0x37 && n >= 10) {
+                            p = QString("EGR=%1 WG=%2 [4-5]=%3 [6-7]=%4 [8-9]=%5")
+                                .arg(u16(0)).arg(u16(2)).arg(u16(4)).arg(u16(6)).arg(u16(8));
+                        } else if (isECU && blk == 0x34 && n >= 6) {
+                            p = QString("[0-1]=%1 [2-3]=%2 [4-5]=%3")
+                                .arg(u16(0)).arg(u16(2)).arg(u16(4));
+                            if (n >= 18) {
+                                p += QString(" [6-7]=%1 [8-9]=%2 [10-11]=%3 [12-13]=%4 [14-15]=%5 [16-17]=%6")
+                                    .arg(u16(6)).arg(u16(8)).arg(u16(10)).arg(u16(12)).arg(u16(14)).arg(u16(16));
+                            }
                         } else if (!isECU && blk == 0x30 && n >= 12) {
                             p = QString("ActTCC=%1 DesTCC=%2 OutRPM=%3 Sel=%4 Gear=%5 TTemp=%6C")
                                 .arg(s16(0)).arg(s16(2)).arg(u16(4))
@@ -2319,6 +2405,12 @@ void MainWindow::runDiscoveryPhases(
                                 .arg(u16(0)/1000.0,0,'f',3)
                                 .arg(u16(6)/365.0,0,'f',3)
                                 .arg(u16(8)/462.0,0,'f',3);
+                        } else if (!isECU && blk == 0x32 && n >= 1) {
+                            p = QString("Speed=%1km/h").arg(u8(0));
+                            if (n >= 12) {
+                                p += QString(" [1]=%1 [2-3]=%2 [4-5]=%3 [6-7]=%4 [8-9]=%5 [10-11]=%6")
+                                    .arg(u8(1)).arg(u16(2)).arg(u16(4)).arg(u16(6)).arg(u16(8)).arg(u16(10));
+                            }
                         }
                         if (!p.isEmpty())
                             log("#80ffcc", "  -> " + p);
