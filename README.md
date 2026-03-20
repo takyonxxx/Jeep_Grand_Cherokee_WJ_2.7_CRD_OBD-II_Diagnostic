@@ -161,9 +161,9 @@ ESP 0x58 DTC clear: `01 00 00` (7 retries before positive response)
 
 **NRC 0x78 on DTC clear**: ECU may return `7F 14 78` (ResponsePending) before `54 00 00` (success). Both arrive in same ELM327 frame.
 
-## ESP32-S2 Emulator
+## ESP32-S2 Emulator (PlatformIO / VS Code)
 
-WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000. All block responses use exact real vehicle BLE hex data.
+PlatformIO project for VS Code. WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000. All block responses use exact real vehicle BLE hex data.
 
 ### Verified Behaviors
 - **ATFI two-part response**: `ATFI\rBUS INIT:\r` + 300ms delay + `OK\r\r>` (matches real ELM327 wire format)
