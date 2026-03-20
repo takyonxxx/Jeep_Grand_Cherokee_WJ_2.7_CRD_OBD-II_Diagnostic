@@ -2,8 +2,35 @@
 
 ## Vehicle: 2003 EU-spec WJ 2.7 CRD (OM612 / NAG1)
 
-Qt6 cross-platform diagnostic application + ESP32-S2 ELM327 emulator.
+Qt6 cross-platform diagnostic application + native iOS (Swift/SwiftUI) port + ESP32-S2 ELM327 emulator.
 All commands and responses verified on real vehicle via BLE full block dumps and bus capture analysis.
+
+---
+
+## iOS / Xcode Version (Swift/SwiftUI)
+
+Native iOS port targeting iPhone (iOS 17+). All protocol logic, init sequences, block parsing, dashboard formulas, and actuator commands are identical to the Qt version — verified with real vehicle testing via ESP32 emulator.
+
+### Screenshots
+
+| ECU Live Data | TCM Live Data |
+|:---:|:---:|
+| ![ECU Dashboard](xcode/ecu_live.png) | ![TCM Dashboard](xcode/tcm_live.png) |
+
+### Features
+- **5 tabs**: Conn (connection + dashboard + module list), DTC, Ctrl (quick controls), Acts (actuators), Log
+- **ECU Dashboard**: Big FUEL center (L/h stopped, L/100km driving + fuel level liters), SPEED, RPM, RAIL, BOOST, M-TEMP, MAF, BATT
+- **TCM Dashboard**: Big GEAR center (D1-D5 green, P/N/R amber, LIMP red), SPEED, TURBIN, T-TEMP, LIMP, LINE-P, TCC, SOL V, BATT
+- **Actuator controls**: Hold-to-activate buttons with green highlight for all modules
+- **Quick Controls tab**: Driver Door / Passenger Door / BCM quick-access grid
+- **BLE auto-connect**: Background scan with OBD device filter list
+- **Manual Start/Stop Live Data**: Live data does not auto-start — allows actuator use first
+- **Launch screen**: Composite splash image with JeepWjDiag title + Jeep photo
+
+### Download
+The Xcode project zip is available in the `xcode/` folder.
+
+---
 
 ## Protocol & Init Sequences (Verified)
 

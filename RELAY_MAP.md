@@ -1,6 +1,6 @@
 # WJ 2.7 CRD — Complete Actuator Command Reference
 
-All commands verified from real vehicle real vehicle bus captures and simulator testing.
+All commands verified from real vehicle bus captures and simulator testing.
 
 ## Init Sequences (Verified)
 

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>UIIdleTimerDisabled</key>
+	<true/>
+	<key>UIStatusBarHidden</key>
+	<true/>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIImageName</key>
+		<string>JeepSplash</string>
+		<key>UIImageRespectsSafeAreaInsets</key>
+		<false/>
+		<key>UIColorName</key>
+		<string>AccentBlack</string>
+	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>ELM327 OBD-II arac teshis cihazina Bluetooth ile baglanmak icin gereklidir</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>ELM327 OBD-II arac teshis cihazina baglanmak icin Bluetooth gereklidir</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>WiFi ELM327 OBD-II cihazina yerel ag uzerinden baglanmak icin gereklidir</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_tcp._tcp.</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
+</dict>
+</plist>
