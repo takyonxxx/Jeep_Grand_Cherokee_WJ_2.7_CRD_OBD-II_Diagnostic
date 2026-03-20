@@ -5,11 +5,9 @@
 Qt6 cross-platform diagnostic application + native iOS (Swift/SwiftUI) port + ESP32-S2 ELM327 emulator.
 All commands and responses verified on real vehicle via BLE full block dumps and bus capture analysis.
 
----
-
 ## iOS / Xcode Version (Swift/SwiftUI)
 
-Native iOS port targeting iPhone (iOS 17+). All protocol logic, init sequences, block parsing, dashboard formulas, and actuator commands are identical to the Qt version — verified with real vehicle testing via ESP32 emulator.
+Native iOS port targeting iPhone (iOS 17+). Source code: `xcode/JeepWJDiag/`
 
 ### Screenshots
 
@@ -26,9 +24,6 @@ Native iOS port targeting iPhone (iOS 17+). All protocol logic, init sequences, 
 - **BLE auto-connect**: Background scan with OBD device filter list
 - **Manual Start/Stop Live Data**: Live data does not auto-start — allows actuator use first
 - **Launch screen**: Composite splash image with JeepWjDiag title + Jeep photo
-
-### Download
-The Xcode project zip is available in the `xcode/` folder.
 
 ---
 
