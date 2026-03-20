@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
         // --- Status bar ---
         "QStatusBar { background: #0a1018; color: #4a8090; font-size: 12px; "
         "             border-top: 1px solid #1a2a3a; } "
-    );
+        );
 
     MainWindow window;
     window.show();
