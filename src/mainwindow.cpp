@@ -478,7 +478,7 @@ QWidget* MainWindow::createConnectionTab()
     QGridLayout *connGrid = new QGridLayout(connBox);
     connGrid->setSpacing(4);
 
-    // WiFi row
+    // Row 0: WiFi | IP | Port | Connect/Stop
     connGrid->addWidget(new QLabel("WiFi:"), 0, 0);
     m_hostEdit = new QLineEdit("192.168.0.10");
     connGrid->addWidget(m_hostEdit, 0, 1);
@@ -491,26 +491,24 @@ QWidget* MainWindow::createConnectionTab()
     m_connectBtn->setMinimumHeight(36);
     connGrid->addWidget(m_connectBtn, 0, 3);
 
-    // BLE row: Connect + Disconnect
+    // Row 1: BLE | Status | Disconnect
     connGrid->addWidget(new QLabel("BLE:"), 1, 0);
     m_btConnectBtn = new QPushButton("Connect");
     m_btConnectBtn->setMinimumHeight(36);
-    connGrid->addWidget(m_btConnectBtn, 1, 1, 1, 2);
+    connGrid->addWidget(m_btConnectBtn, 1, 1);
+    m_connStatusLabel = new QLabel("Disconnected");
+    m_connStatusLabel->setStyleSheet("color:#e04040;font-weight:bold;font-size:13px;padding:2px;");
+    m_connStatusLabel->setAlignment(Qt::AlignCenter);
+    connGrid->addWidget(m_connStatusLabel, 1, 2);
     m_disconnectBtn = new QPushButton("Disconnect");
     m_disconnectBtn->setMinimumHeight(36);
     m_disconnectBtn->setEnabled(false);
     connGrid->addWidget(m_disconnectBtn, 1, 3);
 
-    // Status
-    m_connStatusLabel = new QLabel("Disconnected");
-    m_connStatusLabel->setStyleSheet("color:#e04040;font-weight:bold;font-size:13px;padding:2px;");
-    m_connStatusLabel->setAlignment(Qt::AlignCenter);
-    connGrid->addWidget(m_connStatusLabel, 2, 0, 1, 4);
-
     // Hidden internals
-    m_btScanBtn = new QPushButton(); // hidden, scan triggered by connect
+    m_btScanBtn = new QPushButton();
     m_btScanBtn->setVisible(false);
-    m_btCombo = new QComboBox(); // hidden, device tracking
+    m_btCombo = new QComboBox();
     m_btCombo->setVisible(false);
 
     layout->addWidget(connBox);
@@ -711,13 +709,47 @@ QWidget* MainWindow::createConnectionTab()
     // Enable touch scrolling on module list
     QScroller::grabGesture(m_modScroll->viewport(), QScroller::LeftMouseButtonGesture);
 
-    connect(m_connectBtn, &QPushButton::clicked, this, &MainWindow::onConnect);
+    connect(m_connectBtn, &QPushButton::clicked, this, [this]() {
+        if (m_connectBtn->text() == "Stop") {
+            // Cancel WiFi connection
+            m_elm->disconnect();
+            m_connectBtn->setText("Connect");
+            m_btConnectBtn->setEnabled(true);
+            m_hostEdit->setEnabled(true);
+            m_portSpin->setEnabled(true);
+            return;
+        }
+        // Start WiFi connection
+        m_connectBtn->setText("Stop");
+        m_btConnectBtn->setEnabled(false);
+        m_hostEdit->setEnabled(false);
+        m_portSpin->setEnabled(false);
+        m_elm->connectToDevice(m_hostEdit->text(),
+                                static_cast<quint16>(m_portSpin->value()));
+    });
     connect(m_disconnectBtn, &QPushButton::clicked, this, &MainWindow::onDisconnect);
 
-    // BLE Connect: start scan, auto-connect on first match
+    // BLE Connect: toggle scan/stop, auto-connect on first match
     connect(m_btConnectBtn, &QPushButton::clicked, this, [this]() {
+        if (m_btConnectBtn->text() == "Stop") {
+            // Cancel BLE scan
+#if HAS_BLUETOOTH
+            m_elm->stopScan();
+#endif
+            m_btConnectBtn->setText("Connect");
+            m_connectBtn->setEnabled(true);
+            m_hostEdit->setEnabled(true);
+            m_portSpin->setEnabled(true);
+            m_connStatusLabel->setText("Disconnected");
+            m_connStatusLabel->setStyleSheet("color:#e04040;font-weight:bold;font-size:13px;padding:2px;");
+            return;
+        }
+        // Start BLE scan
         m_btCombo->clear();
-        m_btConnectBtn->setEnabled(false);
+        m_btConnectBtn->setText("Stop");
+        m_connectBtn->setEnabled(false);
+        m_hostEdit->setEnabled(false);
+        m_portSpin->setEnabled(false);
         m_connStatusLabel->setText("Scanning BLE...");
         m_connStatusLabel->setStyleSheet("color:orange;font-weight:bold;font-size:13px;padding:2px;");
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
@@ -732,7 +764,7 @@ QWidget* MainWindow::createConnectionTab()
         m_btCombo->addItem(name + " [" + addr + "]", addr);
         if (m_btCombo->count() == 1) {
             m_btCombo->setCurrentIndex(0);
-            // Auto-connect to first found device
+            m_btConnectBtn->setText("Connect");
             m_connStatusLabel->setText("Found: " + name + " — connecting...");
             m_connStatusLabel->setStyleSheet("color:orange;font-weight:bold;font-size:13px;padding:2px;");
             m_elm->connectBluetooth(addr);
@@ -742,7 +774,10 @@ QWidget* MainWindow::createConnectionTab()
         if (m_btCombo->count() == 0) {
             m_connStatusLabel->setText("No BLE device found");
             m_connStatusLabel->setStyleSheet("color:#e04040;font-weight:bold;font-size:13px;padding:2px;");
-            m_btConnectBtn->setEnabled(true);
+            m_btConnectBtn->setText("Connect");
+            m_connectBtn->setEnabled(true);
+            m_hostEdit->setEnabled(true);
+            m_portSpin->setEnabled(true);
         }
     });
 #endif
@@ -1432,9 +1467,7 @@ QWidget* MainWindow::createLogTab()
 
 void MainWindow::onConnect()
 {
-    m_connectBtn->setEnabled(false);
-    m_elm->connectToDevice(m_hostEdit->text(),
-                            static_cast<quint16>(m_portSpin->value()));
+    // Unused - WiFi connect handled by lambda in createConnectionTab
 }
 
 void MainWindow::onDisconnect()
@@ -1445,12 +1478,22 @@ void MainWindow::onDisconnect()
 
 void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState state)
 {
+    // Helper: is a connection attempt in progress (WiFi or BLE)?
+    bool wifiAttempt = (m_connectBtn->text() == "Stop");
+    bool bleAttempt = (m_btConnectBtn->text() == "Stop");
+    bool attempting = wifiAttempt || bleAttempt;
+
     switch (state) {
     case ELM327Connection::ConnectionState::Disconnected:
         m_connStatusLabel->setText("Disconnected");
         m_connStatusLabel->setStyleSheet("color:#e04040;font-weight:bold;font-size:13px;padding:2px;");
+        // Full reset
+        m_connectBtn->setText("Connect");
         m_connectBtn->setEnabled(true);
+        m_btConnectBtn->setText("Connect");
         m_btConnectBtn->setEnabled(true);
+        m_hostEdit->setEnabled(true);
+        m_portSpin->setEnabled(true);
         m_disconnectBtn->setEnabled(false);
         for (auto *b : m_moduleButtons) { b->setEnabled(false); b->setChecked(false); }
         m_moduleSessionActive = false;
@@ -1472,17 +1515,30 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
         break;
 
     case ELM327Connection::ConnectionState::Connecting:
-        m_connStatusLabel->setText("Connecting...");
-        m_connStatusLabel->setStyleSheet("color:orange;font-weight:bold;font-size:13px;padding:2px;");
-        m_connectBtn->setEnabled(false);
-        m_btConnectBtn->setEnabled(false);
-        statusBar()->showMessage("Connecting...");
-        break;
-
     case ELM327Connection::ConnectionState::Initializing:
-        m_connStatusLabel->setText("Initializing ELM327...");
-        m_connStatusLabel->setStyleSheet("color:yellow;font-weight:bold;font-size:13px;padding:2px;");
-        statusBar()->showMessage("Initializing ELM327...");
+    case ELM327Connection::ConnectionState::Scanning:
+        if (state == ELM327Connection::ConnectionState::Scanning) {
+            m_connStatusLabel->setText("Scanning BLE...");
+            m_connStatusLabel->setStyleSheet("color:orange;font-weight:bold;font-size:13px;padding:2px;");
+        } else {
+            m_connStatusLabel->setText(state == ELM327Connection::ConnectionState::Connecting
+                                        ? "Connecting..." : "Initializing ELM327...");
+            m_connStatusLabel->setStyleSheet(state == ELM327Connection::ConnectionState::Connecting
+                                              ? "color:orange;font-weight:bold;font-size:13px;padding:2px;"
+                                              : "color:yellow;font-weight:bold;font-size:13px;padding:2px;");
+        }
+        // Stop buttons ALWAYS active, Disconnect ALWAYS disabled during attempts
+        if (wifiAttempt) {
+            m_connectBtn->setEnabled(true);   // Stop active
+            m_btConnectBtn->setEnabled(false);
+        } else if (bleAttempt) {
+            m_btConnectBtn->setEnabled(true); // Stop active
+            m_connectBtn->setEnabled(false);
+        }
+        m_hostEdit->setEnabled(false);
+        m_portSpin->setEnabled(false);
+        m_disconnectBtn->setEnabled(false);
+        statusBar()->showMessage(m_connStatusLabel->text());
         break;
 
     case ELM327Connection::ConnectionState::Ready: {
@@ -1491,8 +1547,12 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
             devName = m_btCombo->currentText().section('[', 0, 0).trimmed();
         m_connStatusLabel->setText(devName + " — Ready");
         m_connStatusLabel->setStyleSheet("color:lime;font-weight:bold;font-size:13px;padding:2px;");
+        m_connectBtn->setText("Connect");
         m_connectBtn->setEnabled(false);
+        m_btConnectBtn->setText("Connect");
         m_btConnectBtn->setEnabled(false);
+        m_hostEdit->setEnabled(false);
+        m_portSpin->setEnabled(false);
         m_disconnectBtn->setEnabled(true);
         for (auto *b : m_moduleButtons) b->setEnabled(true);
         m_readDtcBtn->setEnabled(true);
@@ -1504,9 +1564,14 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
     case ELM327Connection::ConnectionState::Error:
         m_connStatusLabel->setText("Connection Error!");
         m_connStatusLabel->setStyleSheet("color:#e04040;font-weight:bold;font-size:13px;padding:2px;");
+        // Full reset - same as Disconnected
+        m_connectBtn->setText("Connect");
         m_connectBtn->setEnabled(true);
+        m_btConnectBtn->setText("Connect");
         m_btConnectBtn->setEnabled(true);
-        m_disconnectBtn->setEnabled(true);
+        m_hostEdit->setEnabled(true);
+        m_portSpin->setEnabled(true);
+        m_disconnectBtn->setEnabled(false);
         statusBar()->showMessage("Connection error!");
         break;
 
