@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE QtCreatorProject>
-<!-- Written by QtCreator 13.0.2, 2026-03-21T01:57:16. -->
+<!-- Written by QtCreator 13.0.2, 2026-03-21T19:41:45. -->
 <qtcreator>
  <data>
   <variable>EnvironmentId</variable>
@@ -596,7 +596,7 @@
     <valuelist type="QVariantList" key="PE.EnvironmentAspect.Changes"/>
     <value type="bool" key="PE.EnvironmentAspect.PrintOnRun">false</value>
     <value type="QString" key="PerfRecordArgsId">-e cpu-cycles --call-graph dwarf,4096 -F 250</value>
-    <value type="QString" key="ProjectExplorer.ProjectConfiguration.DisplayName">JeepWJDiag</value>
+    <value type="QString" key="ProjectExplorer.ProjectConfiguration.DisplayName"></value>
     <value type="QString" key="ProjectExplorer.ProjectConfiguration.Id">Qt4ProjectManager.AndroidRunConfiguration:/Users/turkaybiliyor/Desktop/Jeep_Grand_Cherokee_WJ_2.7_CRD_OBD-II_Diagnostic/JeepWJDiag.pro</value>
     <value type="QString" key="ProjectExplorer.RunConfiguration.BuildKey">/Users/turkaybiliyor/Desktop/Jeep_Grand_Cherokee_WJ_2.7_CRD_OBD-II_Diagnostic/JeepWJDiag.pro</value>
     <value type="bool" key="ProjectExplorer.RunConfiguration.Customized">true</value>
