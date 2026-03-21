@@ -6,6 +6,14 @@ struct ConnectionView: View {
     @State private var selectedModule: WJModule?
     @State private var isSwitching = false
     @State private var bleStatus = ""
+    @State private var bleScanning = false
+    @State private var wifiConnecting = false
+
+    /// Can start a new connection attempt
+    private var canStart: Bool {
+        !bleScanning && !wifiConnecting &&
+        (connection.state == .disconnected || connection.state == .error)
+    }
 
     var body: some View {
         NavigationStack {
@@ -28,28 +36,7 @@ struct ConnectionView: View {
     // MARK: - Connection Card
 
     private var connectionCard: some View {
-        VStack(spacing: 8) {
-            // Status row
-            HStack(spacing: 6) {
-                Circle().fill(statusColor).frame(width: 8, height: 8)
-                Text(connection.state.rawValue)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                if !bleStatus.isEmpty {
-                    Text(bleStatus).font(.system(size: 11)).foregroundColor(.orange).lineLimit(1)
-                }
-                Spacer()
-                if connection.state == .ready || connection.state == .busy {
-                    Button("Disconnect") {
-                        diagnostics.stopLiveData(); diagnostics.activeModule = nil
-                        selectedModule = nil; connection.disconnect()
-                    }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(Color.red).cornerRadius(4)
-                }
-            }
-
+        VStack(spacing: 6) {
             // WiFi row
             HStack(spacing: 6) {
                 Text("WiFi").font(.system(size: 12, weight: .medium)).frame(width: 32, alignment: .leading)
@@ -57,47 +44,85 @@ struct ConnectionView: View {
                     .font(.system(size: 13, design: .monospaced))
                     .padding(6).background(Color(.systemGray5)).cornerRadius(4)
                     .keyboardType(.decimalPad)
+                    .disabled(!canStart)
                 TextField("35000", value: $connection.wifiPort, format: .number)
                     .font(.system(size: 13, design: .monospaced))
                     .padding(6).background(Color(.systemGray5)).cornerRadius(4)
                     .frame(width: 64).keyboardType(.numberPad)
-                Button("Connect") { connection.connect() }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(connection.state == .disconnected || connection.state == .error ? Color.green : Color.gray)
-                    .cornerRadius(4)
-                    .disabled(connection.state != .disconnected && connection.state != .error)
+                    .disabled(!canStart)
+                if wifiConnecting {
+                    Button("Stop") { wifiConnecting = false; connection.disconnect() }
+                        .font(.system(size: 13, weight: .bold)).foregroundColor(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .background(Color.red).cornerRadius(4)
+                } else {
+                    Button("Connect") { wifiConnecting = true; connection.connect() }
+                        .font(.system(size: 13, weight: .bold)).foregroundColor(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .background(canStart ? Color(red: 0.85, green: 0.45, blue: 0.0) : Color.gray)
+                        .cornerRadius(4).disabled(!canStart)
+                }
             }
 
-            // BLE row
+            // BLE + Status + Disconnect
             HStack(spacing: 6) {
-                Text("BLE").font(.system(size: 12, weight: .medium)).frame(width: 32, alignment: .leading)
-                Button("Connect") { startBLEAutoConnect() }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white).frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(connection.state == .disconnected || connection.state == .error ? Color.blue : Color.gray)
-                    .cornerRadius(4)
-                    .disabled(connection.state != .disconnected && connection.state != .error)
+                if bleScanning {
+                    Button("Stop") { bleScanning = false; bleStatus = ""; connection.stopBluetoothScan() }
+                        .font(.system(size: 13, weight: .bold)).foregroundColor(.white)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(Color.red).cornerRadius(4)
+                } else {
+                    Button("BLE") { startBLEAutoConnect() }
+                        .font(.system(size: 13, weight: .bold)).foregroundColor(.white)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(canStart ? Color(red: 0.85, green: 0.45, blue: 0.0) : Color.gray)
+                        .cornerRadius(4).disabled(!canStart)
+                }
+
+                Circle().fill(statusColor).frame(width: 8, height: 8)
+                Text(connection.state.rawValue)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                if !bleStatus.isEmpty {
+                    Text(bleStatus).font(.system(size: 10)).foregroundColor(.orange).lineLimit(1)
+                }
+                Spacer()
+
+                if connection.state == .ready || connection.state == .busy {
+                    Button("Disconnect") {
+                        diagnostics.stopLiveData(); diagnostics.activeModule = nil
+                        selectedModule = nil; connection.disconnect()
+                    }
+                    .font(.system(size: 13, weight: .bold)).foregroundColor(.white)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .background(Color.red).cornerRadius(4)
+                }
             }
         }
         .padding(10)
         .background(Color(.systemGray6))
         .cornerRadius(6)
+        .onChange(of: connection.state) { newState in
+            if newState == .ready || newState == .disconnected || newState == .error {
+                bleScanning = false; wifiConnecting = false; bleStatus = ""
+            }
+        }
     }
 
+    // MARK: - BLE Auto Connect
+
     private func startBLEAutoConnect() {
+        bleScanning = true
         bleStatus = "Scanning..."
         connection.startBluetoothScan()
         let keywords = ["obd","elm","vlink","v-link","ios-v","veepeak","carista","lelink","icar","viecar","konnwei"]
         func check(n: Int) {
-            guard n < 50 else { bleStatus = "No OBD device found"; return }
+            guard bleScanning else { return }
+            guard n < 50 else { bleStatus = "No device found"; bleScanning = false; return }
             for d in connection.discoveredDevices {
                 if keywords.contains(where: { d.name.lowercased().contains($0) }) {
                     bleStatus = "Found: \(d.name)"
+                    bleScanning = false
                     connection.connectToDevice(id: d.id)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { if connection.state == .ready { bleStatus = "" } }
                     return
                 }
             }
@@ -149,7 +174,6 @@ struct ConnectionView: View {
             isSwitching = false
             if ok {
                 selectedModule = module; diagnostics.activeModule = module
-                // Live data is NOT auto-started - user starts via dashboard button
             }
         }
     }

@@ -144,9 +144,26 @@ final class WJDiagnostics: ObservableObject {
         let block = blocks[currentBlockIndex % blocks.count]
         currentBlockIndex += 1
 
+        // At end of cycle, read ATRV for accurate battery voltage (matches Qt)
+        let isEndOfCycle = currentBlockIndex % blocks.count == 0
+        
         kwp.readBlock(block) { [weak self] response in
             self?.parseECUBlock(block, response: response)
             self?.computeFuelFlow()
+            
+            if isEndOfCycle {
+                // ATRV = ELM327 direct voltage measurement (more accurate than ECU ADC)
+                self?.connection?.sendCommand("ATRV") { resp in
+                    let cleaned = resp.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .replacingOccurrences(of: "V", with: "")
+                        .replacingOccurrences(of: "v", with: "")
+                    if let volts = Double(cleaned), volts > 0 {
+                        DispatchQueue.main.async {
+                            self?.ecuStatus.batteryVoltage = volts
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -219,8 +236,8 @@ final class WJDiagnostics: ObservableObject {
                 }
 
             case 0x16:
-                // Battery [2-3] *5/3072
-                if data.count >= 4 { self.ecuStatus.batteryVoltage = Double(u16(data, 2)) * 5.0 / 3072.0 }
+                // Block 0x16: Alternator data only. Battery voltage comes from ATRV (Qt behavior)
+                break
 
             case 0x26:
                 // Speed [2-3] /100
@@ -243,11 +260,25 @@ final class WJDiagnostics: ObservableObject {
         guard isPollingLive, let kwp = kwp else { return }
         let block = tcmBlocks[currentBlockIndex % tcmBlocks.count]
         currentBlockIndex += 1
-        // Send keepalive (81) between each polling cycle
-        if currentBlockIndex % tcmBlocks.count == 0 { kwp.sendKeepalive() }
+        
+        let isEndOfCycle = currentBlockIndex % tcmBlocks.count == 0
+        if isEndOfCycle { kwp.sendKeepalive() }
 
         kwp.readBlock(block) { [weak self] response in
             self?.parseTCMBlock(block, response: response)
+            
+            if isEndOfCycle {
+                self?.connection?.sendCommand("ATRV") { resp in
+                    let cleaned = resp.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .replacingOccurrences(of: "V", with: "")
+                        .replacingOccurrences(of: "v", with: "")
+                    if let volts = Double(cleaned), volts > 0 {
+                        DispatchQueue.main.async {
+                            self?.tcmStatus.batteryVoltage = volts
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -266,14 +297,24 @@ final class WJDiagnostics: ObservableObject {
                 if data.count >= 6 { self.tcmStatus.outputRPM = Double(u16(data, 4)) }
                 if data.count >= 8 { self.tcmStatus.selector = data[7] }
                 if data.count >= 10 {
-                    let g = data[9]
-                    switch g {
-                    case 0: self.tcmStatus.gear = (self.tcmStatus.selector == 8) ? .park : .neutral
-                    case 1: self.tcmStatus.gear = .drive1
-                    case 2: self.tcmStatus.gear = .drive2
-                    case 3: self.tcmStatus.gear = .drive3
-                    case 4: self.tcmStatus.gear = .drive4
-                    case 5: self.tcmStatus.gear = .drive5
+                    // Qt logic: byte[7]=selector range, byte[9]=actual gear number
+                    // selector: P=8, R=7, N=6, D=5
+                    // gear: 0=P/N, 1=1st, 2=2nd, 3=3rd, 4=4th, 5=5th
+                    let selector = data[7]
+                    let actualGearNum = data[9]
+                    switch selector {
+                    case 8: self.tcmStatus.gear = .park
+                    case 7: self.tcmStatus.gear = .reverse
+                    case 6: self.tcmStatus.gear = .neutral
+                    case 5: // D range - use byte[9] for actual gear
+                        switch actualGearNum {
+                        case 1: self.tcmStatus.gear = .drive1
+                        case 2: self.tcmStatus.gear = .drive2
+                        case 3: self.tcmStatus.gear = .drive3
+                        case 4: self.tcmStatus.gear = .drive4
+                        case 5: self.tcmStatus.gear = .drive5
+                        default: self.tcmStatus.gear = .drive1 // shift transition
+                        }
                     default: self.tcmStatus.gear = .unknown
                     }
                 }

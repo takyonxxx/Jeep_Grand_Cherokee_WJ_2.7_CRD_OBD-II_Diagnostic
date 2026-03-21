@@ -32,7 +32,7 @@ struct DashboardPanel: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 14).padding(.vertical, 4)
-                        .background(Color.green).cornerRadius(4)
+                        .background(Color(red: 0.85, green: 0.45, blue: 0.0)).cornerRadius(4)
                     }
                 }
                 .padding(.horizontal, 6).padding(.vertical, 2)

@@ -9,10 +9,15 @@ struct LogView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Top buttons: Clear | Copy Log | Raw Dump
+                // Top buttons
                 HStack(spacing: 6) {
                     Button("Clear") { connection.logMessages.removeAll() }
-                        .buttonStyle(.bordered).font(.caption)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color(.systemGray3))
+                        .cornerRadius(4)
 
                     Button("Copy Log") {
                         let text = connection.logMessages.joined(separator: "\n")
@@ -20,34 +25,45 @@ struct LogView: View {
                         copyNotice = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copyNotice = false }
                     }
-                    .buttonStyle(.borderedProminent).tint(.green).font(.caption.bold())
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color(red: 0.85, green: 0.45, blue: 0.0))
+                    .cornerRadius(4)
 
                     if copyNotice {
-                        Text("Copied \(connection.logMessages.count) lines")
+                        Text("Copied!")
                             .font(.caption2).foregroundColor(.green)
                     }
 
                     Spacer()
 
                     Text("\(connection.logMessages.count)")
-                        .font(.caption2).foregroundColor(.secondary)
+                        .font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
                 }
-                .padding(.horizontal, 8).padding(.vertical, 4)
+                .padding(.horizontal, 8).padding(.vertical, 6)
 
-                // Command input
-                HStack(spacing: 6) {
+                // Command input - prominent
+                HStack(spacing: 8) {
                     TextField("21 01 or ATRV", text: $customCommand)
-                        .textFieldStyle(.roundedBorder)
                         .autocapitalization(.allCharacters)
                         .disableAutocorrection(true)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(.system(size: 14, weight: .medium, design: .monospaced))
+                        .padding(10)
+                        .background(Color(.systemGray5))
+                        .cornerRadius(4)
                         .onSubmit { sendCommand() }
 
                     Button("Send") { sendCommand() }
-                        .buttonStyle(.borderedProminent).tint(.purple).font(.caption.bold())
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20).padding(.vertical, 10)
+                        .background((connection.state == .ready && !customCommand.isEmpty) ? Color.purple : Color.gray)
+                        .cornerRadius(4)
                         .disabled(connection.state != .ready || customCommand.isEmpty)
                 }
-                .padding(.horizontal, 8).padding(.bottom, 4)
+                .padding(.horizontal, 8).padding(.bottom, 6)
 
                 // Log output
                 ScrollViewReader { proxy in

@@ -74,6 +74,11 @@ final class ELM327Connection: NSObject, ObservableObject {
         }
     }
 
+    func stopBluetoothScan() {
+        centralManager?.stopScan()
+        if state == .scanning { updateState(.disconnected) }
+    }
+
     func connectToDevice(id: String) {
         guard let cm = centralManager, let uuid = UUID(uuidString: id) else { return }
         if let p = cm.retrievePeripherals(withIdentifiers: [uuid]).first {
