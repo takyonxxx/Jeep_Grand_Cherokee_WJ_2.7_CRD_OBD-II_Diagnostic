@@ -296,7 +296,7 @@ void MainWindow::rebuildDashboard()
         g->addWidget(createGaugeCard("LIMP", "---", "", &m_dashLimpVal, &m_dashLimpUnit), 1, 3);
 
         // Row 2: LinePr | TCC-Slip | Sol-V | Batt
-        g->addWidget(createGaugeCard("LINE-P", "---", "mbar", &m_dashMotBoostVal, &m_dashMotBoostUnit), 2, 0);
+        g->addWidget(createGaugeCard("LINE-P", "---", "Bar", &m_dashMotBoostVal, &m_dashMotBoostUnit), 2, 0);
         g->addWidget(createGaugeCard("TCC", "---", "rpm", &m_dashMotMafVal, &m_dashMotMafUnit), 2, 1);
         g->addWidget(createGaugeCard("SOL V", "---", "V", &m_dashSolVoltVal, &m_dashSolVoltUnit), 2, 2);
         g->addWidget(createGaugeCard("BATT", "---", "V", &m_dashBatVoltVal, &m_dashBatVoltUnit), 2, 3);

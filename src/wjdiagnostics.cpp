@@ -1897,9 +1897,8 @@ void WJDiagnostics::parseTCMBlock30(const QByteArray &raw, TCMStatus &tcm)
     // Trans Temp
     tcm.transTemp = u8(11) - 50;  // NAG1 encoding: raw = C + 50 
 
-    // Line pressure (signed, byte 9-10)
-    int16_t rawLP = static_cast<int16_t>(u16(9));
-    tcm.linePressure = rawLP;
+    // data[9-10] = gear + gear*0x11, NOT line pressure (PCAP verified 2026-03-21)
+    // Line pressure comes from block 0x33 shiftPsi instead
 
     // Solenoid mode bitmask
     tcm.solenoidMode = u8(18);
@@ -1984,7 +1983,7 @@ void WJDiagnostics::readSingleParam(uint8_t localID, std::function<void(double)>
 void WJDiagnostics::fillTCMCompat(TCMStatus &tcm)
 {
     tcm.solenoidVoltage = tcm.solenoidSupply;
-    if (tcm.linePressure == 0) tcm.linePressure = tcm.tccPressure;
+    tcm.linePressure = tcm.shiftPsi;  // LINE-P = block 0x33 shift pressure (PCAP verified)
     if (tcm.actualGear >= 0 && tcm.actualGear <= 7)
         tcm.currentGear = static_cast<Gear>(tcm.actualGear);
     else

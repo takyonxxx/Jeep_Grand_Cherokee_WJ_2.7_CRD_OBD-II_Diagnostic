@@ -200,6 +200,7 @@ struct TCMStatus {
     // Block 0x33: pressures
     var tccPressure: Double = 0      // /1000 = Bar
     var shiftPressure: Double = 0    // /365 = Bar
+    var linePressure: Double = 0     // block 0x30 data[9-10] signed raw
     var modulationPressure: Double = 0 // /462 = Bar
 
     enum Gear: String, CaseIterable {

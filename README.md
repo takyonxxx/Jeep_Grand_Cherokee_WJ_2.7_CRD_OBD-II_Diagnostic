@@ -101,7 +101,7 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 | BOOST | 0x22 | data[14-15] | /1000 = Bar | 0.910 | — |
 | RAIL | 0x12 | data[18-19] | **×0.101 = Bar** | 245.5 | constant 0.101 |
 | MAF | 0x36 | data[6-7] | /10 = Mg/Str | 473 | — |
-| BATT | 0x16 | data[2-3] | **×5/3072 = V** | 13.85 | — |
+| BATT | 0x16 | data[2-3] | **×5/3072 = V** | 13.85 | ATRV overrides at cycle end |
 
 ### TCM Dashboard
 
@@ -112,7 +112,7 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 | TURBIN | 0x31 | data[4-5] | raw RPM | 738 |
 | T-TEMP | 0x30 | data[11] | **raw - 50 = °C** | 58°C |
 | LIMP | 0x30 | data[9]+maxGear | logic | Normal |
-| LINE-P | 0x30 | data[9-10] | signed raw | — |
+| LINE-P | 0x33 | data[6-7] | **/365 = Bar** | 1.871 |
 | TCC | 0x30 | data[0-1] | signed raw RPM | 12 |
 | SOL V | 0x34 | data[6-7] | /40 = V | 13.05 |
 | BATT | 0x34 | data[8-9] | /154.5 = V | 13.30 |
