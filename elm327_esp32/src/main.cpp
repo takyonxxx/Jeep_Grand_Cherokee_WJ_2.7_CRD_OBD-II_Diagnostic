@@ -26,7 +26,7 @@ static const IPAddress AP_GW(192, 168, 0, 10);
 static const IPAddress AP_MASK(255, 255, 255, 0);
 static const uint16_t  ELM_PORT = 35000;
 static const uint16_t  HTTP_PORT = 80;
-static const int       LED_PIN = 13; // SparkFun ESP32-S2 Thing Plus C built-in LED
+static const int       LED_PIN = 2; // ESP32-S3 — adjust to your board's LED (or use RGB_BUILTIN)
 
 // ==================== Globals ====================
 WiFiServer elmServer(ELM_PORT);
@@ -142,9 +142,10 @@ void setup() {
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, HIGH); // LED ON = booting
 
-    // Serial — don't block if no monitor connected
+    // Serial — wait briefly but don't block forever
     LOG_SERIAL.begin(115200);
-    while(!LOG_SERIAL) { delay(10); }
+    uint32_t serialWait = millis();
+    while(!LOG_SERIAL && (millis() - serialWait < 2000)) { delay(10); }
 
     LOG_SERIAL.println("\n============================================");
     LOG_SERIAL.println("  ELM327 WiFi Emulator - ESP32-S2");
