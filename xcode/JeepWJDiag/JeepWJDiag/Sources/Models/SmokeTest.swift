@@ -204,7 +204,11 @@ struct SmokeTestSession {
                 worstDeficit = max(worstDeficit, deficit)
                 line += " | deficit max \(f2(deficit)) bar @\(Int(d.rpm))rpm"
             }
-            if let hit = window.first(where: { $0.boostSet > ambient + 0.3 && $0.boostAct >= $0.boostSet - 0.15 }) {
+            if p.tEnd - p.tStart < 2.0 {
+                // Stationary blips / short stabs: the turbo cannot spool in
+                // under 2 s even on a healthy engine, so boost is not judged.
+                line += " | short pull, boost not evaluated"
+            } else if let hit = window.first(where: { $0.boostSet > ambient + 0.3 && $0.boostAct >= $0.boostSet - 0.15 }) {
                 let lag = hit.t - p.tStart
                 worstLag = max(worstLag, lag)
                 line += " | lag \(f1(lag))s"
@@ -264,10 +268,16 @@ struct SmokeTestSession {
         // 0x21 limiter words: slow block, so take the 0x21 read closest in
         // time to the fuel peak rather than the (possibly stale) copy on the
         // peak row itself.
-        if let pk = samples.max(by: { $0.fuelUsed < $1.fuelUsed }),
-           let w = samples.filter({ $0.src == 0x21 }).min(by: { abs($0.t - pk.t) < abs($1.t - pk.t) }),
-           w.fq.count >= 7 {
-            s.lines.append("0x21 words near fuel peak (t=\(f1(w.t))s): " + w.fq.map { f1($0) }.joined(separator: " / "))
+        if let pk = samples.max(by: { $0.fuelUsed < $1.fuelUsed }) {
+            // Prefer a 0x21 read taken while the pedal was still down; the
+            // block is read only every ~5 cycles so the nearest read overall
+            // may already be from the lift-off / idle phase.
+            let reads21 = samples.filter { $0.src == 0x21 }
+            let underPedal = reads21.filter { $0.pedal >= 60 }
+            let pool21 = underPedal.isEmpty ? reads21 : underPedal
+            if let w = pool21.min(by: { abs($0.t - pk.t) < abs($1.t - pk.t) }), w.fq.count >= 7 {
+                s.lines.append("0x21 words @t=\(f1(w.t))s pedal \(Int(w.pedal))%: " + w.fq.map { f1($0) }.joined(separator: " / "))
+            }
         }
 
         if !marks.isEmpty {
