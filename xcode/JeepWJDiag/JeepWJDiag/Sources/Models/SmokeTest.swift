@@ -168,16 +168,29 @@ struct SmokeTestSession {
         // time between the surrounding 0x36 reads. Fuel and MAF are read
         // ~0.25 s apart; during turbo spool MAF climbs ~25 %/s, so dividing
         // fresh fuel by the previous MAF read biases A/F low by ~10 %.
-        let mafReads = samples.filter { $0.src == 0x36 }.map { ($0.t, $0.maf) }
-        func mafAt(_ t: Double) -> Double {
-            guard let first = mafReads.first else { return 0 }
+        // Linear interpolation of a 0x36 quantity (MAF, boost setpoint) at time t.
+        func interp(_ reads: [(Double, Double)], _ t: Double) -> Double {
+            guard let first = reads.first else { return 0 }
             if t <= first.0 { return first.1 }
-            for i in 1..<mafReads.count where mafReads[i].0 >= t {
-                let (t0, m0) = mafReads[i - 1], (t1, m1) = mafReads[i]
+            for i in 1..<reads.count where reads[i].0 >= t {
+                let (t0, m0) = reads[i - 1], (t1, m1) = reads[i]
                 return t1 > t0 ? m0 + (m1 - m0) * (t - t0) / (t1 - t0) : m1
             }
-            return mafReads[mafReads.count - 1].1
+            return reads[reads.count - 1].1
         }
+        let reads36 = samples.filter { $0.src == 0x36 }
+        let mafReads = reads36.map { ($0.t, $0.maf) }
+        let setReads = reads36.map { ($0.t, $0.boostSet) }
+        func mafAt(_ t: Double) -> Double { interp(mafReads, t) }
+        func setAt(_ t: Double) -> Double { interp(setReads, t) }
+
+        // Pulls are needed both for A/F (flag only inside pulls >= 1.5 s: a
+        // 0.6 s stab has its MAF peak between two 0x36 reads, so its A/F is
+        // not resolvable at ~0.8 s sampling) and for the boost analysis.
+        let events = pulls()
+        let longPulls = events.filter { $0.tEnd - $0.tStart >= 1.5 }
+        func inLongPull(_ t: Double) -> Bool { longPulls.contains { t >= $0.tStart && t <= $0.tEnd } }
+
         struct AFRow { let s: SmokeSample; let maf: Double; let af: Double }
         let afRows: [AFRow] = samples.filter { $0.src == 0x28 && $0.fuelUsed >= 5.0 }.map {
             let m = mafAt($0.t); return AFRow(s: $0, maf: m, af: m / $0.fuelUsed)
@@ -185,12 +198,15 @@ struct SmokeTestSession {
         if let pk = afRows.max(by: { $0.s.fuelUsed < $1.s.fuelUsed }) {
             s.lines.append("Fuel peak \(f1(pk.s.fuelUsed)) mg/str @\(Int(pk.s.rpm))rpm t=\(f1(pk.s.t))s | MAF \(f1(pk.maf)) -> A/F \(f1(pk.af))")
         }
-        let loaded = afRows.filter { $0.s.pedal > 30 || $0.s.fuelUsed > 15 }
-        let pool = loaded.isEmpty ? afRows : loaded
-        if let lo = pool.min(by: { $0.af < $1.af }) {
-            s.lines.append("A/F min \(f1(lo.af)) @\(Int(lo.s.rpm))rpm t=\(f1(lo.s.t))s (fuel \(f1(lo.s.fuelUsed)) / air \(f1(lo.maf)) interp)")
+        let inPull = afRows.filter { inLongPull($0.s.t) }
+        if let lo = inPull.min(by: { $0.af < $1.af }) {
+            s.lines.append("A/F min (pulls >= 1.5 s) \(f1(lo.af)) @\(Int(lo.s.rpm))rpm t=\(f1(lo.s.t))s (fuel \(f1(lo.s.fuelUsed)) / air \(f1(lo.maf)) interp)")
             if lo.af < 15 { s.flags.append("A/F < 15: cok zengin karisim, kara duman kacinilmaz (hava az veya yakit fazla)") }
             else if lo.af < 17 { s.flags.append("A/F < 17: zengin karisim, duman sinirinda") }
+        }
+        let other = afRows.filter { !inLongPull($0.s.t) && ($0.s.pedal > 30 || $0.s.fuelUsed > 15) }
+        if let lo = other.min(by: { $0.af < $1.af }) {
+            s.lines.append("A/F min (short stabs / part throttle, not flagged) \(f1(lo.af)) @\(Int(lo.s.rpm))rpm t=\(f1(lo.s.t))s")
         }
 
         // Boost
@@ -203,7 +219,6 @@ struct SmokeTestSession {
         // Per-pull analysis: lag and deficit are only meaningful while the
         // pedal is still down (a falling setpoint at lift-off must not count
         // as "target reached").
-        let events = pulls()
         if events.isEmpty {
             s.lines.append("Pedal never held >= 60% - no full throttle transient captured")
         }
@@ -228,20 +243,27 @@ struct SmokeTestSession {
                 evalEnd = i; break
             }
             let rows12 = samples[p.start...evalEnd].filter { $0.src == 0x12 && $0.boostAct > 0 && $0.boostSet > 0 }
+            // Setpoint on a 0x12 row is up to 0.5 s stale (it comes from 0x36),
+            // so it is interpolated to the 0x12 read time.
             // settle: ignore the first 0.7 s after the pedal step for deficit and rail
             let settled = rows12.filter { $0.t >= p.tStart + 0.7 }
-            if let d = settled.max(by: { ($0.boostSet - $0.boostAct) < ($1.boostSet - $1.boostAct) }) {
-                let deficit = d.boostSet - d.boostAct
+            if let d = settled.max(by: { (setAt($0.t) - $0.boostAct) < (setAt($1.t) - $1.boostAct) }) {
+                let deficit = setAt(d.t) - d.boostAct
                 worstDeficit = max(worstDeficit, deficit)
                 line += " | deficit max \(f2(deficit)) bar @\(Int(d.rpm))rpm"
             }
-            if let hit = rows12.first(where: { $0.boostSet > ambient + 0.3 && $0.boostAct >= $0.boostSet - 0.15 }) {
+            // Spool time: pedal step until actual boost reaches +0.5 bar gauge.
+            // A fixed threshold is used because the setpoint itself climbs with
+            // rpm during the pull, so "within x of target" is ill-defined even
+            // on a healthy engine (tracking error ~0.2 bar). Boost is read
+            // every other cycle (~1.6 s), so the value carries +/-0.8 s.
+            if let hit = rows12.first(where: { $0.boostAct >= ambient + 0.5 }) {
                 let lag = hit.t - p.tStart
                 worstLag = max(worstLag, lag)
-                line += " | lag \(f1(lag))s"
-            } else if (rows12.map { $0.boostSet }.max() ?? 0) > ambient + 0.3 {
+                line += " | spool to +0.5 bar \(f1(lag))s (+/-0.8)"
+            } else if (rows12.map { setAt($0.t) }.max() ?? 0) > ambient + 0.5 {
                 neverReached = true
-                line += " | target NOT reached"
+                line += " | +0.5 bar NOT reached"
             } else if rows12.isEmpty {
                 line += " | no boost reads"
             } else {
@@ -251,8 +273,8 @@ struct SmokeTestSession {
             s.lines.append(line)
         }
         if worstDeficit > 0.4 { s.flags.append("Boost hedefin 0.4 bar+ altinda kaliyor: VNT kanatcik / hortum kacagi / N75 kontrol") }
-        if worstLag > 1.5 { s.flags.append("Turbo yanit gecikmesi > 1.5 s: turbo lag donemi uzun, duman bu pencerede olusur") }
-        if neverReached { s.flags.append("Turbo hedef basinca pedal basiliyken hic ulasamadi: VNT sikismasi / kacak / MAP sensor") }
+        if worstLag > 2.5 { s.flags.append("Turbo +0.5 bar'a 2.5 s'den gec ulasiyor: turbo lag donemi uzun, duman bu pencerede olusur") }
+        if neverReached { s.flags.append("Turbo pedal basiliyken +0.5 bar'a hic ulasamadi: VNT sikismasi / kacak / MAP sensor") }
 
         // MAF plausibility vs theoretical air per stroke at measured boost/IAT.
         // OM612: 2685 cc / 5 cyl = 537 cc per cylinder. m = P*V/(R*T), VE ~0.85.
