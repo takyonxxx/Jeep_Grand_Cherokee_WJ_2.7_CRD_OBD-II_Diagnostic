@@ -223,7 +223,10 @@ struct SmokeTestSession {
             // Boost actual is fresh only on 0x12 rows. Rows after the last
             // 0x36 read that still showed pedal >= 60 are ambiguous (the pedal
             // may already be up, boost collapsing), so they are excluded.
-            let evalEnd = (p.start...p.end).reversed().first { samples[$0].src == 0x36 } ?? p.start
+            var evalEnd = p.start
+            for i in stride(from: p.end, through: p.start, by: -1) where samples[i].src == 0x36 {
+                evalEnd = i; break
+            }
             let rows12 = samples[p.start...evalEnd].filter { $0.src == 0x12 && $0.boostAct > 0 && $0.boostSet > 0 }
             // settle: ignore the first 0.7 s after the pedal step for deficit and rail
             let settled = rows12.filter { $0.t >= p.tStart + 0.7 }
