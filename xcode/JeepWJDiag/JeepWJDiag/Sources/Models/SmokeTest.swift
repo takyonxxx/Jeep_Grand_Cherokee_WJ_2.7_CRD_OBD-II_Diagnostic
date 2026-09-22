@@ -231,11 +231,15 @@ struct SmokeTestSession {
             if ratio > 1.2 { s.flags.append("MAF teorik havanin %120 ustunde: MAF yuksek okuyor -> ECU fazla yakit verir -> duman") }
         }
 
-        // Rail pressure: judged only after the pump has had 0.7 s to respond
-        // to the pedal step, otherwise the pre-step value is a false dip.
+        // Rail pressure: 0x12 is a slow block, so only rows where 0x12 was
+        // actually read carry a fresh value (other rows repeat the previous
+        // read). Judged only after the pump has had 0.7 s to respond to the
+        // pedal step, otherwise the pre-step value is a false dip.
         var railLoad: [Double] = []
         for p in events {
-            railLoad += samples[p.start...p.end].filter { $0.t >= p.tStart + 0.7 && $0.rail > 0 }.map { $0.rail }
+            railLoad += samples[p.start...p.end]
+                .filter { $0.src == 0x12 && $0.t >= p.tStart + 0.7 && $0.rail > 0 }
+                .map { $0.rail }
         }
         let railMax = samples.map { $0.rail }.max() ?? 0
         if let rmin = railLoad.min() {
@@ -256,9 +260,13 @@ struct SmokeTestSession {
         s.lines.append("Injection correction max |\(f2(maxCorr))| mg/str")
         if maxCorr > 3 { s.flags.append("Silindir duzeltmesi > 3 mg: enjektor / kompresyon dengesizligi") }
 
-        // 0x21 limiter words at fuel peak
-        if let pk = samples.max(by: { $0.fuelUsed < $1.fuelUsed }), pk.fq.count >= 7 {
-            s.lines.append("0x21 words @fuel peak: " + pk.fq.map { f1($0) }.joined(separator: " / "))
+        // 0x21 limiter words: slow block, so take the 0x21 read closest in
+        // time to the fuel peak rather than the (possibly stale) copy on the
+        // peak row itself.
+        if let pk = samples.max(by: { $0.fuelUsed < $1.fuelUsed }),
+           let w = samples.filter({ $0.src == 0x21 }).min(by: { abs($0.t - pk.t) < abs($1.t - pk.t) }),
+           w.fq.count >= 7 {
+            s.lines.append("0x21 words near fuel peak (t=\(f1(w.t))s): " + w.fq.map { f1($0) }.joined(separator: " / "))
         }
 
         if !marks.isEmpty {
