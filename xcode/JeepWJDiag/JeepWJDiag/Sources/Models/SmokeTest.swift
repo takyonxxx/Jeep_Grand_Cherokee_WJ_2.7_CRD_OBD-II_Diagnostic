@@ -36,10 +36,11 @@ struct SmokeSample {
     let corr: [Double]       // 0x28 injection corrections mg/str
     var mark: String
 
-    /// Fuel per stroke. 0x28 injection qty is read every cycle so it is the
-    /// fresh value; 0x32 "actual" is a slow block and only a fallback
-    /// (they agree within ~0.5 mg/str on the real vehicle).
-    var fuelUsed: Double { iq > 0 ? iq : fuelAct }
+    /// Fuel per stroke, always from 0x28 (read every cycle). 0x32 "actual"
+    /// is a slow block: falling back to it when 0x28 reads 0 (overrun cut)
+    /// would resurrect a stale pre-lift-off value, so it is never used here
+    /// and only kept as a CSV column.
+    var fuelUsed: Double { iq }
     /// Air / fuel mass ratio per stroke. Diesel smoke becomes visible
     /// roughly below 17:1 and heavy below 15:1. Below 2 mg/str (overrun
     /// fuel cut) the ratio is meaningless, so it is reported as 0.

@@ -69,7 +69,7 @@ struct SmokeTestView: View {
     }
 
     private var liveGrid: some View {
-        let fuel = ecu.injectionQty > 0 ? ecu.injectionQty : ecu.fuelQuantity
+        let fuel = ecu.injectionQty   // 0x28, fresh every cycle (0x32 is slow, never used as fallback)
         let af = fuel > 0.5 ? ecu.mafFlow / fuel : 0
         return VStack(spacing: 3) {
             HStack(spacing: 3) {
