@@ -115,7 +115,7 @@ struct SmokeTestView: View {
                 if session.hasData {
                     Button("Clear") { diagnostics.clearSmokeTest(); notice = ""; showSummary = false }
                         .font(.system(size: 14, weight: .bold)).foregroundColor(.white)
-                        .frame(width: 80, minHeight: 54)
+                        .frame(width: 80, height: 54)
                         .background(Color(.systemGray3)).cornerRadius(8)
                 }
             }
