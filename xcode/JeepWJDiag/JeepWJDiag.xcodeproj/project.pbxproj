@@ -22,6 +22,8 @@
 		A100000013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B100000013 /* Assets.xcassets */; };
 		A100000014 /* ControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000016 /* ControlsView.swift */; };
 		A100000015 /* HoldButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000017 /* HoldButton.swift */; };
+		A100000016 /* SmokeTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000018 /* SmokeTest.swift */; };
+		A100000017 /* SmokeTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000019 /* SmokeTestView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +43,8 @@
 		B100000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B100000016 /* ControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlsView.swift; sourceTree = "<group>"; };
 		B100000017 /* HoldButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HoldButton.swift; sourceTree = "<group>"; };
+		B100000018 /* SmokeTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeTest.swift; sourceTree = "<group>"; };
+		B100000019 /* SmokeTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeTestView.swift; sourceTree = "<group>"; };
 		C100000001 /* JeepWJDiag.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = JeepWJDiag.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -88,6 +92,7 @@
 			isa = PBXGroup;
 			children = (
 				B100000002 /* Models.swift */,
+				B100000018 /* SmokeTest.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -114,6 +119,7 @@
 				B100000012 /* LogView.swift */,
 				B100000016 /* ControlsView.swift */,
 				B100000017 /* HoldButton.swift */,
+				B100000019 /* SmokeTestView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -210,6 +216,8 @@
 				A100000012 /* LogView.swift in Sources */,
 				A100000014 /* ControlsView.swift in Sources */,
 				A100000015 /* HoldButton.swift in Sources */,
+				A100000016 /* SmokeTest.swift in Sources */,
+				A100000017 /* SmokeTestView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

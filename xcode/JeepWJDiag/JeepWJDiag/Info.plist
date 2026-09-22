@@ -44,5 +44,9 @@
 	<array>
 		<string>bluetooth-central</string>
 	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>whatsapp</string>
+	</array>
 </dict>
 </plist>

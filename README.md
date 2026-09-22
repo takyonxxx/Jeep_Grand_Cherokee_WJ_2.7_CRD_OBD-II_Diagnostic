@@ -21,6 +21,7 @@ Native iOS port targeting iPhone (iOS 17+). Source code: `xcode/JeepWJDiag/`
 - **TCM Dashboard**: Big GEAR center (D1-D5 green, P/N/R amber, LIMP red), SPEED, TURBIN, T-TEMP, LIMP, LINE-P, TCC, SOL V, BATT
 - **Actuator controls**: Hold-to-activate buttons with green highlight for all modules
 - **Quick Controls tab**: Driver Door / Passenger Door / BCM quick-access grid
+- **Smoke Test** (Acts tab, top card): high-rate recording of pedal, fuel qty (0x28/0x32), MAF (0x36), boost actual vs setpoint (0x22/0x36), rail (0x12), IAT, 0x21 fuel-limiter words, 0x37/0x20/0x23 raw words during a full-throttle transient. MARK button tags the moment smoke is seen. Auto summary (A/F per stroke, boost lag/deficit, MAF vs theoretical air, rail dip, corrections) + CSV, shared to WhatsApp (text) or via share sheet (file).
 - **BLE auto-connect**: Background scan with OBD device filter list
 - **Manual Start/Stop Live Data**: Live data does not auto-start — allows actuator use first
 - **Launch screen**: Composite splash image with JeepWjDiag title + Jeep photo

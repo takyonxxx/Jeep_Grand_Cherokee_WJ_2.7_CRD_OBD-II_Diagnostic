@@ -11,6 +11,15 @@ final class WJDiagnostics: ObservableObject {
     @Published var isPollingLive = false
     @Published var activeBus: BusType = .kLine
     @Published var activeModule: WJModule?
+    @Published var smokeTest = SmokeTestSession()
+
+    // Smoke test polling: the three fast-changing blocks every cycle plus
+    // one slow block round-robin. Reads are chained on completion (not on a
+    // timer) so the ELM command queue never backs up during the transient.
+    private let smokeFastBlocks: [UInt8] = [0x36, 0x28, 0x22]
+    private let smokeSlowBlocks: [UInt8] = [0x21, 0x12, 0x32, 0x37, 0x20, 0x23]
+    private var smokeStep = 0
+    private var smokeSlowIndex = 0
 
     private var connection: ELM327Connection?
     private var kwp: KWP2000Handler?
@@ -128,10 +137,78 @@ final class WJDiagnostics: ObservableObject {
     }
 
     func stopLiveData() {
+        if smokeTest.isRecording { smokeTest.finish() }
         isPollingLive = false
         pollTimer?.invalidate(); pollTimer = nil
         keepaliveTimer?.invalidate(); keepaliveTimer = nil
         activeModule = nil
+    }
+
+    // MARK: - Smoke Test (black smoke transient recording)
+
+    func startSmokeTest() {
+        guard !smokeTest.isRecording else { return }
+        stopLiveData()
+        smokeTest.begin()
+        activeModule = .motorECU
+        activeBus = .kLine
+        isPollingLive = true
+        smokeStep = 0
+        smokeSlowIndex = 0
+        connection?.log("[SMOKE] test started")
+
+        initModule(.motorECU) { [weak self] ok in
+            guard let self = self else { return }
+            guard ok else {
+                self.smokeTest.error = "ECU init failed"
+                self.smokeTest.finish()
+                self.isPollingLive = false
+                self.activeModule = nil
+                return
+            }
+            self.keepaliveTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+                self.kwp?.sendKeepalive()
+            }
+            self.pollNextSmokeBlock()
+        }
+    }
+
+    func stopSmokeTest() {
+        guard smokeTest.isRecording else { return }
+        smokeTest.finish()
+        keepaliveTimer?.invalidate(); keepaliveTimer = nil
+        isPollingLive = false
+        activeModule = nil
+        connection?.log("[SMOKE] test stopped: \(smokeTest.samples.count) samples, \(String(format: "%.1f", smokeTest.duration)) s")
+    }
+
+    func smokeTestMark() {
+        smokeTest.mark()
+        connection?.log("[SMOKE] MARK at \(String(format: "%.1f", smokeTest.marks.last ?? 0)) s")
+    }
+
+    func clearSmokeTest() {
+        guard !smokeTest.isRecording else { return }
+        smokeTest.reset()
+    }
+
+    private func pollNextSmokeBlock() {
+        guard smokeTest.isRecording, let kwp = kwp else { return }
+        let block: UInt8
+        if smokeStep < smokeFastBlocks.count {
+            block = smokeFastBlocks[smokeStep]
+            smokeStep += 1
+        } else {
+            block = smokeSlowBlocks[smokeSlowIndex % smokeSlowBlocks.count]
+            smokeSlowIndex += 1
+            smokeStep = 0
+        }
+        kwp.readBlock(block) { [weak self] response in
+            guard let self = self else { return }
+            self.parseECUBlock(block, response: response)
+            self.computeFuelFlow()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { self.pollNextSmokeBlock() }
+        }
     }
 
     // MARK: - ECU Block Polling
@@ -208,32 +285,31 @@ final class WJDiagnostics: ObservableObject {
                 }
 
             case 0x22:
-                // Coolant [0-1] /10-273.1, Boost [14-15] /1000
+                // Coolant [0-1] /10-273.1, IAT [2-3] /10-273.1, Boost [14-15] /1000
                 if data.count >= 2 { self.ecuStatus.coolantTemp = Double(u16(data, 0)) / 10.0 - 273.1 }
+                if data.count >= 4 { self.ecuStatus.iat = Double(u16(data, 2)) / 10.0 - 273.1 }
                 if data.count >= 16 { self.ecuStatus.boostPressure = Double(u16(data, 14)) / 1000.0 }
 
             case 0x12:
-                // Rail [18-19] *0.101 (constant 0.101, NOT /10!)
+                // Rail [18-19] *0.101 = Bar (constant 0.101, NOT /10!)
+                // MAP actual [16-17] raw mbar, RPM [10-11] (0x28 overrides this)
                 if data.count >= 20 { self.ecuStatus.railPressure = Double(u16(data, 18)) * 0.101 }
+                if data.count >= 18 { self.ecuStatus.mapActual = Double(u16(data, 16)) }
+                if data.count >= 12 && self.ecuStatus.rpm == 0 {
+                    self.ecuStatus.rpm = Double(u16(data, 10))
+                }
 
             case 0x36:
-                // MAF [6-7] /10, Pedal [0-1] /100
+                // Pedal [0-1] /100 = %, MAF [6-7] /10 = mg/str,
+                // Boost setpoint [8-9] /1000 = Bar abs, [10-11] raw
+                if data.count >= 2 { self.ecuStatus.pedalPos = Double(u16(data, 0)) / 100.0 }
                 if data.count >= 8 { self.ecuStatus.mafFlow = Double(u16(data, 6)) / 10.0 }
+                if data.count >= 10 { self.ecuStatus.boostSetpoint = Double(u16(data, 8)) / 1000.0 }
+                if data.count >= 12 { self.ecuStatus.blk36c = Double(u16(data, 10)) }
 
             case 0x32:
                 // Fuel actual [0-1] /100 = mg/str
                 if data.count >= 2 { self.ecuStatus.fuelQuantity = Double(u16(data, 0)) / 100.0 }
-
-            case 0x12:
-                // Rail [18-19] *0.101 = Bar (constant 0.101, NOT /10!)
-                // Coolant [0-1] /10-273.1 (also in 0x22)
-                if data.count >= 20 {
-                    self.ecuStatus.railPressure = Double(u16(data, 18)) * 0.101
-                }
-                // RPM [10-11] (0x28 overrides this)
-                if data.count >= 12 && self.ecuStatus.rpm == 0 {
-                    self.ecuStatus.rpm = Double(u16(data, 10))
-                }
 
             case 0x16:
                 // Block 0x16: Alternator data only. Battery voltage comes from ATRV (Qt behavior)
@@ -244,12 +320,36 @@ final class WJDiagnostics: ObservableObject {
                 if data.count >= 4 { self.ecuStatus.vehicleSpeed = Double(u16(data, 2)) / 100.0 }
 
             case 0x21:
+                // Fuel quantity words [0-13] /100 = mg/str (7 x u16)
+                for i in 0..<7 where data.count >= (i + 1) * 2 {
+                    self.ecuStatus.fuelQty21[i] = Double(u16(data, i * 2)) / 100.0
+                }
                 // Fuel level [14-15] /10 = %, Fuel sensor V [16-17] /100
                 if data.count >= 16 { self.ecuStatus.fuelLevel = Double(u16(data, 14)) / 10.0 }
                 if data.count >= 18 { self.ecuStatus.fuelSensorVoltage = Double(u16(data, 16)) / 100.0 }
 
+            case 0x37:
+                // EGR/MAF setpoint [0-1] raw, wastegate/EGR actuator [2-3] raw
+                if data.count >= 2 { self.ecuStatus.egrMafSetpoint = Double(u16(data, 0)) }
+                if data.count >= 4 { self.ecuStatus.wastegateRaw = Double(u16(data, 2)) }
+
+            case 0x20:
+                // MAF detail words [0-1], [2-3] raw
+                if data.count >= 2 { self.ecuStatus.blk20a = Double(u16(data, 0)) }
+                if data.count >= 4 { self.ecuStatus.blk20b = Double(u16(data, 2)) }
+
+            case 0x23:
+                // Boost detail words [0-1], [6-7] raw
+                if data.count >= 2 { self.ecuStatus.blk23a = Double(u16(data, 0)) }
+                if data.count >= 8 { self.ecuStatus.blk23g = Double(u16(data, 6)) }
+
             default:
                 break
+            }
+
+            // Smoke test: snapshot after every parsed block
+            if self.smokeTest.isRecording {
+                self.smokeTest.append(from: self.ecuStatus, src: block)
             }
         }
     }

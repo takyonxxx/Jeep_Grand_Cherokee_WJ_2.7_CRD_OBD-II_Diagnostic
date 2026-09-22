@@ -170,6 +170,31 @@ struct ECUStatus {
     // Computed: fuel flow (OM612 5-cyl diesel)
     var fuelFlowLH: Double = 0      // L/h instantaneous
     var fuelLPer100km: Double = 0   // L/100km instantaneous
+
+    // --- Smoke-test extras (offsets from Qt wjdiagnostics.cpp / RELAY_MAP) ---
+    // Block 0x36[0-1]: /100 = % accelerator pedal 1
+    var pedalPos: Double = 0
+    // Block 0x36[8-9]: /1000 = Bar abs boost (MAP) setpoint
+    var boostSetpoint: Double = 0
+    // Block 0x36[10-11]: raw (912 at idle, baro?)
+    var blk36c: Double = 0
+    // Block 0x22[2-3] / 0x12[2-3]: /10 - 273.1 = C intake air temp
+    var iat: Double = 0
+    // Block 0x12[16-17]: raw mbar MAP actual
+    var mapActual: Double = 0
+    // Block 0x21[0-13]: seven fuel quantity words /100 = mg/str
+    // (pedal, cruise/limit, demand, driver, [8-9], start setpoint, limit)
+    var fuelQty21: [Double] = Array(repeating: 0, count: 7)
+    // Block 0x37[0-1] raw: MAF-for-EGR setpoint (3223 at idle)
+    var egrMafSetpoint: Double = 0
+    // Block 0x37[2-3] raw: wastegate / EGR actuator (3144-4584 dynamic)
+    var wastegateRaw: Double = 0
+    // Block 0x20[0-1], [2-3] raw: MAF detail words
+    var blk20a: Double = 0
+    var blk20b: Double = 0
+    // Block 0x23[0-1], [6-7] raw: boost detail words
+    var blk23a: Double = 0
+    var blk23g: Double = 0
 }
 
 // MARK: - TCM Status (Dashboard - Verified from RELAY_MAP)

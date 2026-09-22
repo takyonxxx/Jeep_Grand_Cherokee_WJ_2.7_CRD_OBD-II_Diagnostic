@@ -8,38 +8,72 @@ struct ActuatorView: View {
 
     var body: some View {
         NavigationStack {
-            if let module = diagnostics.activeModule {
-                let acts = actuatorsFor(module)
-                if acts.isEmpty {
-                    Text("No actuator tests for this module").foregroundColor(.secondary)
-                        .navigationTitle(actuatorTitle).navigationBarTitleDisplayMode(.inline)
-                } else {
-                    ScrollView {
-                        LazyVGrid(columns: columns, spacing: 6) {
-                            ForEach(Array(acts.enumerated()), id: \.offset) { _, act in
-                                if act.offCmd != nil {
-                                    HoldButton(label: act.name, onCmd: act.onCmd, offCmd: act.offCmd!,
-                                               hdr: act.hdr, diagnostics: diagnostics)
-                                } else {
-                                    PulseButton(label: act.name, cmd: act.onCmd,
-                                                hdr: act.hdr, diagnostics: diagnostics)
+            VStack(spacing: 0) {
+                smokeTestCard
+                if let module = diagnostics.activeModule {
+                    let acts = actuatorsFor(module)
+                    if acts.isEmpty {
+                        Spacer()
+                        Text("No actuator tests for this module").foregroundColor(.secondary)
+                        Spacer()
+                    } else {
+                        ScrollView {
+                            LazyVGrid(columns: columns, spacing: 6) {
+                                ForEach(Array(acts.enumerated()), id: \.offset) { _, act in
+                                    if act.offCmd != nil {
+                                        HoldButton(label: act.name, onCmd: act.onCmd, offCmd: act.offCmd!,
+                                                   hdr: act.hdr, diagnostics: diagnostics)
+                                    } else {
+                                        PulseButton(label: act.name, cmd: act.onCmd,
+                                                    hdr: act.hdr, diagnostics: diagnostics)
+                                    }
                                 }
                             }
+                            .padding(8)
                         }
-                        .padding(8)
+                        .scrollDisabled(false)
                     }
-                    .scrollDisabled(false)
-                    .navigationTitle(actuatorTitle).navigationBarTitleDisplayMode(.inline)
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "gearshape.2").font(.system(size: 40)).foregroundColor(.secondary)
+                        Text("Select a module from Conn tab\nto see actuator tests")
+                            .multilineTextAlignment(.center).foregroundColor(.secondary)
+                    }.padding(.top, 60)
+                    Spacer()
                 }
-            } else {
-                VStack(spacing: 12) {
-                    Image(systemName: "gearshape.2").font(.system(size: 40)).foregroundColor(.secondary)
-                    Text("Select a module from Conn tab\nto see actuator tests")
-                        .multilineTextAlignment(.center).foregroundColor(.secondary)
-                }.padding(.top, 60)
-                .navigationTitle("Actuators").navigationBarTitleDisplayMode(.inline)
             }
+            .navigationTitle(actuatorTitle).navigationBarTitleDisplayMode(.inline)
         }
+    }
+
+    /// Entry to the black-smoke transient test (records ECU fuel/air/boost
+    /// at high rate, shares the log via WhatsApp). Always visible: the test
+    /// initialises the ECU itself, no module selection needed.
+    private var smokeTestCard: some View {
+        NavigationLink {
+            SmokeTestView()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "smoke.fill")
+                    .font(.system(size: 22)).foregroundColor(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Smoke Test / Kara Duman Testi")
+                        .font(.system(size: 14, weight: .bold)).foregroundColor(.primary)
+                    Text(diagnostics.smokeTest.isRecording
+                         ? "RECORDING  \(diagnostics.smokeTest.samples.count) samples"
+                         : "ECU 0x15 | pedal, fuel, MAF, boost, rail @ high rate -> WhatsApp")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(diagnostics.smokeTest.isRecording ? .green : .secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").foregroundColor(.secondary)
+            }
+            .padding(10)
+            .background(Color(.systemGray6))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.6), lineWidth: 1))
+            .cornerRadius(8)
+        }
+        .padding(8)
     }
 
     private var actuatorTitle: String {
