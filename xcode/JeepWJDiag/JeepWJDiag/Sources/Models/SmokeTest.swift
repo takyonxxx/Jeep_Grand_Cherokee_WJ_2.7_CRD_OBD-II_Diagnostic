@@ -41,8 +41,9 @@ struct SmokeSample {
     /// (they agree within ~0.5 mg/str on the real vehicle).
     var fuelUsed: Double { iq > 0 ? iq : fuelAct }
     /// Air / fuel mass ratio per stroke. Diesel smoke becomes visible
-    /// roughly below 17:1 and heavy below 15:1.
-    var af: Double { fuelUsed > 0.5 ? maf / fuelUsed : 0 }
+    /// roughly below 17:1 and heavy below 15:1. Below 2 mg/str (overrun
+    /// fuel cut) the ratio is meaningless, so it is reported as 0.
+    var af: Double { fuelUsed >= 2.0 ? maf / fuelUsed : 0 }
 }
 
 struct SmokeTestSession {
