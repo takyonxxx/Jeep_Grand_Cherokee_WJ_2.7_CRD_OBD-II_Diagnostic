@@ -22,6 +22,13 @@ struct SmokeTestView: View {
                 instructions
                 liveGrid
                 controlRow
+                if session.isInitializing {
+                    HStack(spacing: 6) {
+                        ProgressView().scaleEffect(0.8)
+                        Text("ECU başlatılıyor, ilk tur bekleniyor...")
+                            .font(.caption).foregroundColor(.orange)
+                    }
+                }
                 if !notice.isEmpty {
                     Text(notice).font(.caption).foregroundColor(.green)
                 }
@@ -62,7 +69,7 @@ struct SmokeTestView: View {
     }
 
     private var liveGrid: some View {
-        let fuel = ecu.fuelQuantity > 0 ? ecu.fuelQuantity : ecu.injectionQty
+        let fuel = ecu.injectionQty > 0 ? ecu.injectionQty : ecu.fuelQuantity
         let af = fuel > 0.5 ? ecu.mafFlow / fuel : 0
         return VStack(spacing: 3) {
             HStack(spacing: 3) {

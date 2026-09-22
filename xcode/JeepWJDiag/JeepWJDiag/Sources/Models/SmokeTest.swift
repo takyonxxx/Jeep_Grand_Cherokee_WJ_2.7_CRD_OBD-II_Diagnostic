@@ -36,29 +36,41 @@ struct SmokeSample {
     let corr: [Double]       // 0x28 injection corrections mg/str
     var mark: String
 
-    /// Fuel actually injected (0x32 preferred, 0x28 fallback)
-    var fuelUsed: Double { fuelAct > 0 ? fuelAct : iq }
+    /// Fuel per stroke. 0x28 injection qty is read every cycle so it is the
+    /// fresh value; 0x32 "actual" is a slow block and only a fallback
+    /// (they agree within ~0.5 mg/str on the real vehicle).
+    var fuelUsed: Double { iq > 0 ? iq : fuelAct }
     /// Air / fuel mass ratio per stroke. Diesel smoke becomes visible
     /// roughly below 17:1 and heavy below 15:1.
     var af: Double { fuelUsed > 0.5 ? maf / fuelUsed : 0 }
 }
 
 struct SmokeTestSession {
+    /// The blocks read every cycle; a sample is only stored once all three
+    /// have been seen, so the first rows are not padded with zeros.
+    static let fastBlocks: Set<UInt8> = [0x36, 0x28, 0x22]
+
     var isRecording = false
-    var startDate: Date?
+    var startDate: Date?          // START pressed
+    var dataStart: Date?          // first complete cycle (t = 0 in the CSV)
     var endDate: Date?
+    var initSeconds: Double = 0   // ECU init + first cycle time
     var samples: [SmokeSample] = []
     var marks: [Double] = []
     var pendingMark = false
     var error: String?
+    private var seen: Set<UInt8> = []
 
     var duration: Double { samples.last?.t ?? 0 }
     var hasData: Bool { !samples.isEmpty }
+    /// Recording but no sample yet: ECU init or first cycle in progress.
+    var isInitializing: Bool { isRecording && samples.isEmpty }
 
     mutating func reset() {
         isRecording = false
-        startDate = nil; endDate = nil
-        samples.removeAll(); marks.removeAll()
+        startDate = nil; dataStart = nil; endDate = nil
+        initSeconds = 0
+        samples.removeAll(); marks.removeAll(); seen.removeAll()
         pendingMark = false; error = nil
     }
 
@@ -75,15 +87,23 @@ struct SmokeTestSession {
 
     /// Driver or passenger saw smoke: tag the next sample.
     mutating func mark() {
-        guard isRecording, let s = startDate else { return }
-        marks.append(Date().timeIntervalSince(s))
+        guard isRecording else { return }
+        let ref = dataStart ?? startDate ?? Date()
+        marks.append(Date().timeIntervalSince(ref))
         pendingMark = true
     }
 
     mutating func append(from ecu: ECUStatus, src: UInt8) {
         guard isRecording, let s = startDate else { return }
+        seen.insert(src)
+        guard Self.fastBlocks.isSubset(of: seen) else { return }
+        let now = Date()
+        if dataStart == nil {
+            dataStart = now
+            initSeconds = now.timeIntervalSince(s)
+        }
         var sample = SmokeSample(
-            t: Date().timeIntervalSince(s), src: src,
+            t: now.timeIntervalSince(dataStart ?? now), src: src,
             rpm: ecu.rpm, pedal: ecu.pedalPos,
             iq: ecu.injectionQty, fuelAct: ecu.fuelQuantity, maf: ecu.mafFlow,
             boostAct: ecu.boostPressure, boostSet: ecu.boostSetpoint, map: ecu.mapActual,
@@ -101,6 +121,34 @@ struct SmokeTestSession {
     struct Summary {
         var lines: [String] = []
         var flags: [String] = []
+    }
+
+    /// One full-throttle event: pedal rises through 60% and stays above it.
+    struct Pull {
+        let start: Int      // index of first sample with pedal >= 60
+        let end: Int        // index of last sample with pedal >= 60 (inclusive)
+        var tStart: Double
+        var tEnd: Double
+    }
+
+    /// Split the recording into pulls so lag / deficit / rail are judged
+    /// per event and only while the pedal is actually down.
+    func pulls() -> [Pull] {
+        var out: [Pull] = []
+        var start: Int? = nil
+        for (i, s) in samples.enumerated() {
+            if s.pedal >= 60 {
+                if start == nil { start = i }
+            } else if let st = start {
+                out.append(Pull(start: st, end: i - 1, tStart: samples[st].t, tEnd: samples[i - 1].t))
+                start = nil
+            }
+        }
+        if let st = start {
+            out.append(Pull(start: st, end: samples.count - 1, tStart: samples[st].t, tEnd: samples[samples.count - 1].t))
+        }
+        // ignore blips shorter than 0.3 s
+        return out.filter { $0.tEnd - $0.tStart >= 0.3 }
     }
 
     func summary() -> Summary {
@@ -132,24 +180,42 @@ struct SmokeTestSession {
         let actMax = positive.map { $0.boostAct }.max() ?? 0
         let setMax = samples.map { $0.boostSet }.max() ?? 0
         s.lines.append("Boost act max \(f2(actMax)) bar abs | set max \(f2(setMax)) | ambient ~\(f2(ambient))")
-        let underLoad = samples.filter { $0.pedal > 50 && $0.boostSet > 0 && $0.boostAct > 0 }
-        if let d = underLoad.max(by: { ($0.boostSet - $0.boostAct) < ($1.boostSet - $1.boostAct) }) {
-            let deficit = d.boostSet - d.boostAct
-            s.lines.append("Boost deficit max \(f2(deficit)) bar @\(Int(d.rpm))rpm t=\(f1(d.t))s")
-            if deficit > 0.4 { s.flags.append("Boost hedefin 0.4 bar+ altinda kaliyor: VNT kanatcik / hortum kacagi / N75 kontrol") }
+
+        // Per-pull analysis: lag and deficit are only meaningful while the
+        // pedal is still down (a falling setpoint at lift-off must not count
+        // as "target reached").
+        let events = pulls()
+        if events.isEmpty {
+            s.lines.append("Pedal never held >= 60% - no full throttle transient captured")
         }
-        if let t0 = samples.first(where: { $0.pedal >= 60 })?.t {
-            if let t1 = samples.first(where: { $0.t >= t0 && $0.boostSet > ambient + 0.3 && $0.boostAct >= $0.boostSet - 0.15 })?.t {
-                let lag = t1 - t0
-                s.lines.append("Boost lag (pedal>=60% -> act within 0.15 of set): \(f1(lag))s")
-                if lag > 1.5 { s.flags.append("Turbo yanit gecikmesi > 1.5 s: turbo lag donemi uzun, duman bu pencerede olusur") }
-            } else {
-                s.lines.append("Boost lag: setpoint never reached after pedal>=60% (t0=\(f1(t0))s)")
-                s.flags.append("Turbo hedef basinca hic ulasamadi: VNT sikismasi / kacak / MAP sensor")
+        var worstDeficit = 0.0
+        var worstLag = 0.0
+        var neverReached = false
+        for (n, p) in events.enumerated() {
+            let window = samples[p.start...p.end]
+            // settle: ignore the first 0.7 s after the pedal step for deficit
+            let settled = window.filter { $0.t >= p.tStart + 0.7 && $0.boostSet > 0 && $0.boostAct > 0 }
+            var line = "Pull \(n + 1) t=\(f1(p.tStart))-\(f1(p.tEnd))s rpm \(Int(samples[p.start].rpm))->\(Int(samples[p.end].rpm))"
+            if let d = settled.max(by: { ($0.boostSet - $0.boostAct) < ($1.boostSet - $1.boostAct) }) {
+                let deficit = d.boostSet - d.boostAct
+                worstDeficit = max(worstDeficit, deficit)
+                line += " | deficit max \(f2(deficit)) bar @\(Int(d.rpm))rpm"
             }
-        } else {
-            s.lines.append("Pedal never reached 60% - no full throttle transient captured")
+            if let hit = window.first(where: { $0.boostSet > ambient + 0.3 && $0.boostAct >= $0.boostSet - 0.15 }) {
+                let lag = hit.t - p.tStart
+                worstLag = max(worstLag, lag)
+                line += " | lag \(f1(lag))s"
+            } else if (window.map { $0.boostSet }.max() ?? 0) > ambient + 0.3 {
+                neverReached = true
+                line += " | target NOT reached"
+            } else {
+                line += " | no boost demand"
+            }
+            s.lines.append(line)
         }
+        if worstDeficit > 0.4 { s.flags.append("Boost hedefin 0.4 bar+ altinda kaliyor: VNT kanatcik / hortum kacagi / N75 kontrol") }
+        if worstLag > 1.5 { s.flags.append("Turbo yanit gecikmesi > 1.5 s: turbo lag donemi uzun, duman bu pencerede olusur") }
+        if neverReached { s.flags.append("Turbo hedef basinca pedal basiliyken hic ulasamadi: VNT sikismasi / kacak / MAP sensor") }
 
         // MAF plausibility vs theoretical air per stroke at measured boost/IAT.
         // OM612: 2685 cc / 5 cyl = 537 cc per cylinder. m = P*V/(R*T), VE ~0.85.
@@ -163,11 +229,15 @@ struct SmokeTestSession {
             if ratio > 1.2 { s.flags.append("MAF teorik havanin %120 ustunde: MAF yuksek okuyor -> ECU fazla yakit verir -> duman") }
         }
 
-        // Rail pressure
-        let railLoad = samples.filter { $0.pedal > 50 && $0.rail > 0 }
+        // Rail pressure: judged only after the pump has had 0.7 s to respond
+        // to the pedal step, otherwise the pre-step value is a false dip.
+        var railLoad: [Double] = []
+        for p in events {
+            railLoad += samples[p.start...p.end].filter { $0.t >= p.tStart + 0.7 && $0.rail > 0 }.map { $0.rail }
+        }
         let railMax = samples.map { $0.rail }.max() ?? 0
-        if let rmin = railLoad.map({ $0.rail }).min() {
-            s.lines.append("Rail under load min \(Int(rmin)) bar | max \(Int(railMax)) bar")
+        if let rmin = railLoad.min() {
+            s.lines.append("Rail under load (settled) min \(Int(rmin)) bar | max \(Int(railMax)) bar")
             if rmin < 600 { s.flags.append("Yuk altinda rail < 600 bar: yakit basinci cokuyor (CP1 pompa / regulator / filtre)") }
         } else {
             s.lines.append("Rail max \(Int(railMax)) bar")
@@ -233,7 +303,7 @@ struct SmokeTestSession {
         let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm"
         let when = startDate.map { df.string(from: $0) } ?? "-"
         var out = "JeepWJDiag SMOKE TEST \(when)\n"
-        out += "Duration \(String(format: "%.1f", duration))s, \(samples.count) samples, \(marks.count) marks\n"
+        out += "Duration \(String(format: "%.1f", duration))s, \(samples.count) samples, \(marks.count) marks, ECU init \(String(format: "%.1f", initSeconds))s\n"
         if let e = error { out += "ERROR: \(e)\n" }
         let sum = summary()
         out += "-- SUMMARY --\n" + sum.lines.joined(separator: "\n") + "\n"

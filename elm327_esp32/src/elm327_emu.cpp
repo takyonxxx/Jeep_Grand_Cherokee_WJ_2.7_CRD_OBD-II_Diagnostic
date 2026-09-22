@@ -48,7 +48,7 @@ void ELM327Emu::tick() {
     simUpdate(dt);
 
     float t = (now - _t0) / 1000.0f;
-    coolantTemp = min(95.0f, 20.0f + t * 0.05f);
+    coolantTemp = min(95.0f, 82.0f + t * 0.02f);   // warm engine: smoke test must not flag "cold"
     transTemp = min(130.0f, 57.0f + t * 0.02f);
 }
 
@@ -164,7 +164,8 @@ void ELM327Emu::simUpdate(float dt) {
     if (sim.fuel < 0) sim.fuel = 0;
 
     // --- Rail pressure: rises with rpm and fuel ---
-    float railTarget = 291.0f + (rpm - 750.0f) / 3250.0f * 700.0f + sim.fuel * 5.0f;
+    // EDC15 lifts rail to ~800+ bar within a few hundred ms of a WOT step
+    float railTarget = 291.0f + (rpm - 750.0f) / 3250.0f * 500.0f + sim.fuel * 12.0f;
     if (railTarget > 1350.0f) railTarget = 1350.0f;
     sim.rail += (railTarget - sim.rail) * min(1.0f, dt / 0.3f);
 
