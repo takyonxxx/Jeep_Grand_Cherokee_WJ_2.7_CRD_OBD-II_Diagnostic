@@ -122,6 +122,9 @@ void httpHandleRoot() {
         "<div class='card'>"
         "<div class='row'><span class='lbl'>Smoke sim mode</span><span class='val'>" +
             String(emu.sim.mode) + " (ATSMOKE0-3)</span></div>"
+        "<div class='row'><span class='lbl'>Response timing</span><span class='val'>" +
+            String(emu.realTiming ? "real-car" : "instant") + " | ATST " + String(emu.stMs) + " ms | ATAT" + String(emu.atMode) +
+            " (ATSIMDELAY0/1)</span></div>"
         "<div class='row'><span class='lbl'>Cycle / phase</span><span class='val'>" +
             String(emu.sim.t, 1) + "s / " + String(emu.sim.phase) + (emu.sim.loaded ? " loaded" : " stationary") + "</span></div>"
         "<div class='row'><span class='lbl'>Pedal / RPM</span><span class='val'>" +
@@ -265,6 +268,10 @@ void loop() {
                     // Process
                     String resp = emu.processCommand(rxBuf);
 
+                    // Real-vehicle response latency (ATSIMDELAY0 disables)
+                    int dly = emu.responseDelayMs(rxBuf, resp);
+                    if (dly > 0) delay(dly);
+
                     // Log response
                     logWrite("RX <<<", resp);
 
@@ -289,7 +296,7 @@ void loop() {
                         part1 += "BUS INIT:\r";
                         elmClient.write(part1.c_str(), part1.length());
                         elmClient.flush();
-                        delay(300); // real adapter has ~350ms delay here
+                        delay(emu.realTiming ? 550 : 300); // real ATFI ~600 ms total (pcap)
                         frame = "OK\r\r>";
                     } else if (emu.echo) {
                         frame = rxBuf + "\r" + resp + "\r\r>";

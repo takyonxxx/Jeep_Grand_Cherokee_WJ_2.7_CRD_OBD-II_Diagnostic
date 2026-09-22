@@ -21,10 +21,11 @@ Native iOS port targeting iPhone (iOS 17+). Source code: `xcode/JeepWJDiag/`
 - **TCM Dashboard**: Big GEAR center (D1-D5 green, P/N/R amber, LIMP red), SPEED, TURBIN, T-TEMP, LIMP, LINE-P, TCC, SOL V, BATT
 - **Actuator controls**: Hold-to-activate buttons with green highlight for all modules
 - **Quick Controls tab**: Driver Door / Passenger Door / BCM quick-access grid
-- **Smoke Test** (Acts tab, top card): high-rate recording of pedal, fuel qty (0x28/0x32), MAF (0x36), boost actual vs setpoint (0x22/0x36), rail (0x12), IAT, 0x21 fuel-limiter words, 0x37/0x20/0x23 raw words during a full-throttle transient. MARK button tags the moment smoke is seen. Auto summary (A/F per stroke, boost lag/deficit, MAF vs theoretical air, rail dip, corrections) + CSV, shared to WhatsApp (text) or via share sheet (file).
+- **Smoke Test** (Acts tab, top card): high-rate recording of pedal, fuel qty (0x28/0x32), MAF (0x36), boost actual vs setpoint (0x12/0x36), rail (0x12), IAT, 0x21 fuel-limiter words, 0x37/0x20/0x23 raw words during a full-throttle transient. Fast cycle is 0x36 → 0x28 → 0x12 (+1 slow block); real-car reads take ~300 ms each (pcap/ecu_live.pcap), so the test sets `ATAT2` + `ATST 19` after init to shorten the ELM post-response wait. MARK button tags the moment smoke is seen. Auto summary (A/F per stroke, boost lag/deficit, MAF vs theoretical air, rail dip, corrections) + CSV, shared to WhatsApp (text) or via share sheet (file).
 - **BLE auto-connect**: Background scan with OBD device filter list
 - **Manual Start/Stop Live Data**: Live data does not auto-start — allows actuator use first
 - **Launch screen**: Composite splash image with JeepWjDiag title + Jeep photo
+- **Real-bus robustness** (derived from `pcap/*.pcap`): J1850 replies are kept only when they start with `26 <addr>` (drops `2D xx`, `B8 58`, `23 A0` traffic); NRC detection is token based (`7F sid code`), so data bytes 7F/21/78 never trigger a retry; module probe retries once on `NO DATA` (9 of 30 first reads after `ATRA` fail on the car); TCM `14 00 00` handles `7F 14 78` by waiting and re-reading for the deferred `54`; ESP `01 00 00` clear retries up to 10×; DTC PID scan locates `26 <addr> 62` and treats `xx FF FF` as unsupported.
 
 ---
 
@@ -191,3 +192,6 @@ Fault scenario is selected with the emulator-only AT command `ATSMOKEn` (survive
 | 3 | Injector excess: fuel 35% above limiter, corrections ±4 mg | A/F < 15, correction > 3 mg |
 
 The HTTP status page (http://192.168.0.10/) shows the live model state (phase, pedal, rpm, boost act/set, MAF true/reported, fuel/limiter/A/F, rail, IAT).
+
+### Real-vehicle response timing
+Responses are delayed to match `pcap/ecu_live.pcap`: ATZ ~900 ms, ATFI ~600 ms, `81` ~350 ms, `27 xx` ~450 ms, `21 xx` block reads ~300 ms (40 ms ECU latency + 2.5 ms per response byte + the ELM post-response wait). `ATST hh` (hex × 4 ms) and `ATAT0/1/2` are honoured, so the smoke test's `ATAT2` + `ATST 19` shortens reads to ~150 ms just like on a real adapter. `ATSIMDELAY0` switches to instant responses for fast bench runs, `ATSIMDELAY1` restores real timing (default, survives ATZ).

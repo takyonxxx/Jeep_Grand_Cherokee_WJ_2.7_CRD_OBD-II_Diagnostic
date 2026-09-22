@@ -156,12 +156,24 @@ final class KWP2000Handler {
     }
 
     /// DTC clear: 14 00 00 -> 54 00 00
-    /// NRC 0x78 handling: ECU may return 7F 14 78 (ResponsePending) before 54 00 00
-    func clearDTCs(completion: @escaping (Bool) -> Void) {
-        connection?.sendCommand("14 00 00", timeout: 8.0) { response in
-            // Accept both direct positive and NRC 0x78 + positive
-            let ok = response.contains("54")
-            completion(ok)
+    /// Real vehicle (pcap/full_modules.pcap): ECU answers 54 00 00 directly.
+    /// TCM answers 7F 14 78 (ResponsePending), the ELM then reports NO DATA,
+    /// and the deferred 54 00 00 shows up as the reply to the NEXT request.
+    /// So on 0x78 we wait, re-issue the DTC read and accept 54 or "58 00".
+    func clearDTCs(module: WJModule, completion: @escaping (Bool) -> Void) {
+        let readCmd = (module == .kLineTCM) ? "18 02 FF 00" : "18 02 00 00"
+        connection?.sendCommand("14 00 00", timeout: 8.0) { [weak self] response in
+            if ELM327Connection.hasToken(response, 0x54) { completion(true); return }
+            guard ELM327Connection.hasNRC(response, code: 0x78) else { completion(false); return }
+            self?.onLog?("DTC clear: response pending (0x78), waiting for deferred 54")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                self?.connection?.sendCommand(readCmd, timeout: 8.0) { resp in
+                    let t = ELM327Connection.tokens(resp)
+                    var ok = t.contains("54")
+                    if let i = t.firstIndex(of: "58"), i + 1 < t.count, t[i + 1] == "00" { ok = true }
+                    completion(ok)
+                }
+            }
         }
     }
 
@@ -184,15 +196,24 @@ final class KWP2000Handler {
     }
 
     /// J1850 DTC clear: ATSH24xx14 + ATRAxx + clear_cmd
-    /// ESP 0x58: uses "01 00 00" (may need 7 retries!)
-    /// Others: use "FF 00 00"
+    /// ESP 0x58: uses "01 00 00" and needs several attempts (real capture:
+    /// 9 tries answered only with bus noise / NO DATA) -> up to 10 attempts.
+    /// Others: "FF 00 00" -> "26 xx 54 FF 00 00 CS" on the first try.
     func clearJ1850DTCs(module: WJModule, completion: @escaping (Bool) -> Void) {
         let clearCmd = (module == .espModule) ? "01 00 00" : "FF 00 00"
+        let maxAttempts = (module == .espModule) ? 10 : 1
         setJ1850Header(module: module, mode: 0x14) { [weak self] in
-            self?.connection?.sendCommand(clearCmd, timeout: 8.0) { response in
-                let ok = response.contains("54")
-                completion(ok)
+            func attempt(_ n: Int) {
+                self?.connection?.sendCommand(clearCmd, timeout: 3.0) { response in
+                    if ELM327Connection.hasToken(response, 0x54) { completion(true); return }
+                    if n < maxAttempts {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { attempt(n + 1) }
+                    } else {
+                        completion(false)
+                    }
+                }
             }
+            attempt(1)
         }
     }
 
@@ -216,10 +237,10 @@ final class KWP2000Handler {
     /// before positive response — both arrive in same ELM327 frame.
     func sendActuator(_ cmd: String, completion: @escaping (String) -> Void) {
         connection?.sendCommand(cmd, timeout: 8.0) { response in
-            // Handle NRC 0x78: strip pending, return positive part
-            if response.contains("7F") && response.contains("78") {
+            // Handle NRC 0x78: strip the pending line, return the positive part
+            if ELM327Connection.hasNRC(response, code: 0x78) {
                 let lines = response.components(separatedBy: "\r")
-                let positive = lines.filter { !$0.contains("7F") && !$0.isEmpty }
+                let positive = lines.filter { !ELM327Connection.hasNRC($0, code: 0x78) && !$0.isEmpty }
                 completion(positive.joined(separator: "\r"))
             } else {
                 completion(response)

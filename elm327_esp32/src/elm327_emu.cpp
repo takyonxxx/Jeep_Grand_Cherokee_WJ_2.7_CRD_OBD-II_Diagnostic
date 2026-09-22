@@ -37,6 +37,33 @@ void ELM327Emu::reset() {
     sim = SmokeSim();
     sim.mode = keepMode;
     sim.lastMs = millis();
+    stMs = 200; atMode = 1;      // ELM defaults after ATZ (realTiming flag is kept)
+}
+
+// Delay to apply before sending a response, mimicking the real ELM327 +
+// EDC15C on K-Line. Returns 0 for ATFI (its two-part framing in main.cpp
+// carries its own delay).
+int ELM327Emu::responseDelayMs(const String &cmd, const String &resp) {
+    if (!realTiming) return 0;
+    String c = cmd; c.toUpperCase(); c.trim();
+    if (c.startsWith("ATZ"))  return 900;
+    if (c.startsWith("ATFI")) return 0;
+    if (c.startsWith("AT"))   return 50;
+    // Effective post-response wait: ATAT2 adapts down to ~80 ms on a bus
+    // that answers with a single message; ATAT0/1 wait the full ATST.
+    int effST = stMs;
+    if (atMode == 2 && effST > 80) effST = 80;
+    if (resp.startsWith("NO DATA")) return effST + 150;
+    // Count response bytes (hex pairs) to add K-Line byte time (~2.5 ms/byte)
+    int nbytes = 0;
+    for (unsigned int i = 0; i + 1 < resp.length(); i++) {
+        if (isxdigit(resp[i]) && isxdigit(resp[i + 1])) { nbytes++; i++; }
+    }
+    int d = 40 + (int)(2.5f * nbytes) + effST;
+    if (c.startsWith("27"))      d += 120;   // seed/key handling is slower on the ECU
+    else if (c == "81")          d += 80;
+    else if (c.startsWith("1A")) d += 30;
+    return d;
 }
 
 void ELM327Emu::tick() {
@@ -218,6 +245,22 @@ String ELM327Emu::handleAT(const String &cmd) {
     if (c.startsWith("ATRA") || c.startsWith("ATAR")) return "OK";
     if (c.startsWith("ATWM")) return "OK";
     if (c.startsWith("ATFI")) { klBusInitDone = true; return "OK"; } // framing handled in main.cpp
+    // Emulator-only: real-vehicle response timing on/off (ATSIMDELAY1 / ATSIMDELAY0)
+    if (c.startsWith("ATSIMDELAY")) {
+        if (c.length() > 10) realTiming = (c.charAt(10) != '0');
+        return String("SIM DELAY ") + (realTiming ? "ON (real-car timing)" : "OFF (instant)");
+    }
+    // ELM timing commands that the smoke test uses to speed up reads
+    if (c.startsWith("ATST")) {
+        String v = c.substring(4); v.trim();
+        int hh = parseHexByte(v.c_str());
+        if (hh >= 0) stMs = (uint16_t)(hh * 4);
+        return "OK";
+    }
+    if (c.startsWith("ATAT")) {
+        if (c.length() > 4 && c.charAt(4) >= '0' && c.charAt(4) <= '2') atMode = c.charAt(4) - '0';
+        return "OK";
+    }
     // Emulator-only: select smoke-test fault scenario (ATSMOKE0..3, ATSMOKE? to query)
     if (c.startsWith("ATSMOKE")) {
         if (c.length() > 7 && c.charAt(7) >= '0' && c.charAt(7) <= '3') sim.mode = c.charAt(7) - '0';

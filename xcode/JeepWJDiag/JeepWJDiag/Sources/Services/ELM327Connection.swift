@@ -24,6 +24,33 @@ final class ELM327Connection: NSObject, ObservableObject {
     private var responseBuffer = ""
     private var currentCommand: ELMCommand?
     private var commandTimer: Timer?
+    /// True after ATSP2: J1850 responses always start with "26 <addr>" (ATH1),
+    /// anything else on the bus is unsolicited traffic (2D xx, B8 58, 23 A0 ...).
+    private var isJ1850 = false
+
+    // MARK: - Response token helpers (shared by the handlers)
+
+    /// Hex byte tokens of a response, ignoring non-hex text such as "NO DATA".
+    static func tokens(_ s: String) -> [String] {
+        s.replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
+            .split(separator: " ").map { String($0).uppercased() }
+            .filter { tok in tok.count == 2 && tok.allSatisfy { ch in ch.isHexDigit } }
+    }
+
+    /// Negative response "7F <sid> <code>" anywhere in the response, matched on
+    /// byte tokens so data bytes that happen to be 7F/21/78 do not trigger it.
+    static func hasNRC(_ s: String, code: UInt8) -> Bool {
+        let t = tokens(s)
+        guard t.count >= 3 else { return false }
+        let c = String(format: "%02X", code)
+        for i in 0..<(t.count - 2) where t[i] == "7F" && t[i + 2] == c { return true }
+        return false
+    }
+
+    /// Positive response SID present as a token (e.g. "54" for ClearDTC).
+    static func hasToken(_ s: String, _ byte: UInt8) -> Bool {
+        tokens(s).contains(String(format: "%02X", byte))
+    }
 
     private let elmServiceUUID = CBUUID(string: "FFF0")
     private let elmWriteUUID = CBUUID(string: "FFF2")
@@ -147,6 +174,9 @@ final class ELM327Connection: NSObject, ObservableObject {
         isProcessingCommand = true
         let cmd = commandQueue.removeFirst()
         currentCommand = cmd; responseBuffer = ""
+        let up = cmd.command.uppercased().replacingOccurrences(of: " ", with: "")
+        if up.hasPrefix("ATSP") { isJ1850 = (up == "ATSP2") }
+        else if up.hasPrefix("ATZ") { isJ1850 = false }
         writeToTransport((cmd.command + "\r").data(using: .ascii)!)
         log("[TX] \(cmd.command)")
         commandTimer?.invalidate()
@@ -173,8 +203,10 @@ final class ELM327Connection: NSObject, ObservableObject {
             let parsed = self.parseResponse(full)
             self.log("[RX] \(parsed)")
 
-            // NRC 0x21 retry (busyRepeatRequest) — up to 3 times
-            if parsed.contains("7F") && parsed.contains("21") {
+            // NRC 0x21 retry (busyRepeatRequest) — up to 3 times.
+            // Token match: real responses carry 7F/21 as plain data bytes too
+            // (e.g. "09 7F 03 A1" inside block 0x12, or block "61 21 ...").
+            if Self.hasNRC(parsed, code: 0x21) {
                 if let cmd = self.currentCommand, cmd.retryCount < 3 {
                     self.log("[RETRY] NRC 0x21, attempt \(cmd.retryCount + 1)")
                     var retry = cmd; retry = ELMCommand(cmd.command, timeout: cmd.timeout,
@@ -206,8 +238,19 @@ final class ELM327Connection: NSObject, ObservableObject {
             lines.removeFirst()
         }
 
-        // Filter J1850 bus noise (2D 28 xx xx)
-        lines = lines.filter { !$0.hasPrefix("2D 28") && !$0.hasPrefix("2D28") }
+        // Filter unsolicited bus traffic. Real captures (pcap/full_modules.pcap)
+        // show "2D 28 ..", "2D 58 ..", "B8 58 02 2B" and "23 A0 00 18 7C" frames
+        // interleaved with responses. On J1850 with ATH1 every genuine reply
+        // to us starts with "26 <addr>", so keep only those hex lines (plus
+        // non-hex text such as NO DATA / OK / BUS INIT).
+        lines = lines.filter { line in
+            let up = line.uppercased()
+            if up.hasPrefix("2D ") || up.hasPrefix("2D28") { return false }
+            guard isJ1850 else { return true }
+            let isHexLine = up.count >= 2 && up.prefix(2).allSatisfy { $0.isHexDigit }
+                && (up.count == 2 || up[up.index(up.startIndex, offsetBy: 2)] == " ")
+            return !isHexLine || up.hasPrefix("26 ")
+        }
 
         return lines.joined(separator: "\r")
     }

@@ -42,15 +42,16 @@ struct SmokeSample {
     /// and only kept as a CSV column.
     var fuelUsed: Double { iq }
     /// Air / fuel mass ratio per stroke. Diesel smoke becomes visible
-    /// roughly below 17:1 and heavy below 15:1. Below 2 mg/str (overrun
-    /// fuel cut) the ratio is meaningless, so it is reported as 0.
-    var af: Double { fuelUsed >= 2.0 ? maf / fuelUsed : 0 }
+    /// roughly below 17:1 and heavy below 15:1. Below 5 mg/str (overrun
+    /// fuel cut; idle is ~9) the ratio is meaningless, so it is reported as 0.
+    var af: Double { fuelUsed >= 5.0 ? maf / fuelUsed : 0 }
 }
 
 struct SmokeTestSession {
     /// The blocks read every cycle; a sample is only stored once all three
     /// have been seen, so the first rows are not padded with zeros.
-    static let fastBlocks: Set<UInt8> = [0x36, 0x28, 0x22]
+    /// (0x12 carries MAP, rail, IAT and coolant; 0x22 is redundant with it.)
+    static let fastBlocks: Set<UInt8> = [0x36, 0x28, 0x12]
 
     var isRecording = false
     var startDate: Date?          // START pressed

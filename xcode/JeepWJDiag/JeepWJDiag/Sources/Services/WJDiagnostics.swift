@@ -16,10 +16,16 @@ final class WJDiagnostics: ObservableObject {
     // Smoke test polling: the three fast-changing blocks every cycle plus
     // one slow block round-robin. Reads are chained on completion (not on a
     // timer) so the ELM command queue never backs up during the transient.
-    private let smokeFastBlocks: [UInt8] = [0x36, 0x28, 0x22]
-    private let smokeSlowBlocks: [UInt8] = [0x21, 0x12, 0x32, 0x37, 0x20, 0x23]
+    // Real vehicle (pcap/ecu_live.pcap): each block read takes ~300 ms on
+    // K-Line, so the cycle is kept to 3 fast reads. 0x12 replaces 0x22: it
+    // carries the same MAP / IAT / coolant plus rail pressure every cycle.
+    //   0x36 pedal, MAF, boost setpoint | 0x28 rpm, inj qty, corrections
+    //   0x12 MAP actual, rail, IAT, coolant
+    private let smokeFastBlocks: [UInt8] = [0x36, 0x28, 0x12]
+    private let smokeSlowBlocks: [UInt8] = [0x21, 0x32, 0x37, 0x20, 0x23]
     private var smokeStep = 0
     private var smokeSlowIndex = 0
+    private var lastSmokeRead = Date.distantPast
 
     private var connection: ELM327Connection?
     private var kwp: KWP2000Handler?
@@ -85,12 +91,21 @@ final class WJDiagnostics: ObservableObject {
             }
         case .j1850:
             kwp.initJ1850(module: module) { [weak self] _ in
-                // Try reading first data PID
-                kwp.readJ1850Data(module: module, pid: "20 00") { response in
-                    let alive = !response.contains("NO DATA") && !response.contains("TIMEOUT")
-                    self?.moduleStates[module] = alive
-                    completion(alive)
+                // Try reading first data PID. Real capture: 9 of 30 first reads
+                // right after ATRA come back NO DATA and the immediate retry
+                // succeeds, so probe twice before declaring a module dead.
+                func probeRead(_ attempt: Int) {
+                    kwp.readJ1850Data(module: module, pid: "20 00") { response in
+                        let alive = !response.contains("NO DATA") && !response.contains("TIMEOUT")
+                        if !alive && attempt < 2 {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { probeRead(attempt + 1) }
+                            return
+                        }
+                        self?.moduleStates[module] = alive
+                        completion(alive)
+                    }
                 }
+                probeRead(1)
             }
         }
     }
@@ -166,10 +181,21 @@ final class WJDiagnostics: ObservableObject {
                 self.activeModule = nil
                 return
             }
+            // Continuous block reads keep the KWP session alive by themselves;
+            // only send SID 81 if the chain has been silent for a while.
             self.keepaliveTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-                self.kwp?.sendKeepalive()
+                if Date().timeIntervalSince(self.lastSmokeRead) > 1.5 { self.kwp?.sendKeepalive() }
             }
-            self.pollNextSmokeBlock()
+            // ELM327 timing: the default 200 ms post-response wait (ATST 32)
+            // dominates the ~300 ms per read seen on the real car. Aggressive
+            // adaptive timing + 100 ms wait roughly doubles the sample rate.
+            // ATZ at the next init restores the defaults.
+            self.connection?.sendCommand("ATAT2", timeout: 2.0) { _ in
+                self.connection?.sendCommand("ATST 19", timeout: 2.0) { _ in
+                    self.connection?.log("[SMOKE] ELM timing set (ATAT2, ATST 19)")
+                    self.pollNextSmokeBlock()
+                }
+            }
         }
     }
 
@@ -205,6 +231,7 @@ final class WJDiagnostics: ObservableObject {
         }
         kwp.readBlock(block) { [weak self] response in
             guard let self = self else { return }
+            self.lastSmokeRead = Date()
             self.parseECUBlock(block, response: response)
             self.computeFuelFlow()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { self.pollNextSmokeBlock() }
@@ -291,13 +318,20 @@ final class WJDiagnostics: ObservableObject {
                 if data.count >= 16 { self.ecuStatus.boostPressure = Double(u16(data, 14)) / 1000.0 }
 
             case 0x12:
+                // Coolant [0-1], IAT [2-3] /10-273.1 (same sensors as 0x22),
+                // RPM [10-11] (0x28 overrides this), MAP actual [16-17] raw mbar
+                // (= boost, identical to 0x22[14-15] on the real car),
                 // Rail [18-19] *0.101 = Bar (constant 0.101, NOT /10!)
-                // MAP actual [16-17] raw mbar, RPM [10-11] (0x28 overrides this)
-                if data.count >= 20 { self.ecuStatus.railPressure = Double(u16(data, 18)) * 0.101 }
-                if data.count >= 18 { self.ecuStatus.mapActual = Double(u16(data, 16)) }
+                if data.count >= 2 { self.ecuStatus.coolantTemp = Double(u16(data, 0)) / 10.0 - 273.1 }
+                if data.count >= 4 { self.ecuStatus.iat = Double(u16(data, 2)) / 10.0 - 273.1 }
                 if data.count >= 12 && self.ecuStatus.rpm == 0 {
                     self.ecuStatus.rpm = Double(u16(data, 10))
                 }
+                if data.count >= 18 {
+                    self.ecuStatus.mapActual = Double(u16(data, 16))
+                    self.ecuStatus.boostPressure = self.ecuStatus.mapActual / 1000.0
+                }
+                if data.count >= 20 { self.ecuStatus.railPressure = Double(u16(data, 18)) * 0.101 }
 
             case 0x36:
                 // Pedal [0-1] /100 = %, MAF [6-7] /10 = mg/str,
@@ -476,7 +510,7 @@ final class WJDiagnostics: ObservableObject {
 
         switch module.bus {
         case .kLine:
-            kwp.clearDTCs { [weak self] ok in
+            kwp.clearDTCs(module: module) { [weak self] ok in
                 if ok { self?.dtcList.removeAll { $0.module == module } }
             }
         case .j1850:
@@ -562,11 +596,25 @@ final class WJDiagnostics: ObservableObject {
 
             connection?.sendCommand(entry.pid + " 00", timeout: 3.0) { [weak self] response in
                 guard let self = self, let kwp = self.kwp else { return }
+                // Real reply: "26 <addr> 62 D0 D1 D2 CS". Locate 62 by its header
+                // so a 62 data byte inside stray traffic cannot be mistaken for it.
+                // NRC 7F 22 21 (busy) is already retried by the connection layer.
                 let bytes = kwp.hexToBytes(response)
-                if let idx62 = bytes.firstIndex(of: 0x62), idx62 + 3 < bytes.count {
-                    let d0 = bytes[idx62 + 1]
-                    let d1 = bytes[idx62 + 2]
-                    if (d0 != 0 || d1 != 0) && !(d0 == 0xFF && d1 == 0xFF) {
+                var idx62: Int? = nil
+                if bytes.count >= 3 {
+                    for i in 2..<bytes.count where bytes[i] == 0x62 && bytes[i - 1] == module.rawValue && bytes[i - 2] == 0x26 {
+                        idx62 = i; break
+                    }
+                }
+                if idx62 == nil, !ELM327Connection.hasNRC(response, code: 0x21) { idx62 = bytes.firstIndex(of: 0x62) }
+                if let i = idx62, i + 3 < bytes.count {
+                    let d0 = bytes[i + 1], d1 = bytes[i + 2], d2 = bytes[i + 3]
+                    let raw = (UInt16(d0) << 8) | UInt16(d1)
+                    // Qt rule: non-zero and not FFFF = fault. Additionally the ABS
+                    // answers "00 FF FF" for roughly half its PIDs in the real
+                    // capture, which reads as "not supported", not as 10 faults.
+                    let unsupported = (d1 == 0xFF && d2 == 0xFF)
+                    if raw != 0x0000 && raw != 0xFFFF && !unsupported {
                         foundDTCs.append(DTCEntry(module: module, code: entry.code, description: ""))
                     }
                 }

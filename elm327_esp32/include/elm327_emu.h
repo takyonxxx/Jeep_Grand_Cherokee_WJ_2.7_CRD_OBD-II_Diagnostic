@@ -58,6 +58,16 @@ public:
     float  coolantTemp  = 82.0f;
     void tick();                 // advances the engine model (safe to call often)
 
+    // Real-vehicle response timing (measured in pcap/ecu_live.pcap):
+    //   ATZ ~900 ms, ATFI ~600 ms, 81 ~350 ms, 27 xx ~400-480 ms,
+    //   21 xx block reads 250-400 ms (avg ~300) with default ATST 32 (200 ms).
+    // Modelled as ECU latency + K-Line byte time + the ELM post-response wait
+    // (ATST, shortened by ATAT2). "ATSIMDELAY0" disables it for fast bench runs.
+    bool     realTiming = true;
+    uint16_t stMs       = 200;   // ATST value in ms (hex * 4)
+    int      atMode     = 1;     // ATAT0/1/2
+    int      responseDelayMs(const String &cmd, const String &resp);
+
 private:
     String handleAT(const String &cmd);
 
