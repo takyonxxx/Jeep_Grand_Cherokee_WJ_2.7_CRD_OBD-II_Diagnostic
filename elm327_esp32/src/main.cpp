@@ -120,6 +120,23 @@ void httpHandleRoot() {
         "</div>"
 
         "<div class='card'>"
+        "<div class='row'><span class='lbl'>Smoke sim mode</span><span class='val'>" +
+            String(emu.sim.mode) + " (ATSMOKE0-3)</span></div>"
+        "<div class='row'><span class='lbl'>Cycle / phase</span><span class='val'>" +
+            String(emu.sim.t, 1) + "s / " + String(emu.sim.phase) + (emu.sim.loaded ? " loaded" : " stationary") + "</span></div>"
+        "<div class='row'><span class='lbl'>Pedal / RPM</span><span class='val'>" +
+            String((int)emu.sim.pedal) + "% / " + String((int)emu.engineRpm) + "</span></div>"
+        "<div class='row'><span class='lbl'>Boost act / set</span><span class='val'>" +
+            String(emu.sim.boostAct, 2) + " / " + String(emu.sim.boostSet, 2) + " bar abs</span></div>"
+        "<div class='row'><span class='lbl'>MAF true / reported</span><span class='val'>" +
+            String((int)emu.sim.mafTrue) + " / " + String((int)emu.sim.mafRep) + " mg/str</span></div>"
+        "<div class='row'><span class='lbl'>Fuel / limiter / A/F</span><span class='val'>" +
+            String(emu.sim.fuel, 1) + " / " + String(emu.sim.limiter, 1) + " / " + String(emu.sim.afTrue(), 1) + "</span></div>"
+        "<div class='row'><span class='lbl'>Rail / IAT</span><span class='val'>" +
+            String((int)emu.sim.rail) + " bar / " + String((int)emu.sim.iat) + " C</span></div>"
+        "</div>"
+
+        "<div class='card'>"
         "<div class='row'><span class='lbl'>Verified Responses</span><span class='val'>252 real vehicle</span></div>"
         "<div class='row'><span class='lbl'>J1850 Modules</span><span class='val'>15 (0x28-0xC0)</span></div>"
         "<div class='row'><span class='lbl'>K-Line Targets</span><span class='val'>ECU 0x15, TCM 0x20</span></div>"

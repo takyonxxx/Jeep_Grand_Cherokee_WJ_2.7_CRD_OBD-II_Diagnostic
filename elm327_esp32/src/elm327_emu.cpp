@@ -16,7 +16,17 @@ static int parseHexByte(const char *s) {
     return v;
 }
 
+// Encode helpers for the ECU block builders
+static inline uint8_t hi8(uint32_t v) { return (uint8_t)((v >> 8) & 0xFF); }
+static inline uint8_t lo8(uint32_t v) { return (uint8_t)(v & 0xFF); }
+static inline uint16_t u16clamp(float v) {
+    if (v < 0) return 0;
+    if (v > 65535.0f) return 65535;
+    return (uint16_t)(v + 0.5f);
+}
+
 void ELM327Emu::reset() {
+    int keepMode = sim.mode;   // ATZ must not forget the selected smoke scenario
     targetModule = 0x20; headerMode = 0x22;
     protocol = 0; headers = false; echo = true;
     ecuUnlocked = false; tcmUnlocked = false; ecuDtcCleared = false;
@@ -24,13 +34,154 @@ void ELM327Emu::reset() {
     lastHeader = ""; cmdCount = 0; _t0 = millis();
     klBusInitDone = false;  // track if K-Line bus was initialized
     j1850NoiseCounter = 0;  // bus noise injection counter
+    sim = SmokeSim();
+    sim.mode = keepMode;
+    sim.lastMs = millis();
 }
 
 void ELM327Emu::tick() {
-    float t = (millis() - _t0) / 1000.0f;
-    engineRpm = 750 + 30 * sin(t * 0.5f) + random(-10, 10);
+    uint32_t now = millis();
+    float dt = (now - sim.lastMs) / 1000.0f;
+    if (dt <= 0) return;
+    if (dt > 0.5f) dt = 0.5f;      // long gaps (no client) must not blow up the integrator
+    sim.lastMs = now;
+    simUpdate(dt);
+
+    float t = (now - _t0) / 1000.0f;
     coolantTemp = min(95.0f, 20.0f + t * 0.05f);
     transTemp = min(130.0f, 57.0f + t * 0.02f);
+}
+
+// ==================== Engine transient model ====================
+//
+// Scripted 40 s cycle (cycle time tc):
+//   0-2    idle, stationary
+//   2-4    light cruise in D, ~1500 rpm
+//   4-10   FULL THROTTLE pull, rpm climbs to ~4000
+//   10-14  lift off, coast to idle
+//   14-16  idle
+//   16-18  cruise ~1500 rpm
+//   18-24  second FULL THROTTLE pull
+//   24-28  lift off
+//   28-30  idle (stationary from here on)
+//   30-30.6 throttle blip in N (unloaded)
+//   33-33.6 second blip
+//   36-40  idle
+void ELM327Emu::simUpdate(float dt) {
+    sim.t += dt;
+    if (sim.t >= 40.0f) sim.t -= 40.0f;
+    const float tc = sim.t;
+
+    // --- pedal & load script ---
+    float pedalTarget = 0;
+    int phase = 0;
+    bool loaded = false;
+    if      (tc <  2.0f) { phase = 0; pedalTarget = 0;   loaded = false; }
+    else if (tc <  4.0f) { phase = 1; pedalTarget = 15;  loaded = true;  }
+    else if (tc < 10.0f) { phase = 2; pedalTarget = 100; loaded = true;  }
+    else if (tc < 14.0f) { phase = 3; pedalTarget = 0;   loaded = true;  }
+    else if (tc < 16.0f) { phase = 4; pedalTarget = 0;   loaded = false; }
+    else if (tc < 18.0f) { phase = 5; pedalTarget = 15;  loaded = true;  }
+    else if (tc < 24.0f) { phase = 6; pedalTarget = 100; loaded = true;  }
+    else if (tc < 28.0f) { phase = 7; pedalTarget = 0;   loaded = true;  }
+    else if (tc < 30.0f) { phase = 8; pedalTarget = 0;   loaded = false; }
+    else if (tc < 30.6f) { phase = 9; pedalTarget = 100; loaded = false; }
+    else if (tc < 33.0f) { phase = 10; pedalTarget = 0;  loaded = false; }
+    else if (tc < 33.6f) { phase = 11; pedalTarget = 100; loaded = false; }
+    else                 { phase = 12; pedalTarget = 0;  loaded = false; }
+    sim.phase = phase;
+    sim.loaded = loaded;
+
+    // Pedal moves fast: full stroke in ~0.3 s
+    float pedalRate = 350.0f * dt;
+    float prevPedal = sim.pedal;
+    if (sim.pedal < pedalTarget) sim.pedal = min(pedalTarget, sim.pedal + pedalRate);
+    else                         sim.pedal = max(pedalTarget, sim.pedal - pedalRate);
+    if (prevPedal < 50.0f && sim.pedal >= 50.0f) sim.pedalStepAt = tc;
+    const float sinceStep = tc - sim.pedalStepAt;
+
+    // --- RPM ---
+    // loaded: rev rate limited by vehicle inertia (2nd gear ~550 rpm/s at WOT)
+    // unloaded: free-revving engine, fast up, governed down
+    float rpm = engineRpm;
+    if (sim.pedal > 5.0f) {
+        float target = loaded ? 750.0f + sim.pedal * 33.0f : 750.0f + sim.pedal * 32.0f; // 100% -> ~4000
+        float rate = loaded ? 550.0f * (sim.pedal / 100.0f) : 2500.0f;
+        if (rpm < target) rpm = min(target, rpm + rate * dt);
+    } else {
+        float rate = loaded ? 800.0f : 1200.0f;
+        if (rpm > 750.0f) rpm = max(750.0f, rpm - rate * dt);
+    }
+    if (rpm > 4200.0f) rpm = 4200.0f;
+    // idle wobble
+    if (sim.pedal < 5.0f && rpm < 800.0f) rpm = 750.0f + 8.0f * sin(millis() / 400.0f) + random(-3, 3);
+    engineRpm = rpm;
+
+    // --- Boost setpoint (bar abs): ambient 0.93 + pedal * gauge table(rpm) ---
+    float gaugeMax;
+    if      (rpm < 1200.0f) gaugeMax = 0.15f;
+    else if (rpm < 1500.0f) gaugeMax = 0.15f + (rpm - 1200.0f) / 300.0f * 0.35f;
+    else if (rpm < 2000.0f) gaugeMax = 0.50f + (rpm - 1500.0f) / 500.0f * 0.45f;
+    else if (rpm < 2500.0f) gaugeMax = 0.95f + (rpm - 2000.0f) / 500.0f * 0.20f;
+    else if (rpm < 3500.0f) gaugeMax = 1.15f;
+    else                    gaugeMax = 1.15f - (rpm - 3500.0f) / 700.0f * 0.15f;
+    sim.boostSet = 0.93f + gaugeMax * (sim.pedal / 100.0f);
+
+    // --- Boost actual: first-order lag toward setpoint (turbo spool) ---
+    float tau;
+    if (sim.mode == 1) tau = (rpm < 1800.0f) ? 4.0f : 2.5f;          // VNT sticking
+    else               tau = (rpm < 1400.0f) ? 1.8f : 0.8f;          // healthy spool
+    if (!loaded) tau *= 2.0f;                                          // no load, little exhaust energy
+    float setEff = sim.boostSet;
+    if (sim.mode == 1) setEff = min(setEff, sim.boostSet - 0.5f * (sim.pedal / 100.0f)); // never reaches target
+    if (setEff < 0.93f) setEff = 0.93f;
+    // boost falls faster than it builds (wastegate / VNT opens)
+    float tauEff = (sim.boostAct > setEff) ? 0.5f : tau;
+    sim.boostAct += (setEff - sim.boostAct) * (dt / tauEff);
+
+    // --- IAT: intercooler outlet warms with boost ---
+    float gauge = sim.boostAct - 0.93f;
+    float iatTarget = 30.0f + gauge * (sim.mode == 1 ? 35.0f : 20.0f);
+    sim.iat += (iatTarget - sim.iat) * (dt / 3.0f);
+
+    // --- Air per stroke: m = P V / (R T), 537 cc per cylinder, VE 0.85 ---
+    float tK = sim.iat + 273.15f;
+    sim.mafTrue = sim.boostAct * 100000.0f * 0.000537f / (287.0f * tK) * 1e6f * 0.85f;
+    sim.mafRep  = (sim.mode == 2) ? sim.mafTrue * 1.30f : sim.mafTrue;
+    sim.mafRep += random(-30, 30) / 10.0f;
+
+    // --- Fuel: driver wish, smoke limiter on REPORTED air, torque cap ---
+    sim.driver = 8.8f + (sim.pedal / 100.0f) * 52.0f;               // up to ~61 mg/str
+    float limAF = 18.5f;
+    if (sim.mode == 1 && sinceStep >= 0 && sinceStep < 1.5f) limAF = 13.5f; // transient over-fuel
+    sim.limiter = sim.mafRep / limAF;
+    float fuel = min(sim.driver, sim.limiter);
+    if (sim.mode == 3) fuel = min(sim.driver, sim.limiter * 1.35f);       // injectors deliver more than commanded
+    if (rpm > 4000.0f) fuel = min(fuel, 20.0f);                            // rev limiter cut
+    if (sim.pedal < 5.0f) fuel = (rpm > 900.0f) ? 0.0f : 8.8f;             // overrun cut / idle governor
+    if (!loaded && sim.pedal >= 5.0f && rpm > 3000.0f) fuel = min(fuel, 15.0f); // unloaded governor
+    sim.fuel += (fuel - sim.fuel) * min(1.0f, dt / 0.08f);                // injection responds within ~80 ms
+    if (sim.fuel < 0) sim.fuel = 0;
+
+    // --- Rail pressure: rises with rpm and fuel ---
+    float railTarget = 291.0f + (rpm - 750.0f) / 3250.0f * 700.0f + sim.fuel * 5.0f;
+    if (railTarget > 1350.0f) railTarget = 1350.0f;
+    sim.rail += (railTarget - sim.rail) * min(1.0f, dt / 0.3f);
+
+    // --- Vehicle speed (2nd gear ~ rpm/60 km/h when loaded) ---
+    float speedTarget = loaded ? rpm / 60.0f : 0.0f;
+    sim.speed += (speedTarget - sim.speed) * min(1.0f, dt / 1.0f);
+
+    // --- Cylinder corrections ---
+    if (sim.mode == 3) {
+        sim.corr[0] = -4.2f + random(-30, 30) / 100.0f;
+        sim.corr[1] =  3.8f + random(-30, 30) / 100.0f;
+        sim.corr[2] =  0.9f + random(-10, 10) / 100.0f;
+    } else {
+        sim.corr[0] = -1.42f + random(-10, 10) / 100.0f;
+        sim.corr[1] =  0.54f + random(-5, 5) / 100.0f;
+        sim.corr[2] =  0.47f + random(-5, 5) / 100.0f;
+    }
 }
 
 // ==================== AT Commands ====================
@@ -66,6 +217,12 @@ String ELM327Emu::handleAT(const String &cmd) {
     if (c.startsWith("ATRA") || c.startsWith("ATAR")) return "OK";
     if (c.startsWith("ATWM")) return "OK";
     if (c.startsWith("ATFI")) { klBusInitDone = true; return "OK"; } // framing handled in main.cpp
+    // Emulator-only: select smoke-test fault scenario (ATSMOKE0..3, ATSMOKE? to query)
+    if (c.startsWith("ATSMOKE")) {
+        if (c.length() > 7 && c.charAt(7) >= '0' && c.charAt(7) <= '3') sim.mode = c.charAt(7) - '0';
+        static const char *names[] = {"HEALTHY", "VNT LAG + OVERFUEL", "MAF OVER-READING", "INJECTOR EXCESS"};
+        return String("SMOKE MODE ") + String(sim.mode) + " " + names[sim.mode];
+    }
     if (c.startsWith("ATIFR") || c.startsWith("ATL") || c.startsWith("ATM") ||
         c.startsWith("ATAT") || c.startsWith("ATST") || c.startsWith("ATS")) return "OK";
     if (c.startsWith("ATDP")) return protocol == 2 ? "SAE J1850 VPW" : "ISO 14230-4";
@@ -828,19 +985,22 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         if (blk == 0x12) {
             tick();
             uint16_t cr = (uint16_t)((coolantTemp + 273.1f) * 10);
+            uint16_t iatR = u16clamp((sim.iat + 273.1f) * 10);
             uint16_t rpm = (uint16_t)engineRpm;
-            uint16_t iq = (uint16_t)(5.46f * 100); // 546 = idle injection qty
+            uint16_t iq = u16clamp(sim.fuel * 100);
+            uint16_t mapR = u16clamp(sim.boostAct * 1000);
+            uint16_t railR = u16clamp(sim.rail / 0.101f);
             // Real BLE: 0C79 0BE7 08B7 08B7 0000 02EC 0000 0210 038E 0B60 02A6 012A 0042 097F 03A0 0000
             uint8_t r[] = {0x61,0x12,
-                (uint8_t)(cr>>8),(uint8_t)(cr&0xFF),    // [0-1] Coolant
-                0x0B,0xD9,                               // [2-3] IAT (real: 30.2C)
+                hi8(cr),lo8(cr),                         // [0-1] Coolant
+                hi8(iatR),lo8(iatR),                     // [2-3] IAT
                 0x08,0xB7, 0x08,0xB7,                   // [4-7] Voltages
                 0x00,0x00,                               // [8-9]
-                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),  // [10-11] RPM
+                hi8(rpm),lo8(rpm),                       // [10-11] RPM
                 0x00,0x00,                               // [12-13]
-                (uint8_t)(iq>>8),(uint8_t)(iq&0xFF),    // [14-15] InjQty
-                0x03,0x8E,                               // [16-17] MAP mbar
-                0x0B,0x60,                               // [18-19] Rail *0.101=291Bar
+                hi8(iq),lo8(iq),                         // [14-15] InjQty /100
+                hi8(mapR),lo8(mapR),                     // [16-17] MAP mbar
+                hi8(railR),lo8(railR),                   // [18-19] Rail *0.101=Bar
                 0x02,0xA6, 0x01,0x2A, 0x00,0x42,       // [20-25]
                 0x09,0x7F, 0x03,0xA0, 0x00,0x00};      // [26-31]
             return kwpWrap(r, 34);
@@ -848,15 +1008,17 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         if (blk == 0x22) {
             tick();
             uint16_t cr = (uint16_t)((coolantTemp + 273.1f) * 10);
+            uint16_t iatR = u16clamp((sim.iat + 273.1f) * 10);
+            uint16_t mapR = u16clamp(sim.boostAct * 1000);
             // Real BLE: 0C79 0BE7 08B7 08B7 0000 0000 0211 038E 0B97 0394 024E 02E4 02E4 02BF 08B7 000F
             uint8_t r[] = {0x61,0x22,
-                (uint8_t)(cr>>8),(uint8_t)(cr&0xFF),    // [0-1] Coolant
-                0x0B,0xD9,                               // [2-3] IAT (real: 30.2C)
+                hi8(cr),lo8(cr),                         // [0-1] Coolant
+                hi8(iatR),lo8(iatR),                     // [2-3] IAT
                 0x08,0xB7, 0x08,0xB7,                   // [4-7] Voltages
                 0x00,0x00, 0x00,0x00,                   // [8-11]
                 0x02,0x11,                               // [12-13] InjQty spec
-                0x03,0x8E,                               // [14-15] MAP/1000=Boost
-                0x0B,0x97,                               // [16-17] Rail area
+                hi8(mapR),lo8(mapR),                     // [14-15] MAP/1000=Boost bar abs
+                0x0B,0x97,                               // [16-17] Air intake volts area
                 0x03,0x94, 0x02,0x4E,                   // [18-21]
                 0x02,0xE4, 0x02,0xE4,                   // [22-25]
                 0x02,0xBF, 0x08,0xB7, 0x00,0x0F};      // [26-31]
@@ -865,14 +1027,14 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         if (blk == 0x28) {
             tick();
             uint16_t rpm = (uint16_t)engineRpm;
-            uint16_t iq = (uint16_t)(8.84f * 100); // idle injection qty matching real vehicle
+            uint16_t iq = u16clamp(sim.fuel * 100);
             // Full 28-byte format (verified 2026-03-17)
             // 02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 002F 0000
             // [0-1]=RPM [2-3]=InjQty [4-13]=5x per-cyl RPM [14-15]=0
             // [16-17]=0x0016 [18-19]=varies [20-25]=inj corrections(s16) [26-27]=0
-            int16_t corr1 = -142 + random(-10,10);  // per-cylinder correction 1
-            int16_t corr2 = 54 + random(-5,5);
-            int16_t corr3 = 47 + random(-5,5);
+            int16_t corr1 = (int16_t)(sim.corr[0] * 100);
+            int16_t corr2 = (int16_t)(sim.corr[1] * 100);
+            int16_t corr3 = (int16_t)(sim.corr[2] * 100);
             uint8_t r[] = {0x61,0x28,
                 (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),      // [0-1] RPM
                 (uint8_t)(iq>>8),(uint8_t)(iq&0xFF),         // [2-3] InjQty /100
@@ -921,21 +1083,32 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             return kwpWrap(r, 26);
         }
         if (blk == 0x23) {
+            tick();
             // Real vehicle: 097F 024D FFF9 0BD1 039F 027A 007E 0030 03FD 012A
+            // [0-1] boost sensor raw (2431 @ 0.935 bar -> x2600), [6-7] follows gauge boost
+            uint16_t bs = u16clamp(sim.boostAct * 2600.0f);
+            uint16_t bg = u16clamp(3031.0f + (sim.boostAct - 0.93f) * 1000.0f);
             uint8_t r[] = {0x61,0x23,
-                0x09,0x7F, 0x02,0x4D, 0xFF,0xF9,
-                0x0B,0xD1, 0x03,0x9F, 0x02,0x7A,
+                hi8(bs),lo8(bs), 0x02,0x4D, 0xFF,0xF9,
+                hi8(bg),lo8(bg), 0x03,0x9F, 0x02,0x7A,
                 0x00,0x7E, 0x00,0x30, 0x03,0xFD, 0x01,0x2A};
             return kwpWrap(r, 22);
         }
         if (blk == 0x21) {
+            tick();
             // Real vehicle idle: 018F 03E3 03FD 004A 012A 03FD 024A 01EF 00B4 015D
+            // [0-1] pedal wish, [2-3] limiter, [4-5] demand, [6-7] driver (all /100 mg/str)
+            // [10-11] start setpoint, [12-13] limiter
             // [14-15]=0x01EF=495 → /10=49.5% fuel level
             // [16-17]=0x00B4=180 → /100=1.80V sensor voltage
+            uint16_t wish = u16clamp(sim.driver * 100);
+            uint16_t lim  = u16clamp(sim.limiter * 100);
+            uint16_t dem  = u16clamp(sim.fuel * 100);
+            uint16_t drv  = u16clamp((sim.pedal / 100.0f) * 52.0f * 100);
             uint8_t r[] = {0x61,0x21,
-                0x01,0x8F, 0x03,0xE3, 0x03,0xFD,
-                0x00,0x4A, 0x01,0x2A, 0x03,0xFD,
-                0x02,0x4A, 0x01,0xEF, 0x00,0xB4, 0x01,0x5D};
+                hi8(wish),lo8(wish), hi8(lim),lo8(lim), hi8(dem),lo8(dem),
+                hi8(drv),lo8(drv), 0x01,0x2A, 0x01,0x2A,
+                hi8(lim),lo8(lim), 0x01,0xEF, 0x00,0xB4, 0x01,0x5D};
             return kwpWrap(r, 22);
         }
         if (blk == 0x16) {
@@ -954,12 +1127,13 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         }
         if (blk == 0x32) {
             tick();
-            uint16_t fuelAct = (uint16_t)(8.81f * 100); // real vehicle idle fuel
+            uint16_t fuelAct = u16clamp(sim.fuel * 100);
+            uint16_t spd = u16clamp(sim.speed);
             // Real BLE: 03C3 0AD8 0000 0000 0CE4 03C4 03C3 0189 01A2 00FA 0030 026E 02C9 0000 0000 0000
             uint8_t r[] = {0x61,0x32,
                 (uint8_t)(fuelAct>>8),(uint8_t)(fuelAct&0xFF), // [0-1] Actual Fuel Qty
                 0x0A,0xD8,                               // [2-3]
-                0x00,0x00, 0x00,0x00,                   // [4-7] Speed=0
+                hi8(spd),lo8(spd), hi8(spd),lo8(spd),   // [4-7] Speed raw km/h, setpoint
                 0x0C,0xE4,                               // [8-9]
                 (uint8_t)(fuelAct>>8),(uint8_t)(fuelAct&0xFF), // [10-11]
                 (uint8_t)(fuelAct>>8),(uint8_t)(fuelAct&0xFF), // [12-13]
@@ -970,9 +1144,12 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             return kwpWrap(r, 34);
         }
         if (blk == 0x37) {
+            tick();
             // Real BLE: 0C67 105D 0079 0000 0008 0000 0000 0000 004E 0000 0000 0105 0040 0000 0000 0001 0000
+            // [0-1] EGR/MAF setpoint raw (const 3223), [2-3] VNT/wastegate duty raw 3144..4584 with boost demand
+            uint16_t wg = u16clamp(3144.0f + (sim.boostSet - 0.93f) / 1.2f * 1440.0f);
             uint8_t r[] = {0x61,0x37,
-                0x0C,0x67, 0x10,0x5D, 0x00,0x79,
+                0x0C,0x97, hi8(wg),lo8(wg), 0x00,0x79,
                 0x00,0x00, 0x00,0x08, 0x00,0x00,
                 0x00,0x00, 0x00,0x00, 0x00,0x4E,
                 0x00,0x00, 0x00,0x00, 0x01,0x05,
@@ -990,24 +1167,29 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             return kwpWrap(r, 28);
         }
         if (blk == 0x36) {
+            tick();
             // Real BLE: 0000 0000 02FF 125E 038D 0393 0000 0000 0391 0000 02C4 0B97 FFFF 125E 0083 FF62 002D 8494 0000
+            // [0-1] pedal1 /100 %, [2-3] pedal2, [4-5] pedal1 V /1000, [6-7] MAF /10 mg/str,
+            // [8-9] boost setpoint /1000 bar abs, [10-11] baro 912, [12-13] pedal2 V, [16-17] MAF V
+            uint16_t ped  = u16clamp(sim.pedal * 100);
+            uint16_t pedV = u16clamp(500.0f + sim.pedal * 35.0f);
+            uint16_t maf  = u16clamp(sim.mafRep * 10);
+            uint16_t bset = u16clamp(sim.boostSet * 1000);
+            uint16_t mafV = u16clamp(600.0f + sim.mafRep * 2.0f);
             uint8_t r[] = {0x61,0x36,
-                0x00,0x00, 0x00,0x00, 0x02,0xFF,
-                0x12,0x5E, 0x03,0x8D, 0x03,0x93,
+                hi8(ped),lo8(ped), 0x01,0x00, hi8(pedV),lo8(pedV),
+                hi8(maf),lo8(maf), hi8(bset),lo8(bset), 0x03,0x90,
                 0x00,0x00, 0x00,0x00, 0x03,0x91,
-                0x00,0x00, 0x02,0xC4, 0x0B,0x97,
+                0x00,0x00, 0x02,0xC4, hi8(mafV),lo8(mafV),
                 0xFF,0xFF, 0x12,0x5E, 0x00,0x83,
                 0xFF,0x62, 0x00,0x2D, 0x84,0x94, 0x00,0x00};
             return kwpWrap(r, 40);
         }
         if (blk == 0x26) {
+            tick();
             // Block 0x26: Vehicle Speed in data[2-3] (raw / 100 = km/h)
             // VERIFIED: 10000 → 100 km/h, 430 → 4.3 km/h
-            // Simulate city driving: 0-80 km/h cycling
-            static uint16_t simSpeedRaw = 0;
-            static bool spdUp = true;
-            if (spdUp) { simSpeedRaw += 500; if (simSpeedRaw >= 8000) spdUp = false; }
-            else { simSpeedRaw -= 500; if (simSpeedRaw <= 0) { simSpeedRaw = 0; spdUp = true; } }
+            uint16_t simSpeedRaw = u16clamp(sim.speed * 100.0f);
             uint8_t r[] = {0x61,0x26,
                 0x00,0x00, (uint8_t)(simSpeedRaw>>8),(uint8_t)(simSpeedRaw&0xFF), 0x00,0x00,
                 0x5C,0xB1, 0x7F,0xFF, 0x00,0x00,
@@ -1028,9 +1210,13 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             return kwpWrap(r, 36);
         }
         if (blk == 0x20) {
+            tick();
             // Real BLE: 0254 0253 03FE 0000 0094 0048 01A8 0163 0108 02E5 024D 0090 00BF 03A0 01FA
+            // [0-1] MAF alt raw (~0.72 x mg/str), [2-3] MAF voltage mV
+            uint16_t m0 = u16clamp(sim.mafRep * 0.72f);
+            uint16_t m1 = u16clamp(600.0f + sim.mafRep * 2.0f);
             uint8_t r[] = {0x61,0x20,
-                0x02,0x54, 0x02,0x53, 0x03,0xFE,
+                hi8(m0),lo8(m0), hi8(m1),lo8(m1), 0x03,0xFE,
                 0x00,0x00, 0x00,0x94, 0x00,0x48,
                 0x01,0xA8, 0x01,0x63, 0x01,0x08,
                 0x02,0xE5, 0x02,0x4D, 0x00,0x90,

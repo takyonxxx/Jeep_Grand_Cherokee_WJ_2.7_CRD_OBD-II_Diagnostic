@@ -177,3 +177,17 @@ PlatformIO project for VS Code. WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000
 - **NRC 0x78 for actuators**: `30 3A 08+` commands get `7F 30 78` + positive response in same frame
 
 Dynamic fields: RPM (0x12/0x28 with per-cyl), coolant temp (0x12/0x22), fuel qty (0x32), TCM gear cycling, TCM RPMs, injection corrections.
+
+### Smoke Test engine model (`SmokeSim`)
+The ECU live blocks are driven by a coherent transient model so the iOS **Smoke Test** can be exercised on the bench. A 40 s drive cycle repeats forever: idle, light cruise (~1500 rpm), full-throttle pull to ~4000 rpm, lift-off, idle, second pull, then two stationary throttle blips. Pedal -> RPM -> boost setpoint -> lagging boost actual -> MAF (from P·V/RT at 537 cc/cyl, VE 0.85) -> smoke limiter -> fuel -> rail / IAT / speed are all consistent across blocks 0x36, 0x28, 0x22, 0x12, 0x32, 0x21, 0x37, 0x20, 0x23, 0x26.
+
+Fault scenario is selected with the emulator-only AT command `ATSMOKEn` (survives ATZ; `ATSMOKE?` queries):
+
+| n | Scenario | Expected app flags |
+|---|----------|--------------------|
+| 0 | Healthy: boost reaches target in <1 s, limiter keeps A/F > 18 | none |
+| 1 | **Default.** VNT sticking: boost stays 0.5 bar under target, 2.5-4 s spool, transient over-fuel for 1.5 s (A/F ~13) | A/F < 15, boost deficit, boost lag, hot IAT |
+| 2 | MAF over-reading 30%: limiter trusts MAF, real mixture rich | MAF > 1.2x theoretical air |
+| 3 | Injector excess: fuel 35% above limiter, corrections ±4 mg | A/F < 15, correction > 3 mg |
+
+The HTTP status page (http://192.168.0.10/) shows the live model state (phase, pedal, rpm, boost act/set, MAF true/reported, fuel/limiter/A/F, rail, IAT).
