@@ -256,11 +256,22 @@ struct SmokeTestSession {
             // A fixed threshold is used because the setpoint itself climbs with
             // rpm during the pull, so "within x of target" is ill-defined even
             // on a healthy engine (tracking error ~0.2 bar). Boost is read
-            // every other cycle (~1.6 s), so the value carries +/-0.8 s.
-            if let hit = rows12.first(where: { $0.boostAct >= ambient + 0.5 }) {
-                let lag = hit.t - p.tStart
+            // every other cycle (~1.6 s), so the crossing time is interpolated
+            // between the last read below and the first read at/above threshold.
+            let spoolThr = ambient + 0.5
+            if let hitIdx = rows12.firstIndex(where: { $0.boostAct >= spoolThr }) {
+                let hit = rows12[hitIdx]
+                var before: SmokeSample? = hitIdx > 0 ? rows12[hitIdx - 1] : nil
+                if before == nil, p.start > 0 {
+                    before = samples[0..<p.start].last(where: { $0.src == 0x12 && $0.boostAct > 0 })
+                }
+                var tCross = hit.t
+                if let b = before, b.boostAct < spoolThr, hit.boostAct > b.boostAct {
+                    tCross = b.t + (hit.t - b.t) * (spoolThr - b.boostAct) / (hit.boostAct - b.boostAct)
+                }
+                let lag = max(0, tCross - p.tStart)
                 worstLag = max(worstLag, lag)
-                line += " | spool to +0.5 bar \(f1(lag))s (+/-0.8)"
+                line += " | spool to +0.5 bar \(f1(lag))s"
             } else if (rows12.map { setAt($0.t) }.max() ?? 0) > ambient + 0.5 {
                 neverReached = true
                 line += " | +0.5 bar NOT reached"
