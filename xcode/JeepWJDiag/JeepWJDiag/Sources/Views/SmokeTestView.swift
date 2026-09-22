@@ -45,11 +45,11 @@ struct SmokeTestView: View {
         VStack(alignment: .leading, spacing: 3) {
             Text("Kara Duman Testi").font(.system(size: 14, weight: .bold))
             Group {
-                Text("1. Motor sıcak olsun (>70°C). ELM bağlı olsun, modül seçmeye gerek yok.")
-                Text("2. START'a bas, 3 sn rölantide bekle.")
-                Text("3. Yolda 2. viteste ~1500 rpm'den gaza SONUNA KADAR bas, 3500+ rpm'e çek.")
-                Text("4. Duman görüldüğü an MARK'a bas (yolcu bassın).")
-                Text("5. Durunca N'de 2 kez ani gaz ver, sonra STOP.")
+                Text("1. Motor sıcak olsun (>70°C). Conn sekmesinden ELM'e bağlan (START yeşile döner), modül seçmeye gerek yok.")
+                Text("2. START'a bas, 3 sn rölantide bekle. START'ın yerine STOP ve MARK gelir.")
+                Text("3. Yolda D'de ~1500 rpm'den gaza SONUNA KADAR bas, 3500+ rpm'e çek (2 kez).")
+                Text("4. Duman görüldüğü an sarı MARK'a bas (yolcu bassın).")
+                Text("5. Durunca P veya N'de 2 kez ani gaz ver, sonra STOP.")
                 Text("6. WhatsApp ile logu gönder.")
             }
             .font(.system(size: 11))
