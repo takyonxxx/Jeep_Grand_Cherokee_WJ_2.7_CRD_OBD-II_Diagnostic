@@ -164,15 +164,31 @@ struct SmokeTestSession {
         let pedalMax = samples.map { $0.pedal }.max() ?? 0
         s.lines.append("RPM max \(Int(rpmMax)) | Pedal max \(Int(pedalMax))%")
 
-        // Peak fuel and A/F at that moment
-        if let pk = samples.max(by: { $0.fuelUsed < $1.fuelUsed }) {
-            s.lines.append("Fuel peak \(f1(pk.fuelUsed)) mg/str @\(Int(pk.rpm))rpm t=\(f1(pk.t))s | MAF \(f1(pk.maf)) -> A/F \(f1(pk.af))")
+        // A/F is judged on 0x28 rows (fresh fuel) with the MAF interpolated in
+        // time between the surrounding 0x36 reads. Fuel and MAF are read
+        // ~0.25 s apart; during turbo spool MAF climbs ~25 %/s, so dividing
+        // fresh fuel by the previous MAF read biases A/F low by ~10 %.
+        let mafReads = samples.filter { $0.src == 0x36 }.map { ($0.t, $0.maf) }
+        func mafAt(_ t: Double) -> Double {
+            guard let first = mafReads.first else { return 0 }
+            if t <= first.0 { return first.1 }
+            for i in 1..<mafReads.count where mafReads[i].0 >= t {
+                let (t0, m0) = mafReads[i - 1], (t1, m1) = mafReads[i]
+                return t1 > t0 ? m0 + (m1 - m0) * (t - t0) / (t1 - t0) : m1
+            }
+            return mafReads[mafReads.count - 1].1
         }
-        // Minimum A/F under load
-        let loaded = samples.filter { $0.pedal > 30 || $0.fuelUsed > 15 }
-        let pool = loaded.isEmpty ? samples : loaded
-        if let lo = pool.filter({ $0.af > 0 }).min(by: { $0.af < $1.af }) {
-            s.lines.append("A/F min \(f1(lo.af)) @\(Int(lo.rpm))rpm t=\(f1(lo.t))s (fuel \(f1(lo.fuelUsed)) / air \(f1(lo.maf)))")
+        struct AFRow { let s: SmokeSample; let maf: Double; let af: Double }
+        let afRows: [AFRow] = samples.filter { $0.src == 0x28 && $0.fuelUsed >= 5.0 }.map {
+            let m = mafAt($0.t); return AFRow(s: $0, maf: m, af: m / $0.fuelUsed)
+        }
+        if let pk = afRows.max(by: { $0.s.fuelUsed < $1.s.fuelUsed }) {
+            s.lines.append("Fuel peak \(f1(pk.s.fuelUsed)) mg/str @\(Int(pk.s.rpm))rpm t=\(f1(pk.s.t))s | MAF \(f1(pk.maf)) -> A/F \(f1(pk.af))")
+        }
+        let loaded = afRows.filter { $0.s.pedal > 30 || $0.s.fuelUsed > 15 }
+        let pool = loaded.isEmpty ? afRows : loaded
+        if let lo = pool.min(by: { $0.af < $1.af }) {
+            s.lines.append("A/F min \(f1(lo.af)) @\(Int(lo.s.rpm))rpm t=\(f1(lo.s.t))s (fuel \(f1(lo.s.fuelUsed)) / air \(f1(lo.maf)) interp)")
             if lo.af < 15 { s.flags.append("A/F < 15: cok zengin karisim, kara duman kacinilmaz (hava az veya yakit fazla)") }
             else if lo.af < 17 { s.flags.append("A/F < 17: zengin karisim, duman sinirinda") }
         }
@@ -194,30 +210,41 @@ struct SmokeTestSession {
         var worstDeficit = 0.0
         var worstLag = 0.0
         var neverReached = false
+        var railLoad: [Double] = []
         for (n, p) in events.enumerated() {
-            let window = samples[p.start...p.end]
-            // settle: ignore the first 0.7 s after the pedal step for deficit
-            let settled = window.filter { $0.t >= p.tStart + 0.7 && $0.boostSet > 0 && $0.boostAct > 0 }
             var line = "Pull \(n + 1) t=\(f1(p.tStart))-\(f1(p.tEnd))s rpm \(Int(samples[p.start].rpm))->\(Int(samples[p.end].rpm))"
+            if p.tEnd - p.tStart < 2.0 {
+                // Stationary blips / short stabs: the turbo cannot spool in
+                // under 2 s even on a healthy engine, so boost is not judged.
+                line += " | short pull, boost/rail not evaluated"
+                s.lines.append(line)
+                continue
+            }
+            // Boost actual is fresh only on 0x12 rows. Rows after the last
+            // 0x36 read that still showed pedal >= 60 are ambiguous (the pedal
+            // may already be up, boost collapsing), so they are excluded.
+            let evalEnd = (p.start...p.end).reversed().first { samples[$0].src == 0x36 } ?? p.start
+            let rows12 = samples[p.start...evalEnd].filter { $0.src == 0x12 && $0.boostAct > 0 && $0.boostSet > 0 }
+            // settle: ignore the first 0.7 s after the pedal step for deficit and rail
+            let settled = rows12.filter { $0.t >= p.tStart + 0.7 }
             if let d = settled.max(by: { ($0.boostSet - $0.boostAct) < ($1.boostSet - $1.boostAct) }) {
                 let deficit = d.boostSet - d.boostAct
                 worstDeficit = max(worstDeficit, deficit)
                 line += " | deficit max \(f2(deficit)) bar @\(Int(d.rpm))rpm"
             }
-            if p.tEnd - p.tStart < 2.0 {
-                // Stationary blips / short stabs: the turbo cannot spool in
-                // under 2 s even on a healthy engine, so boost is not judged.
-                line += " | short pull, boost not evaluated"
-            } else if let hit = window.first(where: { $0.boostSet > ambient + 0.3 && $0.boostAct >= $0.boostSet - 0.15 }) {
+            if let hit = rows12.first(where: { $0.boostSet > ambient + 0.3 && $0.boostAct >= $0.boostSet - 0.15 }) {
                 let lag = hit.t - p.tStart
                 worstLag = max(worstLag, lag)
                 line += " | lag \(f1(lag))s"
-            } else if (window.map { $0.boostSet }.max() ?? 0) > ambient + 0.3 {
+            } else if (rows12.map { $0.boostSet }.max() ?? 0) > ambient + 0.3 {
                 neverReached = true
                 line += " | target NOT reached"
+            } else if rows12.isEmpty {
+                line += " | no boost reads"
             } else {
                 line += " | no boost demand"
             }
+            railLoad += settled.filter { $0.rail > 0 }.map { $0.rail }
             s.lines.append(line)
         }
         if worstDeficit > 0.4 { s.flags.append("Boost hedefin 0.4 bar+ altinda kaliyor: VNT kanatcik / hortum kacagi / N75 kontrol") }
@@ -236,16 +263,8 @@ struct SmokeTestSession {
             if ratio > 1.2 { s.flags.append("MAF teorik havanin %120 ustunde: MAF yuksek okuyor -> ECU fazla yakit verir -> duman") }
         }
 
-        // Rail pressure: 0x12 is a slow block, so only rows where 0x12 was
-        // actually read carry a fresh value (other rows repeat the previous
-        // read). Judged only after the pump has had 0.7 s to respond to the
-        // pedal step, otherwise the pre-step value is a false dip.
-        var railLoad: [Double] = []
-        for p in events {
-            railLoad += samples[p.start...p.end]
-                .filter { $0.src == 0x12 && $0.t >= p.tStart + 0.7 && $0.rail > 0 }
-                .map { $0.rail }
-        }
+        // Rail pressure: collected above from fresh 0x12 rows of pulls >= 2 s,
+        // after the pump has had 0.7 s to respond to the pedal step.
         let railMax = samples.map { $0.rail }.max() ?? 0
         if let rmin = railLoad.min() {
             s.lines.append("Rail under load (settled) min \(Int(rmin)) bar | max \(Int(railMax)) bar")
