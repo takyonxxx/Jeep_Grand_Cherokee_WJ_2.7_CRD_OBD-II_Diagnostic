@@ -16,13 +16,14 @@ final class WJDiagnostics: ObservableObject {
     // Smoke test polling: the three fast-changing blocks every cycle plus
     // one slow block round-robin. Reads are chained on completion (not on a
     // timer) so the ELM command queue never backs up during the transient.
-    // Real vehicle (pcap/ecu_live.pcap): each block read takes ~300 ms on
-    // K-Line, so the cycle is kept to 3 fast reads. 0x12 replaces 0x22: it
-    // carries the same MAP / IAT / coolant plus rail pressure every cycle.
+    // Real vehicle (pcap/ecu_live.pcap): each block read takes ~250-300 ms on
+    // K-Line even with ATAT2/ATST 19, so the cycle is 2 fast reads + 1 slow
+    // (~0.8 s). The fuel/air pair that decides smoke comes every cycle;
+    // 0x12 (MAP actual, rail, IAT, coolant) is interleaved every other cycle,
+    // which is enough for turbo spool that takes 1-3 s.
     //   0x36 pedal, MAF, boost setpoint | 0x28 rpm, inj qty, corrections
-    //   0x12 MAP actual, rail, IAT, coolant
-    private let smokeFastBlocks: [UInt8] = [0x36, 0x28, 0x12]
-    private let smokeSlowBlocks: [UInt8] = [0x21, 0x32, 0x37, 0x20, 0x23]
+    private let smokeFastBlocks: [UInt8] = [0x36, 0x28]
+    private let smokeSlowBlocks: [UInt8] = [0x12, 0x21, 0x12, 0x32, 0x12, 0x37, 0x12, 0x20, 0x12, 0x23]
     private var smokeStep = 0
     private var smokeSlowIndex = 0
     private var lastSmokeRead = Date.distantPast

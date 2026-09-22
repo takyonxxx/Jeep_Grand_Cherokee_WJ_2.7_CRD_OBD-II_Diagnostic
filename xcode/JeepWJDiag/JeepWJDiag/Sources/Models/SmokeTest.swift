@@ -48,9 +48,9 @@ struct SmokeSample {
 }
 
 struct SmokeTestSession {
-    /// The blocks read every cycle; a sample is only stored once all three
-    /// have been seen, so the first rows are not padded with zeros.
-    /// (0x12 carries MAP, rail, IAT and coolant; 0x22 is redundant with it.)
+    /// Blocks that must each have been read once before rows are stored, so
+    /// the first rows are not padded with zeros: pedal/MAF (0x36), rpm/fuel
+    /// (0x28) and MAP/rail/IAT (0x12, interleaved every other cycle).
     static let fastBlocks: Set<UInt8> = [0x36, 0x28, 0x12]
 
     var isRecording = false
@@ -314,7 +314,10 @@ struct SmokeTestSession {
         let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH:mm"
         let when = startDate.map { df.string(from: $0) } ?? "-"
         var out = "JeepWJDiag SMOKE TEST \(when)\n"
-        out += "Duration \(String(format: "%.1f", duration))s, \(samples.count) samples, \(marks.count) marks, ECU init \(String(format: "%.1f", initSeconds))s\n"
+        let rate = duration > 0 ? Double(samples.count) / duration : 0
+        let fuelReads = samples.filter { $0.src == 0x28 }.count
+        let fuelRate = duration > 0 ? Double(fuelReads) / duration : 0
+        out += "Duration \(String(format: "%.1f", duration))s, \(samples.count) samples (\(String(format: "%.1f", rate))/s, fuel+pedal \(String(format: "%.1f", fuelRate))/s), \(marks.count) marks, ECU init \(String(format: "%.1f", initSeconds))s\n"
         if let e = error { out += "ERROR: \(e)\n" }
         let sum = summary()
         out += "-- SUMMARY --\n" + sum.lines.joined(separator: "\n") + "\n"
