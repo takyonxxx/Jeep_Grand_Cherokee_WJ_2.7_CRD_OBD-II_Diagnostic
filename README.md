@@ -5,15 +5,30 @@
 Qt6 cross-platform diagnostic application + native iOS (Swift/SwiftUI) port + ESP32-S3 ELM327 emulator.
 All commands and responses verified on real vehicle via BLE full block dumps and bus capture analysis.
 
+## Repository layout
+
+| Folder | Contents |
+|---|---|
+| `ios-app/JeepWJDiag/` | Native iOS app (Swift/SwiftUI, Xcode project) — the version used on the car |
+| `qt-app/` | Qt6 C++ desktop/mobile app (`JeepWJDiag.pro`, `src/`, `include/`, Android/iOS/macOS packaging) |
+| `esp32-emulator/` | ESP32-S3 ELM327 emulator (PlatformIO) with real-vehicle response database and smoke-test engine model |
+| `captures/pcap/` | Real-vehicle bus captures (ECU live, TCM live, all modules) — the ground truth for block layouts |
+| `ecu-firmware/` | EDC15C2 flash dumps (`293-822` = this car, stock; `293-822-egr-off` = flashed EGR-off; `409-438` = 2004 reference) and `293-822_maps.md` (extracted maps) |
+| `docs/` | `RELAY_MAP.md` (full command / block reference), OBD-II pinout, screenshots |
+| `assets/` | App icons and splash images |
+| `tools/` | Auxiliary tools (EcuParser) |
+
+`WJKEY.keystore` (Android signing key) is kept locally and is no longer tracked.
+
 ## iOS / Xcode Version (Swift/SwiftUI)
 
-Native iOS port targeting iPhone (iOS 17+). Source code: `xcode/JeepWJDiag/`
+Native iOS port targeting iPhone (iOS 17+). Source code: `ios-app/JeepWJDiag/`
 
 ### Screenshots
 
 | ECU Live Data | TCM Live Data |
 |:---:|:---:|
-| ![ECU Dashboard](xcode/ecu_live.png) | ![TCM Dashboard](xcode/tcm_live.png) |
+| ![ECU Dashboard](docs/screenshots/ecu_live.png) | ![TCM Dashboard](docs/screenshots/tcm_live.png) |
 
 ### Features
 - **5 tabs**: Conn (connection + dashboard + module list), DTC, Ctrl (quick controls), Acts (actuators), Log
@@ -21,11 +36,11 @@ Native iOS port targeting iPhone (iOS 17+). Source code: `xcode/JeepWJDiag/`
 - **TCM Dashboard**: Big GEAR center (D1-D5 green, P/N/R amber, LIMP red), SPEED, TURBIN, T-TEMP, LIMP, LINE-P, TCC, SOL V, BATT
 - **Actuator controls**: Hold-to-activate buttons with green highlight for all modules
 - **Quick Controls tab**: Driver Door / Passenger Door / BCM quick-access grid
-- **Smoke Test** (Acts tab, top card): high-rate recording of pedal, fuel qty (0x28/0x32), MAF (0x36), boost actual vs setpoint (0x12/0x36), rail (0x12), IAT, 0x21 fuel-limiter words, 0x37/0x20/0x23 raw words during a full-throttle transient. Cycle is 0x36 → 0x28 → one slow block (0x12 every other cycle, then 0x21/0x32/0x37/0x20/0x23); real-car reads take ~250-300 ms each (pcap/ecu_live.pcap), so the test sets `ATAT2` + `ATST 19` after init and keeps the cycle at 3 reads (~0.8 s, fuel/pedal/MAF every cycle). MARK button tags the moment smoke is seen. Auto summary (A/F per stroke, boost lag/deficit, MAF vs theoretical air, rail dip, idle-only corrections, adapter stall gaps) + CSV (with gear and the 0x36[0-1] signed word), shared to WhatsApp (text) or via share sheet (file). Pulls are detected from the pedal word 0x36/0x12[12-13] (clamped 0–100 %); rail is judged only while fuel is injected (overrun sits at ~500 bar, which is normal). After the test the ECU stays selected and SID 81 keepalive continues, otherwise the K-Line session and the WiFi adapter's TCP socket drop within ~20 s.
+- **Smoke Test** (Acts tab, top card): high-rate recording of pedal, fuel qty (0x28/0x32), MAF (0x36), boost actual vs setpoint (0x12/0x36), rail (0x12), IAT, 0x21 fuel-limiter words, 0x37/0x20/0x23 raw words during a full-throttle transient. Cycle is 0x36 → 0x28 → one slow block (0x12 every other cycle, then 0x21/0x32/0x37/0x20/0x23); real-car reads take ~250-300 ms each (captures/pcap/ecu_live.pcap), so the test sets `ATAT2` + `ATST 19` after init and keeps the cycle at 3 reads (~0.8 s, fuel/pedal/MAF every cycle). MARK button tags the moment smoke is seen. Auto summary (A/F per stroke, boost lag/deficit, MAF vs theoretical air, rail dip, idle-only corrections, adapter stall gaps) + CSV (with gear and the 0x36[0-1] signed word), shared to WhatsApp (text) or via share sheet (file). Pulls are detected from the pedal word 0x36/0x12[12-13] (clamped 0–100 %); rail is judged only while fuel is injected (overrun sits at ~500 bar, which is normal). After the test the ECU stays selected and SID 81 keepalive continues, otherwise the K-Line session and the WiFi adapter's TCP socket drop within ~20 s.
 - **BLE auto-connect**: Background scan with OBD device filter list
 - **Manual Start/Stop Live Data**: Live data does not auto-start — allows actuator use first
 - **Launch screen**: Composite splash image with JeepWjDiag title + Jeep photo
-- **Real-bus robustness** (derived from `pcap/*.pcap`): J1850 replies are kept only when they start with `26 <addr>` (drops `2D xx`, `B8 58`, `23 A0` traffic); NRC detection is token based (`7F sid code`), so data bytes 7F/21/78 never trigger a retry; module probe retries once on `NO DATA` (9 of 30 first reads after `ATRA` fail on the car); TCM `14 00 00` handles `7F 14 78` by waiting and re-reading for the deferred `54`; ESP `01 00 00` clear retries up to 10×; DTC PID scan locates `26 <addr> 62` and treats `xx FF FF` as unsupported.
+- **Real-bus robustness** (derived from `captures/captures/pcap/*.pcap`): J1850 replies are kept only when they start with `26 <addr>` (drops `2D xx`, `B8 58`, `23 A0` traffic); NRC detection is token based (`7F sid code`), so data bytes 7F/21/78 never trigger a retry; module probe retries once on `NO DATA` (9 of 30 first reads after `ATRA` fail on the car); TCM `14 00 00` handles `7F 14 78` by waiting and re-reading for the deferred `54`; ESP `01 00 00` clear retries up to 10×; DTC PID scan locates `26 <addr> 62` and treats `xx FF FF` as unsupported.
 
 ---
 
@@ -58,7 +73,7 @@ ECU responds with `C1 EF 8F` each time.
 ### ECU Security — Seed=0x0000 Handling
 When ECU is already unlocked, it returns seed `67 01 00 00`. This means security is inactive.
 **Do not send a key in this state**: the real ECU answers `27 02 9C C9` (ArvutaKoodi of seed 0)
-with NRC `7F 27 12` (pcap/full_modules.pcap, 3 attempts). Both apps and the emulator skip the key.
+with NRC `7F 27 12` (captures/pcap/full_modules.pcap, 3 attempts). Both apps and the emulator skip the key.
 Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when seed=0.
 
 ## Complete Module Address Map (Verified)
@@ -139,7 +154,7 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 
 ## Controls Tab
 
-See [RELAY_MAP.md](RELAY_MAP.md) for full command reference.
+See [RELAY_MAP.md](docs/RELAY_MAP.md) for full command reference.
 
 ### Windows
 Both doors: `38 PID 12` ON, `38 PID 00` OFF.
@@ -198,4 +213,4 @@ Fault scenario is selected with the emulator-only AT command `ATSMOKEn` (survive
 The HTTP status page (http://192.168.0.10/) shows the live model state (phase, pedal, rpm, boost act/set, MAF true/reported, fuel/limiter/A/F, rail, IAT).
 
 ### Real-vehicle response timing
-Responses are delayed to match `pcap/ecu_live.pcap`: ATZ ~900 ms, ATFI ~600 ms, `81` ~350 ms, `27 xx` ~450 ms, `21 xx` block reads ~300 ms (40 ms ECU latency + 2.5 ms per response byte + the ELM post-response wait). `ATST hh` (hex × 4 ms) and `ATAT0/1/2` are honoured, so the smoke test's `ATAT2` + `ATST 19` shortens reads to ~150 ms just like on a real adapter. `ATSIMDELAY0` switches to instant responses for fast bench runs, `ATSIMDELAY1` restores real timing (default, survives ATZ).
+Responses are delayed to match `captures/pcap/ecu_live.pcap`: ATZ ~900 ms, ATFI ~600 ms, `81` ~350 ms, `27 xx` ~450 ms, `21 xx` block reads ~300 ms (40 ms ECU latency + 2.5 ms per response byte + the ELM post-response wait). `ATST hh` (hex × 4 ms) and `ATAT0/1/2` are honoured, so the smoke test's `ATAT2` + `ATST 19` shortens reads to ~150 ms just like on a real adapter. `ATSIMDELAY0` switches to instant responses for fast bench runs, `ATSIMDELAY1` restores real timing (default, survives ATZ).
