@@ -83,6 +83,23 @@ final class ELM327Connection: NSObject, ObservableObject {
         processNextCommand()
     }
 
+    /// Commands waiting or in flight. Pollers must not enqueue while this is
+    /// non-zero: the 0.1 s live-data timer used to queue ~3 reads per answered
+    /// read, so after 35 s the queue held a minute of stale reads and a smoke
+    /// test's ATZ went out 63 s after START (emulator log 2026-09-23 20:29).
+    var pendingCommands: Int { commandQueue.count + (isProcessingCommand ? 1 : 0) }
+
+    /// Drop everything that has not been sent yet (the in-flight command is
+    /// left alone so its response is still matched). Used before an init
+    /// sequence so ATZ is not stuck behind queued block reads.
+    func cancelQueuedCommands() {
+        guard !commandQueue.isEmpty else { return }
+        let dropped = commandQueue
+        commandQueue.removeAll()
+        log("[QUEUE] dropped \(dropped.count) queued command(s)")
+        for c in dropped { c.completion?("CANCELLED") }
+    }
+
     func sendRaw(_ data: String) {
         writeToTransport((data + "\r").data(using: .ascii)!)
         log("[TX] \(data)")
@@ -194,7 +211,10 @@ final class ELM327Connection: NSObject, ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.onRawData?(data)
-            guard let str = String(data: data, encoding: .ascii) else { return }
+            // ISO Latin-1 never fails: the real adapter (and the emulator) put a
+            // 0xFC byte in the ATZ reply ("ATZ\r\xFC\r\r OBDII v1.5"), and a
+            // strict ASCII decode dropped the whole chunk -> ATZ TIMEOUT.
+            guard let str = String(data: data, encoding: .isoLatin1) else { return }
             self.responseBuffer += str
             guard self.responseBuffer.contains(">") else { return }
 

@@ -56,6 +56,8 @@ final class WJDiagnostics: ObservableObject {
 
     func initModule(_ module: WJModule, completion: @escaping (Bool) -> Void) {
         guard let kwp = kwp else { completion(false); return }
+        // Nothing queued before us may run first: ATZ must go out now.
+        connection?.cancelQueuedCommands()
 
         switch module.bus {
         case .kLine:
@@ -106,6 +108,9 @@ final class WJDiagnostics: ObservableObject {
         keepaliveTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self = self, let conn = self.connection, conn.state == .ready else { return }
             if onlyWhenIdle && Date().timeIntervalSince(self.lastSmokeRead) <= 1.5 { return }
+            // A command in flight keeps the session alive by itself; queuing
+            // another 81 behind it only builds a backlog.
+            if conn.pendingCommands > 0 { return }
             self.kwp?.sendKeepalive()
         }
     }
@@ -202,6 +207,7 @@ final class WJDiagnostics: ObservableObject {
         if smokeTest.isRecording { smokeTest.finish() }
         isPollingLive = false
         pollTimer?.invalidate(); pollTimer = nil
+        connection?.cancelQueuedCommands()
         resumeIdleKeepalive()
     }
 
@@ -287,6 +293,9 @@ final class WJDiagnostics: ObservableObject {
 
     private func pollNextECUBlock() {
         guard isPollingLive, let kwp = kwp else { return }
+        // The timer ticks every 0.1 s but a read takes ~0.35 s on the car:
+        // only enqueue when the previous command has been answered.
+        guard (connection?.pendingCommands ?? 0) == 0 else { return }
 
         var blocks = ecuBlocks
         if ecuSecurityUnlocked { blocks += ecuSecurityBlocks }
@@ -451,6 +460,7 @@ final class WJDiagnostics: ObservableObject {
 
     private func pollNextTCMBlock() {
         guard isPollingLive, let kwp = kwp else { return }
+        guard (connection?.pendingCommands ?? 0) == 0 else { return }
         let block = tcmBlocks[currentBlockIndex % tcmBlocks.count]
         currentBlockIndex += 1
         
