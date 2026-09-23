@@ -10,7 +10,10 @@ final class WJDiagnostics: ObservableObject {
     @Published var moduleStates: [WJModule: Bool] = [:]
     @Published var isPollingLive = false
     @Published var activeBus: BusType = .kLine
-    @Published var activeModule: WJModule?
+    @Published var activeModule: WJModule? {
+        // No module (or a J1850 module) selected -> no K-Line keepalive.
+        didSet { if activeModule == nil || activeModule?.bus != .kLine { stopKeepalive() } }
+    }
     @Published var smokeTest = SmokeTestSession()
 
     // Smoke test polling: the three fast-changing blocks every cycle plus
@@ -56,24 +59,68 @@ final class WJDiagnostics: ObservableObject {
 
         switch module.bus {
         case .kLine:
+            // Any K-Line session dies after P3max (~5 s) without traffic and the
+            // WiFi ELM327 clone then drops the TCP socket (real log 2026-09-23:
+            // 23 s idle after a smoke test -> "connection abort"). Keep SID 81
+            // going for as long as a K-Line module is the active one.
             if module == .motorECU {
                 kwp.initECU { [weak self] ok in
                     guard ok else { completion(false); return }
-                    // Security unlock
+                    // Security unlock (seed 00 00 = already unlocked, no key is sent)
                     kwp.securityUnlockECU { unlocked in
                         self?.ecuSecurityUnlocked = unlocked
                         self?.connection?.log("ECU security: \(unlocked ? "unlocked" : "locked")")
+                        self?.startKeepalive(onlyWhenIdle: false)
                         completion(true)
                     }
                 }
             } else {
-                kwp.initTCM { ok in
+                kwp.initTCM { [weak self] ok in
                     guard ok else { completion(false); return }
-                    kwp.securityUnlockTCM { _ in completion(true) }
+                    kwp.securityUnlockTCM { _ in
+                        self?.startKeepalive(onlyWhenIdle: false)
+                        completion(true)
+                    }
                 }
             }
         case .j1850:
+            stopKeepalive()   // SID 81 must not be sent on the J1850 bus
             kwp.initJ1850(module: module, completion: completion)
+        }
+    }
+
+    /// Pedal word -> 0...100 %. Anything outside the physical range means the
+    /// word was not the pedal (wrong offset / sign) and is clamped so the smoke
+    /// test never sees a "655 %" pedal again.
+    static func pedalPercent(_ raw: UInt16) -> Double {
+        return min(100.0, max(0.0, Double(raw) / 100.0))
+    }
+
+    // MARK: - K-Line keepalive
+
+    /// SID 0x81 (StartCommunication) every 2 s — the real vehicle uses 81, not 3E.
+    /// `onlyWhenIdle` = only send when no block read happened in the last 1.5 s
+    /// (smoke test: the read chain itself keeps the session alive).
+    private func startKeepalive(onlyWhenIdle: Bool) {
+        keepaliveTimer?.invalidate()
+        keepaliveTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self = self, let conn = self.connection, conn.state == .ready else { return }
+            if onlyWhenIdle && Date().timeIntervalSince(self.lastSmokeRead) <= 1.5 { return }
+            self.kwp?.sendKeepalive()
+        }
+    }
+
+    private func stopKeepalive() {
+        keepaliveTimer?.invalidate(); keepaliveTimer = nil
+    }
+
+    /// Called when a K-Line module stays selected but polling stopped:
+    /// switch back to the plain 2 s keepalive so the session does not time out.
+    private func resumeIdleKeepalive() {
+        if let m = activeModule, m.bus == .kLine, connection?.state == .ready {
+            startKeepalive(onlyWhenIdle: false)
+        } else {
+            stopKeepalive()
         }
     }
 
@@ -128,9 +175,7 @@ final class WJDiagnostics: ObservableObject {
                 self?.pollNextECUBlock()
             }
             // Keepalive: SID 0x81 every 2 seconds (NOT 0x3E!)
-            self?.keepaliveTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-                self?.kwp?.sendKeepalive()
-            }
+            self?.startKeepalive(onlyWhenIdle: false)
         }
     }
 
@@ -146,18 +191,18 @@ final class WJDiagnostics: ObservableObject {
             self?.pollTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { _ in
                 self?.pollNextTCMBlock()
             }
-            self?.keepaliveTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-                self?.kwp?.sendKeepalive()
-            }
+            self?.startKeepalive(onlyWhenIdle: false)
         }
     }
 
+    /// Stops polling. The module stays selected (the views clear `activeModule`
+    /// themselves when the user deselects it), so a K-Line session is kept
+    /// alive with SID 81 until another module is initialised or we disconnect.
     func stopLiveData() {
         if smokeTest.isRecording { smokeTest.finish() }
         isPollingLive = false
         pollTimer?.invalidate(); pollTimer = nil
-        keepaliveTimer?.invalidate(); keepaliveTimer = nil
-        activeModule = nil
+        resumeIdleKeepalive()
     }
 
     // MARK: - Smoke Test (black smoke transient recording)
@@ -184,9 +229,7 @@ final class WJDiagnostics: ObservableObject {
             }
             // Continuous block reads keep the KWP session alive by themselves;
             // only send SID 81 if the chain has been silent for a while.
-            self.keepaliveTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-                if Date().timeIntervalSince(self.lastSmokeRead) > 1.5 { self.kwp?.sendKeepalive() }
-            }
+            self.startKeepalive(onlyWhenIdle: true)
             // ELM327 timing: the default 200 ms post-response wait (ATST 32)
             // dominates the ~300 ms per read seen on the real car. Aggressive
             // adaptive timing + 100 ms wait roughly doubles the sample rate.
@@ -203,10 +246,11 @@ final class WJDiagnostics: ObservableObject {
     func stopSmokeTest() {
         guard smokeTest.isRecording else { return }
         smokeTest.finish()
-        keepaliveTimer?.invalidate(); keepaliveTimer = nil
         isPollingLive = false
-        activeModule = nil
         connection?.log("[SMOKE] test stopped: \(smokeTest.samples.count) samples, \(String(format: "%.1f", smokeTest.duration)) s")
+        // ECU stays selected: keep the K-Line session alive (the 2026-09-23 log
+        // lost the adapter 23 s after the test because nothing was sent).
+        resumeIdleKeepalive()
     }
 
     func smokeTestMark() {
@@ -298,16 +342,17 @@ final class WJDiagnostics: ObservableObject {
             guard let self = self else { return }
             switch block {
             case 0x28:
-                // RPM [0-1] raw (overrides 0x12), InjQty [2-3] /100
+                // RPM [0-1] raw (overrides 0x12[10-11]), InjQty [2-3] /100
                 if data.count >= 4 {
                     self.ecuStatus.rpm = Double(u16(data, 0))
                     self.ecuStatus.injectionQty = Double(u16(data, 2)) / 100.0
                 }
-                // Per-cylinder RPMs [4-13]
+                // Per-cylinder RPMs [4-13] - only populated at idle (smooth-running
+                // control); all zero while driving (real car, 2026-09-23 log).
                 if data.count >= 14 {
                     for i in 0..<5 { self.ecuStatus.cylRPMs[i] = Double(u16(data, 4 + i*2)) }
                 }
-                // Injection corrections [20-25] signed
+                // Injection corrections [20-25] signed - idle only as well
                 if data.count >= 26 {
                     for i in 0..<3 { self.ecuStatus.injCorrections[i] = Double(s16(data, 20 + i*2)) / 100.0 }
                 }
@@ -320,14 +365,16 @@ final class WJDiagnostics: ObservableObject {
 
             case 0x12:
                 // Coolant [0-1], IAT [2-3] /10-273.1 (same sensors as 0x22),
-                // RPM [10-11] (0x28 overrides this), MAP actual [16-17] raw mbar
-                // (= boost, identical to 0x22[14-15] on the real car),
+                // RPM [10-11] (0x28 overrides this), Pedal [12-13] /100 = %,
+                // MAP actual [16-17] raw mbar (= boost, identical to 0x22[14-15]),
                 // Rail [18-19] *0.101 = Bar (constant 0.101, NOT /10!)
+                // [0-1] is NOT rpm (README used to say so): it is coolant temp.
                 if data.count >= 2 { self.ecuStatus.coolantTemp = Double(u16(data, 0)) / 10.0 - 273.1 }
                 if data.count >= 4 { self.ecuStatus.iat = Double(u16(data, 2)) / 10.0 - 273.1 }
                 if data.count >= 12 && self.ecuStatus.rpm == 0 {
                     self.ecuStatus.rpm = Double(u16(data, 10))
                 }
+                if data.count >= 14 { self.ecuStatus.pedalPos = WJDiagnostics.pedalPercent(u16(data, 12)) }
                 if data.count >= 18 {
                     self.ecuStatus.mapActual = Double(u16(data, 16))
                     self.ecuStatus.boostPressure = self.ecuStatus.mapActual / 1000.0
@@ -335,12 +382,23 @@ final class WJDiagnostics: ObservableObject {
                 if data.count >= 20 { self.ecuStatus.railPressure = Double(u16(data, 18)) * 0.101 }
 
             case 0x36:
-                // Pedal [0-1] /100 = %, MAF [6-7] /10 = mg/str,
-                // Boost setpoint [8-9] /1000 = Bar abs, [10-11] raw
-                if data.count >= 2 { self.ecuStatus.pedalPos = Double(u16(data, 0)) / 100.0 }
+                // Real-vehicle layout (pcap/ecu_live.pcap, smoke log 2026-09-23):
+                // [0-1] small SIGNED word (not pedal!), [2] gear (0=P/N,1-5), [3] 0,
+                // [4-5] raw (unknown), [6-7] MAF /10 = mg/str,
+                // [8-9] boost setpoint /1000 = Bar abs, [10-11] baro mbar (~912),
+                // [12-13] PEDAL /100 = % (2710 = 100%), [16-17] ~0x390 const,
+                // [20-21] raw, [22-23] rail raw *0.101 (same as 0x12[18-19]),
+                // [24-25] FFFF, [26-27] MAF copy, [30-31] signed (torque-like)
+                if data.count >= 2 { self.ecuStatus.blk36signed = Double(s16(data, 0)) }
+                if data.count >= 3 { self.ecuStatus.gear = Int(data[2]) }
                 if data.count >= 8 { self.ecuStatus.mafFlow = Double(u16(data, 6)) / 10.0 }
                 if data.count >= 10 { self.ecuStatus.boostSetpoint = Double(u16(data, 8)) / 1000.0 }
                 if data.count >= 12 { self.ecuStatus.blk36c = Double(u16(data, 10)) }
+                if data.count >= 14 { self.ecuStatus.pedalPos = WJDiagnostics.pedalPercent(u16(data, 12)) }
+                if data.count >= 24 && self.ecuStatus.railPressure == 0 {
+                    self.ecuStatus.railPressure = Double(u16(data, 22)) * 0.101
+                }
+                if data.count >= 32 { self.ecuStatus.blk36torque = Double(s16(data, 30)) }
 
             case 0x32:
                 // Fuel actual [0-1] /100 = mg/str

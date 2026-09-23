@@ -5,7 +5,8 @@ import Foundation
 // Records a focused, high-rate snapshot of the EDC15C values that decide
 // whether combustion goes rich during a throttle transient:
 //   fuel per stroke (0x28 / 0x32), air per stroke = MAF (0x36), boost actual
-//   vs setpoint (0x22 / 0x36), rail pressure (0x12), pedal (0x36), the seven
+//   vs setpoint (0x22 / 0x36), rail pressure (0x12), pedal (0x36[12-13] and
+//   0x12[12-13] - NOT 0x36[0-1], see WJDiagnostics), gear (0x36[2]), the seven
 //   fuel-quantity limiter words of block 0x21, EGR / wastegate raw words of
 //   0x37 and the raw MAF / boost detail words of 0x20 / 0x23.
 // The session renders itself as a WhatsApp-ready text report (summary +
@@ -15,7 +16,9 @@ struct SmokeSample {
     let t: Double            // seconds since session start
     let src: UInt8           // block that produced this snapshot
     let rpm: Double
-    let pedal: Double        // %
+    let pedal: Double        // %  (0x36[12-13] / 0x12[12-13], clamped 0-100)
+    let gear: Int            // 0x36[2]: 0 = P/N, 1-5
+    let b36s: Double         // 0x36[0-1] signed raw (unknown meaning)
     let iq: Double           // mg/str  (0x28)
     let fuelAct: Double      // mg/str  (0x32)
     let maf: Double          // mg/str  (0x36)
@@ -107,7 +110,7 @@ struct SmokeTestSession {
         }
         var sample = SmokeSample(
             t: now.timeIntervalSince(dataStart ?? now), src: src,
-            rpm: ecu.rpm, pedal: ecu.pedalPos,
+            rpm: ecu.rpm, pedal: ecu.pedalPos, gear: ecu.gear, b36s: ecu.blk36signed,
             iq: ecu.injectionQty, fuelAct: ecu.fuelQuantity, maf: ecu.mafFlow,
             boostAct: ecu.boostPressure, boostSet: ecu.boostSetpoint, map: ecu.mapActual,
             rail: ecu.railPressure, coolant: ecu.coolantTemp, iat: ecu.iat,
@@ -162,7 +165,22 @@ struct SmokeTestSession {
 
         let rpmMax = samples.map { $0.rpm }.max() ?? 0
         let pedalMax = samples.map { $0.pedal }.max() ?? 0
-        s.lines.append("RPM max \(Int(rpmMax)) | Pedal max \(Int(pedalMax))%")
+        let gears = Set(samples.map { $0.gear }.filter { $0 > 0 }).sorted()
+        s.lines.append("RPM max \(Int(rpmMax)) | Pedal max \(Int(pedalMax))%" + (gears.isEmpty ? "" : " | gears \(gears.map(String.init).joined(separator: ","))"))
+        if pedalMax > 100 || pedalMax < 0 {
+            s.flags.append("Pedal decode hatasi (\(Int(pedalMax))%): 0x36/0x12 offset yanlis, pull analizi gecersiz")
+        }
+        // Adapter stalls: a WiFi ELM327 clone occasionally answers 1.5 s late
+        // (real log 2026-09-23: two 1.4-1.7 s gaps in 60 s). A transient inside
+        // such a gap is simply not resolved, so the gaps are reported.
+        var gaps: [Double] = []
+        for i in 1..<samples.count {
+            let dt = samples[i].t - samples[i - 1].t
+            if dt > 1.0 { gaps.append(dt) }
+        }
+        if !gaps.isEmpty {
+            s.lines.append("Sampling gaps > 1 s: \(gaps.count) (max \(f1(gaps.max() ?? 0)) s) - adapter stall, data missing there")
+        }
 
         // A/F is judged on 0x28 rows (fresh fuel) with the MAF interpolated in
         // time between the surrounding 0x36 reads. Fuel and MAF are read
@@ -239,7 +257,7 @@ struct SmokeTestSession {
             // 0x36 read that still showed pedal >= 60 are ambiguous (the pedal
             // may already be up, boost collapsing), so they are excluded.
             var evalEnd = p.start
-            for i in stride(from: p.end, through: p.start, by: -1) where samples[i].src == 0x36 {
+            for i in stride(from: p.end, through: p.start, by: -1) where samples[i].src == 0x36 || samples[i].src == 0x12 {
                 evalEnd = i; break
             }
             let rows12 = samples[p.start...evalEnd].filter { $0.src == 0x12 && $0.boostAct > 0 && $0.boostSet > 0 }
@@ -280,7 +298,9 @@ struct SmokeTestSession {
             } else {
                 line += " | no boost demand"
             }
-            railLoad += settled.filter { $0.rail > 0 }.map { $0.rail }
+            // Rail is only judged while fuel is actually being injected: on
+            // overrun (fuel cut) the real car sits at ~500 bar, which is normal.
+            railLoad += settled.filter { $0.rail > 0 && $0.iq >= 5.0 }.map { $0.rail }
             s.lines.append(line)
         }
         if worstDeficit > 0.4 { s.flags.append("Boost hedefin 0.4 bar+ altinda kaliyor: VNT kanatcik / hortum kacagi / N75 kontrol") }
@@ -315,10 +335,21 @@ struct SmokeTestSession {
         s.lines.append("Coolant \(Int(cool))C | IAT max \(Int(iatMax))C")
         if cool < 70 { s.flags.append("Motor soguk (<70C): test sicak motorla tekrarlanmali") }
         if iatMax > 60 { s.flags.append("Emme havasi > 60C: intercooler verimi dusuk / EGR gazi giriyor olabilir") }
+        // 0x28[20-25] corrections (and the per-cylinder RPMs) are only
+        // computed by the EDC15 at idle (smooth-running control); while
+        // driving they read 0, so they are only evaluated on idle rows.
         var maxCorr = 0.0
-        for smp in samples { for c in smp.corr { maxCorr = max(maxCorr, abs(c)) } }
-        s.lines.append("Injection correction max |\(f2(maxCorr))| mg/str")
-        if maxCorr > 3 { s.flags.append("Silindir duzeltmesi > 3 mg: enjektor / kompresyon dengesizligi") }
+        var idleRows = 0
+        for smp in samples where smp.rpm > 0 && smp.rpm < 1000 {
+            idleRows += 1
+            for c in smp.corr { maxCorr = max(maxCorr, abs(c)) }
+        }
+        if idleRows > 0 {
+            s.lines.append("Injection correction max |\(f2(maxCorr))| mg/str (idle rows: \(idleRows))")
+            if maxCorr > 3 { s.flags.append("Silindir duzeltmesi > 3 mg: enjektor / kompresyon dengesizligi") }
+        } else {
+            s.lines.append("Injection corrections: n/a (ECU only reports them at idle; no idle rows)")
+        }
 
         // 0x21 limiter words: slow block, so take the 0x21 read closest in
         // time to the fuel peak rather than the (possibly stale) copy on the
@@ -343,7 +374,7 @@ struct SmokeTestSession {
 
     // MARK: - Text output
 
-    static let csvHeader = "t,src,rpm,ped,iq,fuel,maf,af,bAct,bSet,map,rail,cool,iat,fq0,fq1,fq2,fq3,fq4,fq5,fq6,egr,wg,b36c,b20a,b20b,b23a,b23g,c1,c2,c3,mark"
+    static let csvHeader = "t,src,rpm,ped,gear,b36s,iq,fuel,maf,af,bAct,bSet,map,rail,cool,iat,fq0,fq1,fq2,fq3,fq4,fq5,fq6,egr,wg,b36c,b20a,b20b,b23a,b23g,c1,c2,c3,mark"
 
     func csvText() -> String {
         var out = Self.csvHeader + "\n"
@@ -353,6 +384,8 @@ struct SmokeTestSession {
                 String(format: "%02X", Int(s.src)),
                 String(Int(s.rpm)),
                 String(Int(s.pedal)),
+                String(s.gear),
+                String(Int(s.b36s)),
                 String(format: "%.1f", s.iq),
                 String(format: "%.1f", s.fuelAct),
                 String(format: "%.1f", s.maf),

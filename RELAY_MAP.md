@@ -123,8 +123,8 @@ Init: `ATWM8115F13E` → `ATSH8115F1` → `ATSP5` → `ATFI` → `81` → securi
 (ResponsePending) before the positive response. Both arrive in the same ELM327 frame:
 `7F 30 78\r70 3A 08 00 00\r\r>`
 
-**Security note**: When ECU returns seed=`00 00`, it is already unlocked.
-ArvutaKoodi with seed=0 produces key `9C C9` which the ECU accepts.
+**Security note**: When ECU returns seed=`00 00`, it is already unlocked. Do not send a key:
+`27 02 9C C9` (ArvutaKoodi of seed 0) is rejected with `7F 27 12` (real capture, 3×).
 Blocks 0x62/0xB0/0xB1/0xB2 are readable in this state.
 
 | # | Function | ON | OFF |
@@ -268,9 +268,10 @@ See README.md for full ArvutaKoodi algorithm with lookup tables T1-T4.
 | [2-3] | u16 | Air Intake Temp (IAT) | /10 - 273.1 = °C | ✓ |
 | [4-5] | u16 | Coolant Sensor V | /1000 = V | |
 | [6-7] | u16 | IAT Sensor V | /1000 = V | |
-| [10-11] | u16 | Engine RPM | raw (0x28 overrides) | ✓ |
-| [14-15] | u16 | Injection Qty | /100 = mg/str | |
-| [16-17] | u16 | MAP Actual | raw mbar | ✓ |
+| [10-11] | u16 | Engine RPM | raw (0x28 overrides) | ✓ 752 idle / 3462 WOT |
+| [12-13] | u16 | **Accel Pedal** | /100 = % (2710 = 100 %) | ✓ 0 idle / 4931 = 49 % / 10000 = 100 % |
+| [14-15] | u16 | Fuel qty word | /100 = mg/str (≈ demand; 0x28[2-3] is the injected qty) | 542 idle / 5464 WOT |
+| [16-17] | u16 | MAP Actual | raw mbar | ✓ 914 idle / 1978 WOT |
 | [18-19] | u16 | **Fuel Rail Pressure** | **×0.101 = Bar** | ✓ 294.2 Bar |
 
 ### Block 0x22 (32 data bytes) — Coolant + Boost (primary source)
@@ -289,9 +290,9 @@ Real vehicle idle: `02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 
 
 | Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
-| [0-1] | u16 | **Engine RPM** | raw (overrides 0x12) | ✓ 751 |
-| [2-3] | u16 | **Injection Qty** | /100 = mg/str | ✓ 9.25 |
-| [4-5] | u16 | Cyl 1 RPM | raw | 750 |
+| [0-1] | u16 | **Engine RPM** | raw (overrides 0x12[10-11]) | ✓ 751 |
+| [2-3] | u16 | **Injection Qty** | /100 = mg/str | ✓ 9.25 idle / 62.9 WOT |
+| [4-5] | u16 | Cyl 1 RPM | raw — **idle only**, 0 while driving (smooth-running control) | 750 |
 | [6-7] | u16 | Cyl 2 RPM | raw | 750 |
 | [8-9] | u16 | Cyl 3 RPM | raw | 750 |
 | [10-11] | u16 | Cyl 4 RPM | raw | 750 |
@@ -299,7 +300,7 @@ Real vehicle idle: `02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 
 | [14-15] | u16 | (padding) | 0 | |
 | [16-17] | u16 | (constant) | 0x0016 = 22 | |
 | [18-19] | u16 | (varies) | 17/13/11 per cycle | |
-| [20-21] | s16 | Inj Correction 1 | /100 = mg/str | -1.42 |
+| [20-21] | s16 | Inj Correction 1 | /100 = mg/str — **idle only**, 0 while driving | -1.42 |
 | [22-23] | s16 | Inj Correction 2 | /100 = mg/str | +0.54 |
 | [24-25] | s16 | Inj Correction 3 | /100 = mg/str | +0.47 |
 | [26-27] | u16 | (padding) | 0 | |
@@ -315,12 +316,27 @@ Real vehicle idle: `02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 
 | [0-1] | u16 | **Actual Fuel Quantity** | /100 = mg/str | ✓ 8.60 |
 | [4-5] | u16 | Vehicle Speed | raw km/h | |
 
-### Block 0x36 (38 data bytes) — Pedal + MAF
+### Block 0x36 (38 data bytes) — MAF + Boost setpoint + Pedal (Verified 2026-09-23, driving)
+Idle BLE: `0000 0000 02FF 125E 038D 0393 0000 0000 0391 0000 02C4 0B97 FFFF 125E 0083 FF62 002D 8494 0000`
+WOT (3538 rpm, 3rd gear): `0009 0300 0DB0 28F1 07D1 0392 2710 0000 0396 0000 079E 32F0 FFFF 28F1 00A2 13B3 0003 87F0 0001`
+Overrun (fuel cut): `FFF6 0500 0996 1466 03E3 0390 0000 0000 03A1 0000 02E1 1363 FFFF 1466 00A3 FD2F 0005 87F0 0001`
+
 | Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
-| [0-1] | u16 | Accel Pedal 1 | /100 = % | |
-| [4-5] | u16 | Accel Pedal 1 V | /1000 = V | |
-| [6-7] | u16 | **Mass Air Flow** | /10 = Mg/Str | ✓ 478.2 |
+| [0-1] | **s16** | small signed word — **NOT the pedal** | raw (-10…+11) | +9 WOT / -10 overrun. Read unsigned → 655.35 "%" |
+| [2] | u8 | **Gear** | 0 = P/N, 1–5 | 1 @ 9 km/h, 2 @ 17 km/h, 3 in pull, 5 cruise |
+| [3] | u8 | 0 | | |
+| [4-5] | u16 | unknown | raw | 1863 @49 % / 3800 WOT / 2519 overrun — does not track pedal |
+| [6-7] | u16 | **Mass Air Flow** | /10 = mg/str | ✓ 478 idle / 1048 WOT |
+| [8-9] | u16 | **Boost setpoint** | /1000 = bar abs | ✓ 0.973 / 2.001 |
+| [10-11] | u16 | Baro | raw mbar | 911–914 |
+| [12-13] | u16 | **Accel Pedal** | /100 = % | ✓ 0 / 4916 = 49 % / 10000 = 100 % (same word as 0x12[12-13]) |
+| [16-17] | u16 | constant | 0x390…0x3A6 | |
+| [20-21] | u16 | unknown | raw | 982 / 1954 WOT / 737 overrun |
+| [22-23] | u16 | Rail pressure | ×0.101 = bar (= 0x12[18-19]) | 5201 → 525 bar; 12948 → 1308 bar |
+| [24-25] | u16 | FFFF | | |
+| [26-27] | u16 | MAF copy | /10 = mg/str | = [6-7] |
+| [30-31] | **s16** | torque-like word | raw | 1633 @22 % / 5692 WOT / -565 overrun |
 
 ### Block 0x16 (38 data bytes) — Battery / Alternator
 | Offset | Bytes | Field | Formula | Verified Value |

@@ -1148,7 +1148,12 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
             ecu.coolantSensorV = u16(6) / 1000.0;      // data[4-5] Coolant Sensor V
             ecu.iatSensorV = u16(8) / 1000.0;          // data[6-7] IAT Sensor V
             ecu.rpm = u16(12);                          // data[10-11] RPM
-            ecu.injectionQty = u16(16) / 100.0;        // data[14-15] Inj Qty /100=mg/str
+            // data[12-13] accelerator pedal *100 (real car: 2710 = 100.00 %),
+            // same word as 0x36[12-13]. Clamped: an out-of-range value means
+            // the offset is wrong, never a real pedal position.
+            ecu.pedalPos1 = qBound(0.0, u16(14) / 100.0, 100.0);
+            ecu.pedalPos2 = ecu.pedalPos1;
+            ecu.injectionQty = u16(16) / 100.0;        // data[14-15] fuel qty word /100 (WOT ~54, 0x28[2-3] is the injected qty)
             ecu.mapActual = u16(18);                    // data[16-17] MAP mbar
             ecu.boostPressure = ecu.mapActual / 1000.0; // Boost = MAP/1000 = Bar ✓ (0.913)
         }
@@ -1319,21 +1324,29 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         break;
 
     case 0x36:
-        // Block 0x36: Pedal + MAF + verified)
-        // Real idle: 0000 0100 0579 134C 039F 0390 0A22 0000 039C
-        // [0-1]=0dyn(pedal), [2-3]=256(pedal2), [4-5]=1401dyn(pedalV1)
-        // [6-7]=4940dyn(MAF /10=494mg/str), [8-9]=927(MAP), [10-11]=912
-        // [12-13]=2594dyn, [16-17]=924
+        // Block 0x36: MAF + boost setpoint + pedal (real vehicle layout, verified
+        // against pcap/ecu_live.pcap and the 2026-09-23 driving log):
+        // [0-1]  small SIGNED word (-10..+11), NOT the pedal (reading it unsigned
+        //        gave the "655 %" pedal), [2] gear (0=P/N, 1-5), [3] 0,
+        // [4-5]  raw, meaning unknown (was labelled pedal V, does not track pedal),
+        // [6-7]  MAF /10 = mg/str, [8-9] boost setpoint /1000 = bar abs,
+        // [10-11] baro ~912 mbar, [12-13] PEDAL /100 = % (2710 = 100 %),
+        // [16-17] ~0x390 const, [22-23] rail raw *0.101 bar (= 0x12[18-19]),
+        // [24-25] FFFF, [26-27] MAF copy, [30-31] signed torque-like word.
         if (n >= 12) {
-            ecu.pedalPos1 = u16(2) / 100.0;            // data[0-1] Accel Pedal 1 %
-            ecu.pedalPos2 = u16(4) / 100.0;            // data[2-3] Accel Pedal 2 %
-            ecu.pedalV1 = u16(6) / 1000.0;             // data[4-5] Accel Pedal 1 V (1.401V)
+            ecu.pedalPos2 = u8(4);                     // data[2] gear (kept in pedal2 slot for the UI list)
+            ecu.pedalV1 = u16(6) / 1000.0;             // data[4-5] raw/1000 (unverified)
             ecu.mafActual = u16(8) / 10.0;             // data[6-7] MAF /10=Mg/Str ✓ (494.0)
             ecu.boostSetpoint = u16(10) / 1000.0;      // data[8-9] Boost Setpoint /1000=Bar
         }
-        if (n >= 20) {
-            ecu.pedalV2 = u16(14) / 1000.0;            // data[12-13] Accel Pedal 2 V
-            ecu.mafVoltage = u16(18) / 1000.0;         // data[16-17] MAF Voltage
+        if (n >= 16) {
+            ecu.pedalPos1 = qBound(0.0, u16(14) / 100.0, 100.0);  // data[12-13] Accel Pedal %
+        }
+        if (n >= 26) {
+            ecu.pedalV2 = 0.0;                         // no second pedal word in this block
+            ecu.mafVoltage = u16(18) / 1000.0;         // data[16-17] raw/1000 (unverified)
+            if (ecu.railActual <= 0.0)
+                ecu.railActual = u16(24) * 0.101;      // data[22-23] rail raw (same as 0x12)
         }
         break;
 
@@ -2078,9 +2091,9 @@ void WJDiagnostics::initLiveDataParams()
         {0xF3, "Throttle Position",           "%",     0, 100,  1.0,    0, 2, false},
         {0xE0, "Low Idle Setpoint",           "rpm",   0, 2000, 1.0,    0, 2, false},
         {0xE1, "Accel Pedal 1",               "%",     0, 100,  1.0,    0, 2, false},
-        {0xE2, "Accel Pedal 2",               "%",     0, 100,  1.0,    0, 2, false},
-        {0xE3, "Accel Pedal 1 Voltage",       "V",     0,   5,  1.0,    0, 2, false},
-        {0xE4, "Accel Pedal 2 Voltage",       "V",     0,   5,  1.0,    0, 2, false},
+        {0xE2, "Gear (0x36[2], 0=P/N)",       "",      0,   5,  1.0,    0, 0, false},
+        {0xE3, "0x36[4-5] raw/1000 (unverified)", "",  0,  70,  1.0,    0, 2, false},
+        {0xE4, "(unused)",                    "",      0,   5,  1.0,    0, 2, false},
         {0xE5, "Boost Pressure Voltage",      "V",     0,   5,  1.0,    0, 2, false},
         {0xE6, "Boost Pressure Setpoint",     "Bar",   0,    5, 1.0,    0, 2, false},
         {0xE7, "Fuel Level",                  "%",     0, 100,  1.0,    0, 1, false},

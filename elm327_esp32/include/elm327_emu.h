@@ -36,6 +36,8 @@ struct SmokeSim {
     float    rail      = 291;    // bar
     float    iat       = 30;     // C
     float    speed     = 0;      // km/h
+    int      gear      = 0;      // 0 = P/N (stationary), 1-5 when loaded -> 0x36[2]
+    float    torque    = 0;      // signed torque-like word -> 0x36[30-31] (x10)
     float    corr[3]   = {-1.42f, 0.54f, 0.47f};
     float    afTrue() const { return fuel > 0.5f ? mafTrue / fuel : 0; }
 };

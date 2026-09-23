@@ -1,5 +1,5 @@
 // ============================================================
-// ELM327 WiFi Emulator — ESP32-S2
+// ELM327 WiFi Emulator — ESP32-S3
 // ============================================================
 // Creates WiFi AP "WiFi_OBDII" with IP 192.168.0.10
 // Listens on TCP port 35000 (standard ELM327 WiFi)
@@ -15,7 +15,7 @@
 // No file logging — serial output only
 #include "elm327_emu.h"
 
-// Serial = USB CDC (board default for ESP32-S2)
+// Serial = USB CDC (board default for ESP32-S3)
 #define LOG_SERIAL Serial
 
 // ==================== Config ====================
@@ -168,7 +168,7 @@ void setup() {
     while(!LOG_SERIAL && (millis() - serialWait < 2000)) { delay(10); }
 
     LOG_SERIAL.println("\n============================================");
-    LOG_SERIAL.println("  ELM327 WiFi Emulator - ESP32-S2");
+    LOG_SERIAL.println("  ELM327 WiFi Emulator - ESP32-S3");
     LOG_SERIAL.println("============================================");
 
     // Init (no-op)

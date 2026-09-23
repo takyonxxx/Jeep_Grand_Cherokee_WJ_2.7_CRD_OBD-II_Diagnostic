@@ -44,5 +44,4 @@ DISTFILES += \
     android/res/values/libs.xml \
     android/res/xml/qtprovider_paths.xml \
     ios/Info.plist \
-    macos/Info.plist \
-    wj_tcm_emulator.py
+    macos/Info.plist

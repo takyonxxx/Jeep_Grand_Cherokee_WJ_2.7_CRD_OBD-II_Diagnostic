@@ -199,6 +199,12 @@ void ELM327Emu::simUpdate(float dt) {
     // --- Vehicle speed (2nd gear ~ rpm/60 km/h when loaded) ---
     float speedTarget = loaded ? rpm / 60.0f : 0.0f;
     sim.speed += (speedTarget - sim.speed) * min(1.0f, dt / 1.0f);
+    // Gear as reported in 0x36[2] on the real car (1 at 9 km/h, 2 at 17 km/h,
+    // 5 cruising, 3 during the full-throttle pull). 0 when stationary (P/N).
+    sim.gear = !loaded ? 0 : (sim.speed < 12 ? 1 : sim.speed < 25 ? 2 : sim.speed < 45 ? 3 : sim.speed < 70 ? 4 : 5);
+    // Torque-like signed word 0x36[30-31]: ~+5700 at WOT, ~-560 on overrun
+    // (fuel cut), ~+1600 at 20 % pedal in the real captures.
+    sim.torque = (fuel < 0.5f && rpm > 900.0f) ? -560.0f : fuel * 90.0f;
 
     // --- Cylinder corrections ---
     if (sim.mode == 3) {
@@ -886,6 +892,7 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                     // CRITICAL: seed=0000 means ECU IS unlocked — set the flag
                     // so blocks 0x62/0xB0/0xB1/0xB2 don't return NRC 0x33
                     ecuUnlocked = true;
+                    ecuSeed = 0;   // remember: any key now gets NRC 12 (real ECU behaviour)
                     uint8_t r[] = {0x67, 0x01, 0x00, 0x00};
                     return kwpWrap(r, 4);
                 }
@@ -910,6 +917,13 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                     return kwpWrap(r, 3);
                 }
             } else {
+                // Seed was 00 00 (security inactive): the real ECU rejects any
+                // key, including ArvutaKoodi(0) = 9C C9, with 7F 27 12
+                // (pcap/full_modules.pcap). The app must not send a key then.
+                if (ecuSeed == 0) {
+                    uint8_t r[] = {0x7F, 0x27, 0x12};
+                    return kwpWrap(r, 3);
+                }
                 // Verify ArvutaKoodi
                 uint8_t s0 = (ecuSeed >> 8) & 0xFF;
                 uint8_t s1 = ecuSeed & 0xFF;
@@ -1034,15 +1048,17 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             uint16_t iq = u16clamp(sim.fuel * 100);
             uint16_t mapR = u16clamp(sim.boostAct * 1000);
             uint16_t railR = u16clamp(sim.rail / 0.101f);
+            uint16_t ped12 = u16clamp(sim.pedal * 100);
             // Real BLE: 0C79 0BE7 08B7 08B7 0000 02EC 0000 0210 038E 0B60 02A6 012A 0042 097F 03A0 0000
+            // Driving (2026-09-23): [10-11] rpm, [12-13] pedal*100, [16-17] MAP, [18-19] rail
             uint8_t r[] = {0x61,0x12,
                 hi8(cr),lo8(cr),                         // [0-1] Coolant
                 hi8(iatR),lo8(iatR),                     // [2-3] IAT
                 0x08,0xB7, 0x08,0xB7,                   // [4-7] Voltages
                 0x00,0x00,                               // [8-9]
                 hi8(rpm),lo8(rpm),                       // [10-11] RPM
-                0x00,0x00,                               // [12-13]
-                hi8(iq),lo8(iq),                         // [14-15] InjQty /100
+                hi8(ped12),lo8(ped12),                   // [12-13] pedal *100 (real car: 2710 = 100 %)
+                hi8(iq),lo8(iq),                         // [14-15] fuel qty word /100
                 hi8(mapR),lo8(mapR),                     // [16-17] MAP mbar
                 hi8(railR),lo8(railR),                   // [18-19] Rail *0.101=Bar
                 0x02,0xA6, 0x01,0x2A, 0x00,0x42,       // [20-25]
@@ -1072,21 +1088,26 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             tick();
             uint16_t rpm = (uint16_t)engineRpm;
             uint16_t iq = u16clamp(sim.fuel * 100);
-            // Full 28-byte format (verified 2026-03-17)
+            // Full 28-byte format (verified 2026-03-17 idle, 2026-09-23 driving)
             // 02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 002F 0000
             // [0-1]=RPM [2-3]=InjQty [4-13]=5x per-cyl RPM [14-15]=0
             // [16-17]=0x0016 [18-19]=varies [20-25]=inj corrections(s16) [26-27]=0
-            int16_t corr1 = (int16_t)(sim.corr[0] * 100);
-            int16_t corr2 = (int16_t)(sim.corr[1] * 100);
-            int16_t corr3 = (int16_t)(sim.corr[2] * 100);
+            // Per-cylinder RPMs and corrections are only computed by the EDC15
+            // at idle (smooth-running control): while driving the real car
+            // sends all zeros there, so the emulator does the same.
+            bool idle = engineRpm < 1000.0f;
+            uint16_t cyl = idle ? rpm : 0;
+            int16_t corr1 = idle ? (int16_t)(sim.corr[0] * 100) : 0;
+            int16_t corr2 = idle ? (int16_t)(sim.corr[1] * 100) : 0;
+            int16_t corr3 = idle ? (int16_t)(sim.corr[2] * 100) : 0;
             uint8_t r[] = {0x61,0x28,
                 (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),      // [0-1] RPM
                 (uint8_t)(iq>>8),(uint8_t)(iq&0xFF),         // [2-3] InjQty /100
-                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),       // [4-5] Cyl1 RPM
-                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),       // [6-7] Cyl2 RPM
-                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),       // [8-9] Cyl3 RPM
-                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),       // [10-11] Cyl4 RPM
-                (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),       // [12-13] Cyl5 RPM
+                (uint8_t)(cyl>>8),(uint8_t)(cyl&0xFF),       // [4-5] Cyl1 RPM (idle only)
+                (uint8_t)(cyl>>8),(uint8_t)(cyl&0xFF),       // [6-7] Cyl2 RPM
+                (uint8_t)(cyl>>8),(uint8_t)(cyl&0xFF),       // [8-9] Cyl3 RPM
+                (uint8_t)(cyl>>8),(uint8_t)(cyl&0xFF),       // [10-11] Cyl4 RPM
+                (uint8_t)(cyl>>8),(uint8_t)(cyl&0xFF),       // [12-13] Cyl5 RPM
                 0x00,0x00,                                    // [14-15]
                 0x00,0x16,                                    // [16-17] constant
                 0x00,0x11,                                    // [18-19] varies
@@ -1212,21 +1233,32 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         }
         if (blk == 0x36) {
             tick();
-            // Real BLE: 0000 0000 02FF 125E 038D 0393 0000 0000 0391 0000 02C4 0B97 FFFF 125E 0083 FF62 002D 8494 0000
-            // [0-1] pedal1 /100 %, [2-3] pedal2, [4-5] pedal1 V /1000, [6-7] MAF /10 mg/str,
-            // [8-9] boost setpoint /1000 bar abs, [10-11] baro 912, [12-13] pedal2 V, [16-17] MAF V
-            uint16_t ped  = u16clamp(sim.pedal * 100);
-            uint16_t pedV = u16clamp(500.0f + sim.pedal * 35.0f);
+            // Real vehicle layout (pcap/ecu_live.pcap + 2026-09-23 driving log).
+            // Idle BLE dump: 0000 0000 02FF 125E 038D 0393 0000 0000 0391 0000 02C4 0B97 FFFF 125E 0083 FF62 002D 8494 0000
+            // Driving:       0009 0300 0DB0 28F1 07D1 0392 2710 0000 0396 0000 079E 32F0 FFFF 28F1 00A2 13B3 0003 87F0 0001
+            // [0-1]  small SIGNED word (+9..+11 at WOT, -10..-7 on overrun) - NOT pedal
+            // [2]    gear (0 = P/N, 1-5), [3] 0
+            // [4-5]  raw, unknown (1863 @49 % pedal, 3800 @WOT, 2519 on overrun)
+            // [6-7]  MAF /10 mg/str, [8-9] boost setpoint /1000 bar abs, [10-11] baro
+            // [12-13] PEDAL *100 (2710 = 100.00 %), [16-17] ~0x390..0x3A6
+            // [20-21] raw, [22-23] rail raw (*0.101 = bar, same as 0x12[18-19])
+            // [24-25] FFFF, [26-27] MAF copy, [28-29] 0x00A1..A4, [30-31] SIGNED torque-like
+            // [32-33] 0x0003..0x0005, [34-35] 0x87F0, [36-37] 0x0001
+            int16_t  w0   = (int16_t)(sim.torque / 520.0f);
+            uint16_t w45  = u16clamp(950.0f + sim.pedal * 28.0f);
             uint16_t maf  = u16clamp(sim.mafRep * 10);
             uint16_t bset = u16clamp(sim.boostSet * 1000);
-            uint16_t mafV = u16clamp(600.0f + sim.mafRep * 2.0f);
+            uint16_t ped  = u16clamp(sim.pedal * 100);
+            uint16_t railR = u16clamp(sim.rail / 0.101f);
+            uint16_t w20  = u16clamp(700.0f + sim.mafRep * 1.2f);
+            int16_t  trq  = (int16_t)sim.torque;
             uint8_t r[] = {0x61,0x36,
-                hi8(ped),lo8(ped), 0x01,0x00, hi8(pedV),lo8(pedV),
-                hi8(maf),lo8(maf), hi8(bset),lo8(bset), 0x03,0x90,
-                0x00,0x00, 0x00,0x00, 0x03,0x91,
-                0x00,0x00, 0x02,0xC4, hi8(mafV),lo8(mafV),
-                0xFF,0xFF, 0x12,0x5E, 0x00,0x83,
-                0xFF,0x62, 0x00,0x2D, 0x84,0x94, 0x00,0x00};
+                hi8((uint16_t)w0),lo8((uint16_t)w0), (uint8_t)sim.gear,0x00, hi8(w45),lo8(w45),
+                hi8(maf),lo8(maf), hi8(bset),lo8(bset), 0x03,0x92,
+                hi8(ped),lo8(ped), 0x00,0x00, 0x03,0x98,
+                0x00,0x00, hi8(w20),lo8(w20), hi8(railR),lo8(railR), 0xFF,0xFF,
+                hi8(maf),lo8(maf), 0x00,0xA2,
+                hi8((uint16_t)trq),lo8((uint16_t)trq), 0x00,0x04, 0x87,0xF0, 0x00,0x01};
             return kwpWrap(r, 40);
         }
         if (blk == 0x26) {

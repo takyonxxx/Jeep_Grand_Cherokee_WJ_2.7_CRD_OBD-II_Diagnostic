@@ -85,8 +85,9 @@ final class KWP2000Handler {
 
     // MARK: - Security Access
 
-    /// ECU security: seed=0x0000 means already unlocked.
-    /// ArvutaKoodi with seed=0 produces key 9C C9 (accepted by ECU).
+    /// ECU security: seed=0x0000 means security is inactive / already unlocked.
+    /// Do NOT send a key then: the real ECU answers `27 02 9C C9` (ArvutaKoodi
+    /// of seed 0) with NRC `7F 27 12` (pcap/full_modules.pcap, 3 attempts).
     func securityUnlockECU(completion: @escaping (Bool) -> Void) {
         connection?.sendCommand("27 01", timeout: 3.0) { [weak self] response in
             guard let self = self else { completion(false); return }

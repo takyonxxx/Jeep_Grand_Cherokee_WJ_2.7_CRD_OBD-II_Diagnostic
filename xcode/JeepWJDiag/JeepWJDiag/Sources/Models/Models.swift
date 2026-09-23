@@ -172,8 +172,16 @@ struct ECUStatus {
     var fuelLPer100km: Double = 0   // L/100km instantaneous
 
     // --- Smoke-test extras (offsets from Qt wjdiagnostics.cpp / RELAY_MAP) ---
-    // Block 0x36[0-1]: /100 = % accelerator pedal 1
+    // Accelerator pedal, /100 = %. Real vehicle (pcap/ecu_live.pcap + smoke log
+    // 2026-09-23): 0x36[12-13] and 0x12[12-13] both carry pedal*100 (2710 = 100.00%).
+    // 0x36[0-1] is NOT the pedal: a small signed word (-10..+11) that goes
+    // negative on lift-off -> read unsigned it produced the "655%" pedal bug.
     var pedalPos: Double = 0
+    // Block 0x36[2]: current gear (0 = P/N, 1-5) - matches TCM 0x30[9] on the road
+    var gear: Int = 0
+    // Block 0x36[0-1] signed raw and [30-31] signed raw (torque-like, unverified)
+    var blk36signed: Double = 0
+    var blk36torque: Double = 0
     // Block 0x36[8-9]: /1000 = Bar abs boost (MAP) setpoint
     var boostSetpoint: Double = 0
     // Block 0x36[10-11]: raw (912 at idle, baro?)

@@ -2,7 +2,7 @@
 
 ## Vehicle: 2003 EU-spec WJ 2.7 CRD (OM612 / NAG1)
 
-Qt6 cross-platform diagnostic application + native iOS (Swift/SwiftUI) port + ESP32-S2 ELM327 emulator.
+Qt6 cross-platform diagnostic application + native iOS (Swift/SwiftUI) port + ESP32-S3 ELM327 emulator.
 All commands and responses verified on real vehicle via BLE full block dumps and bus capture analysis.
 
 ## iOS / Xcode Version (Swift/SwiftUI)
@@ -21,7 +21,7 @@ Native iOS port targeting iPhone (iOS 17+). Source code: `xcode/JeepWJDiag/`
 - **TCM Dashboard**: Big GEAR center (D1-D5 green, P/N/R amber, LIMP red), SPEED, TURBIN, T-TEMP, LIMP, LINE-P, TCC, SOL V, BATT
 - **Actuator controls**: Hold-to-activate buttons with green highlight for all modules
 - **Quick Controls tab**: Driver Door / Passenger Door / BCM quick-access grid
-- **Smoke Test** (Acts tab, top card): high-rate recording of pedal, fuel qty (0x28/0x32), MAF (0x36), boost actual vs setpoint (0x12/0x36), rail (0x12), IAT, 0x21 fuel-limiter words, 0x37/0x20/0x23 raw words during a full-throttle transient. Cycle is 0x36 → 0x28 → one slow block (0x12 every other cycle, then 0x21/0x32/0x37/0x20/0x23); real-car reads take ~250-300 ms each (pcap/ecu_live.pcap), so the test sets `ATAT2` + `ATST 19` after init and keeps the cycle at 3 reads (~0.8 s, fuel/pedal/MAF every cycle). MARK button tags the moment smoke is seen. Auto summary (A/F per stroke, boost lag/deficit, MAF vs theoretical air, rail dip, corrections) + CSV, shared to WhatsApp (text) or via share sheet (file).
+- **Smoke Test** (Acts tab, top card): high-rate recording of pedal, fuel qty (0x28/0x32), MAF (0x36), boost actual vs setpoint (0x12/0x36), rail (0x12), IAT, 0x21 fuel-limiter words, 0x37/0x20/0x23 raw words during a full-throttle transient. Cycle is 0x36 → 0x28 → one slow block (0x12 every other cycle, then 0x21/0x32/0x37/0x20/0x23); real-car reads take ~250-300 ms each (pcap/ecu_live.pcap), so the test sets `ATAT2` + `ATST 19` after init and keeps the cycle at 3 reads (~0.8 s, fuel/pedal/MAF every cycle). MARK button tags the moment smoke is seen. Auto summary (A/F per stroke, boost lag/deficit, MAF vs theoretical air, rail dip, idle-only corrections, adapter stall gaps) + CSV (with gear and the 0x36[0-1] signed word), shared to WhatsApp (text) or via share sheet (file). Pulls are detected from the pedal word 0x36/0x12[12-13] (clamped 0–100 %); rail is judged only while fuel is injected (overrun sits at ~500 bar, which is normal). After the test the ECU stays selected and SID 81 keepalive continues, otherwise the K-Line session and the WiFi adapter's TCP socket drop within ~20 s.
 - **BLE auto-connect**: Background scan with OBD device filter list
 - **Manual Start/Stop Live Data**: Live data does not auto-start — allows actuator use first
 - **Launch screen**: Composite splash image with JeepWjDiag title + Jeep photo
@@ -57,7 +57,8 @@ ECU responds with `C1 EF 8F` each time.
 
 ### ECU Security — Seed=0x0000 Handling
 When ECU is already unlocked, it returns seed `67 01 00 00`. This means security is inactive.
-Key `9C C9` (ArvutaKoodi with seed=0) is accepted by the ECU.
+**Do not send a key in this state**: the real ECU answers `27 02 9C C9` (ArvutaKoodi of seed 0)
+with NRC `7F 27 12` (pcap/full_modules.pcap, 3 attempts). Both apps and the emulator skip the key.
 Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when seed=0.
 
 ## Complete Module Address Map (Verified)
@@ -94,7 +95,9 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 | Gauge | Block | Offset | Formula | Verified Value | Notes |
 |-------|-------|--------|---------|---------------|-------|
 | SPEED | 0x26 | data[2-3] | **raw / 100 = km/h** | 0-80+ | verified: 10000→100km/h |
-| RPM | 0x28 (0x12 fallback) | data[0-1] | raw | 750 | per-cyl RPMs at [4-13] |
+| RPM | 0x28 data[0-1] (fallback 0x12 data[10-11]) | — | raw | 750 | 0x12[0-1] is coolant, NOT rpm. Per-cyl RPMs 0x28[4-13] only at idle (0 while driving) |
+| PEDAL | 0x36 / 0x12 | data[12-13] | **raw / 100 = %** | 2710 → 100.00% | **0x36[0-1] is NOT the pedal** (small signed word, goes negative on overrun → "655%" bug). Clamp 0–100 |
+| GEAR (ECU) | 0x36 | data[2] | 0=P/N, 1–5 | 1@9 km/h, 2@17, 3 in pull, 5 cruise | matches TCM 0x30[9] |
 | FUEL L/h | calculated | rpm × fuelActual | L/h or L/100km | 1.2 | — |
 | FUEL LEVEL | 0x21 | data[14-15] | **raw / 10 = %** | 49.5% = 39.0L | 78.7L tank |
 | FUEL SENS V | 0x21 | data[16-17] | **raw / 100 = V** | 1.80V | — |
@@ -152,7 +155,7 @@ SID 0x3A: `3A 00 80`=Speedo, `3A 00 40`=Tacho, `3A 00 08`=Fuel, `3A 00 04`=Temp
 
 4-table lookup: T1-T4 (16 bytes each). See RELAY_MAP.md for algorithm.
 
-- **ECU 0x15**: Dynamic seed. ArvutaKoodi computes 2-byte key. When seed=`00 00` (ECU already unlocked), key=`9C C9` which ECU accepts. Qt code skips key computation and sets `ecuSecurityUnlocked=true`.
+- **ECU 0x15**: Dynamic seed. ArvutaKoodi computes 2-byte key. When seed=`00 00` (ECU already unlocked) no key is sent — the ECU rejects `9C C9` with NRC 0x12 (verified in pcap). Both apps set `ecuSecurityUnlocked=true` and continue.
 - **TCM 0x20**: Static seed `68 24 89` → Key `CC 21` (EGS52 algorithm: swap, XOR 0x5AA5, multiply 0x5AA5)
 
 ## DTC
@@ -163,21 +166,22 @@ ESP 0x58 DTC clear: `01 00 00` (7 retries before positive response)
 
 **NRC 0x78 on DTC clear**: ECU may return `7F 14 78` (ResponsePending) before `54 00 00` (success). Both arrive in same ELM327 frame.
 
-## ESP32-S2 Emulator (PlatformIO / VS Code)
+## ESP32-S3 Emulator (PlatformIO / VS Code)
 
 PlatformIO project for VS Code. WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000. All block responses use exact real vehicle BLE hex data.
 
 ### Verified Behaviors
 - **ATFI two-part response**: `ATFI\rBUS INIT:\r` + 300ms delay + `OK\r\r>` (matches real ELM327 wire format)
 - **First `81` = BUS INIT**: When K-Line TCM uses `81` for bus init (no ATFI), first `81` response includes `BUS INIT: OK\r` prefix
-- **Seed=0x0000 mode**: ECU returns `67 01 00 00` for first 3 seed requests (simulates already-unlocked state), then switches to dynamic seed. `ecuUnlocked=true` when seed=0 so blocks 62/B0/B1/B2 respond
+- **Seed=0x0000 mode**: ECU returns `67 01 00 00` for first 3 seed requests (simulates already-unlocked state), then switches to dynamic seed. `ecuUnlocked=true` when seed=0 so blocks 62/B0/B1/B2 respond; any key sent after seed 0 gets `7F 27 12` like the real ECU
 - **Bare `27 02` handling**: Returns NRC 0x12 for `27 02` with no key bytes (real vehicle behavior when seed=0)
-- **Block 0x28 full format**: 28 data bytes with per-cylinder RPMs [4-13] and signed injection corrections [20-25]
+- **Block 0x28 full format**: 28 data bytes with per-cylinder RPMs [4-13] and signed injection corrections [20-25] — populated only at idle (< 1000 rpm), zero while driving, as on the real car
+- **Block 0x36 real layout**: [0-1] small signed word, [2] gear, [6-7] MAF, [8-9] boost setpoint, **[12-13] pedal ×100**, [22-23] rail raw, [26-27] MAF copy, [30-31] signed torque-like word; 0x12[12-13] carries the same pedal word
 - **J1850 bus noise injection**: Random `2D 28 02 51` / `2D 28 0A B9` frames prepended to ~15% of J1850 responses
 - **NRC 0x21 simulation**: ~5% of J1850 mode 0x22 reads return `7F 22 21` (busyRepeatRequest) to test retry logic
 - **NRC 0x78 for actuators**: `30 3A 08+` commands get `7F 30 78` + positive response in same frame
 
-Dynamic fields: RPM (0x12/0x28 with per-cyl), coolant temp (0x12/0x22), fuel qty (0x32), TCM gear cycling, TCM RPMs, injection corrections.
+Dynamic fields: RPM (0x12[10-11]/0x28[0-1]), pedal (0x12/0x36[12-13]), gear (0x36[2]), coolant temp (0x12/0x22), fuel qty (0x28/0x32), TCM gear cycling, TCM RPMs, idle-only per-cyl RPMs and injection corrections.
 
 ### Smoke Test engine model (`SmokeSim`)
 The ECU live blocks are driven by a coherent transient model so the iOS **Smoke Test** can be exercised on the bench. A 40 s drive cycle repeats forever: idle, light cruise (~1500 rpm), full-throttle pull to ~4000 rpm, lift-off, idle, second pull, then two stationary throttle blips. Pedal -> RPM -> boost setpoint -> lagging boost actual -> MAF (from P·V/RT at 537 cc/cyl, VE 0.85) -> smoke limiter -> fuel -> rail / IAT / speed are all consistent across blocks 0x36, 0x28, 0x22, 0x12, 0x32, 0x21, 0x37, 0x20, 0x23, 0x26.
