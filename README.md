@@ -13,7 +13,7 @@ All commands and responses verified on real vehicle via BLE full block dumps and
 | `qt-app/` | Qt6 C++ desktop/mobile app (`JeepWJDiag.pro`, `src/`, `include/`, Android/iOS/macOS packaging) |
 | `esp32-emulator/` | ESP32-S3 ELM327 emulator (PlatformIO) with real-vehicle response database and smoke-test engine model |
 | `captures/pcap/` | Real-vehicle bus captures (ECU live, TCM live, all modules) — the ground truth for block layouts |
-| `ecu-firmware/` | EDC15C2 flash dumps (`293-822` = this car, stock; `293-822-egr-off` = flashed EGR-off; `409-438` = 2004 reference) and `293-822_maps.md` (extracted maps) |
+| `ecu-firmware/` | EDC15C2 flash dumps (`293-822` = this car, stock; `293-822-egr-off` = EGR-off; `293-822-EGR-OFF-BOOST` = currently flashed: EGR-off + eco driver wish + launch boost target + launch fuel, checksum fixed; `409-438` = 2004 reference) and `293-822_maps.md` (extracted maps + applied-changes log) |
 | `docs/` | `RELAY_MAP.md` (full command / block reference), OBD-II pinout, screenshots |
 | `assets/` | App icons and splash images |
 | `tools/` | Auxiliary tools (EcuParser) |
