@@ -8,7 +8,7 @@ struct DTCView: View {
     @State private var showClearConfirm = false
 
     private let sources: [(String, WJModule)] = [
-        ("TCM", .kLineTCM), ("ECU", .motorECU), ("ABS", .abs), ("Airbag", .espModule)
+        ("TCM", .kLineTCM), ("ECU", .motorECU), ("ABS", .abs), ("ESP", .espModule)
     ]
 
     var body: some View {
@@ -33,7 +33,7 @@ struct DTCView: View {
                     Button {
                         isReading = true
                         diagnostics.readDTCs(module: sources[selectedSource].1)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { isReading = false }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { isReading = false }
                     } label: {
                         HStack(spacing: 4) {
                             if isReading { ProgressView().scaleEffect(0.7) }
@@ -58,13 +58,18 @@ struct DTCView: View {
                             .background(Color.red)
                             .cornerRadius(4)
                     }
-                    .disabled(connection.state != .ready || filteredDTCs.isEmpty)
-                    .opacity((connection.state != .ready || filteredDTCs.isEmpty) ? 0.5 : 1)
+                    .disabled(connection.state != .ready || isReading)
+                    .opacity((connection.state != .ready || isReading) ? 0.5 : 1)
                 }
                 .padding(.horizontal, 8)
 
                 Text("\(sources[selectedSource].0): \(filteredDTCs.count) fault codes")
                     .font(.caption).foregroundColor(.secondary)
+                if !diagnostics.dtcStatus.isEmpty {
+                    Text(diagnostics.dtcStatus)
+                        .font(.caption2.monospaced()).foregroundColor(.secondary)
+                        .padding(.horizontal, 8)
+                }
 
                 if filteredDTCs.isEmpty {
                     Spacer()
@@ -84,6 +89,9 @@ struct DTCView: View {
                 }
             }
             .navigationTitle("DTC").navigationBarTitleDisplayMode(.inline)
+            .onChange(of: diagnostics.dtcStatus) { _ in
+                if !diagnostics.dtcStatus.hasSuffix("…") { isReading = false }
+            }
             .alert("Clear DTCs?", isPresented: $showClearConfirm) {
                 Button("Cancel", role: .cancel) {}
                 Button("Clear", role: .destructive) {

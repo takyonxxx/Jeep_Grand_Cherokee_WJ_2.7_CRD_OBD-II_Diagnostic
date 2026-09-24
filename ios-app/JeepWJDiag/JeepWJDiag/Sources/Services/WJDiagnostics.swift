@@ -15,6 +15,12 @@ final class WJDiagnostics: ObservableObject {
         didSet { if activeModule == nil || activeModule?.bus != .kLine { stopKeepalive() } }
     }
     @Published var smokeTest = SmokeTestSession()
+    /// Last DTC read/clear outcome for the DTC screen ("TCM: 2 DTC", "ECU init failed ...").
+    @Published var dtcStatus: String = ""
+    /// Module whose bus session is currently established (survives until the
+    /// next init). Lets DTC read/clear reuse the open session instead of
+    /// re-running ATZ... and lets clear work on a module that was never read.
+    private(set) var initializedModule: WJModule?
 
     // Smoke test polling: the three fast-changing blocks every cycle plus
     // one slow block round-robin. Reads are chained on completion (not on a
@@ -26,7 +32,9 @@ final class WJDiagnostics: ObservableObject {
     // which is enough for turbo spool that takes 1-3 s.
     //   0x36 pedal, MAF, boost setpoint | 0x28 rpm, inj qty, corrections
     private let smokeFastBlocks: [UInt8] = [0x36, 0x28]
-    private let smokeSlowBlocks: [UInt8] = [0x12, 0x21, 0x12, 0x32, 0x12, 0x37, 0x12, 0x20, 0x12, 0x23]
+    // 0x26 (vehicle speed) is interleaved so a standing-start run gets a
+    // speed sample every ~1.6 s and the summary can compute 0-100 km/h.
+    private let smokeSlowBlocks: [UInt8] = [0x12, 0x26, 0x21, 0x26, 0x12, 0x26, 0x32, 0x26, 0x12, 0x26, 0x37, 0x26, 0x12, 0x26, 0x20, 0x26, 0x12, 0x26, 0x23, 0x26]
     private var smokeStep = 0
     private var smokeSlowIndex = 0
     private var lastSmokeRead = Date.distantPast
@@ -56,8 +64,7 @@ final class WJDiagnostics: ObservableObject {
 
     func initModule(_ module: WJModule, completion: @escaping (Bool) -> Void) {
         guard let kwp = kwp else { completion(false); return }
-        // Nothing queued before us may run first: ATZ must go out now.
-        connection?.cancelQueuedCommands()
+        beginInit()
 
         switch module.bus {
         case .kLine:
@@ -72,6 +79,7 @@ final class WJDiagnostics: ObservableObject {
                     kwp.securityUnlockECU { unlocked in
                         self?.ecuSecurityUnlocked = unlocked
                         self?.connection?.log("ECU security: \(unlocked ? "unlocked" : "locked")")
+                        self?.initializedModule = module
                         self?.startKeepalive(onlyWhenIdle: false)
                         completion(true)
                     }
@@ -80,15 +88,35 @@ final class WJDiagnostics: ObservableObject {
                 kwp.initTCM { [weak self] ok in
                     guard ok else { completion(false); return }
                     kwp.securityUnlockTCM { _ in
+                        self?.initializedModule = module
                         self?.startKeepalive(onlyWhenIdle: false)
                         completion(true)
                     }
                 }
             }
         case .j1850:
-            stopKeepalive()   // SID 81 must not be sent on the J1850 bus
-            kwp.initJ1850(module: module, completion: completion)
+            kwp.initJ1850(module: module) { [weak self] ok in
+                if ok { self?.initializedModule = module }
+                completion(ok)
+            }
         }
+    }
+
+    /// Init only if `module` does not already own the bus session.
+    private func ensureModule(_ module: WJModule, completion: @escaping (Bool) -> Void) {
+        if initializedModule == module, connection?.state == .ready { completion(true); return }
+        initModule(module, completion: completion)
+    }
+
+    /// Every init sequence (ATZ ...) starts from a quiet line: the previous
+    /// module's SID 81 keepalive is stopped and queued commands dropped.
+    /// Real log 2026-09-24 14:43: the ECU keepalive kept firing during the TCM
+    /// init (ATZ, 81, ATZ, ATE1, 81 ...) -> "BUS INIT: ERROR" on every command,
+    /// the init was still reported OK and the app crashed on the empty reply.
+    private func beginInit() {
+        stopKeepalive()
+        connection?.cancelQueuedCommands()
+        initializedModule = nil
     }
 
     /// Pedal word -> 0...100 %. Anything outside the physical range means the
@@ -143,6 +171,7 @@ final class WJDiagnostics: ObservableObject {
                 self?.moduleStates[module] = ok; completion(ok)
             }
         case .j1850:
+            beginInit()
             kwp.initJ1850(module: module) { [weak self] _ in
                 // Try reading first data PID. Real capture: 9 of 30 first reads
                 // right after ATRA come back NO DATA and the immediate retry
@@ -554,37 +583,59 @@ final class WJDiagnostics: ObservableObject {
 
     // MARK: - DTC Operations
 
+    private func setDTCStatus(_ s: String) {
+        DispatchQueue.main.async { [weak self] in self?.dtcStatus = s; self?.connection?.log("[DTC] \(s)") }
+    }
+
+    /// Read DTCs. Reuses the module's open session when it is already the
+    /// initialised one (a fresh ATZ init per read is what let the keepalive
+    /// break the TCM init in the 2026-09-24 log).
     func readDTCs(module: WJModule) {
         guard let kwp = kwp else { return }
-
-        switch module.bus {
-        case .kLine:
-            initModule(module) { [weak self] ok in
-                guard ok else { return }
+        setDTCStatus("\(module.displayName): reading…")
+        ensureModule(module) { [weak self] ok in
+            guard let self = self else { return }
+            guard ok else { self.setDTCStatus("\(module.displayName): init failed"); return }
+            switch module.bus {
+            case .kLine:
                 kwp.readDTCs(module: module) { [weak self] response in
-                    self?.parseKLineDTCs(module: module, response: response)
+                    guard let self = self else { return }
+                    if response.contains("TIMEOUT") || response.contains("BUS INIT") {
+                        self.setDTCStatus("\(module.displayName): no answer to 18 02 (\(response.trimmingCharacters(in: .whitespacesAndNewlines)))")
+                        return
+                    }
+                    let n = self.parseKLineDTCs(module: module, response: response)
+                    self.setDTCStatus("\(module.displayName): \(n) DTC")
                 }
-            }
-        case .j1850:
-            // J1850: mode 0x18 is NOT supported by WJ modules
-            // Use PID scan via mode 0x22 instead (matching Qt behavior)
-            kwp.initJ1850(module: module) { [weak self] _ in
-                self?.readJ1850DTCsByPIDScan(module: module)
+            case .j1850:
+                // J1850: mode 0x18 is NOT supported by WJ modules -> PID scan via mode 0x22
+                self.readJ1850DTCsByPIDScan(module: module)
             }
         }
     }
 
+    /// Clear DTCs. The module is initialised first if needed, and the read is
+    /// repeated afterwards so the list and the status reflect the ECU state.
     func clearDTCs(module: WJModule) {
         guard let kwp = kwp else { return }
-
-        switch module.bus {
-        case .kLine:
-            kwp.clearDTCs(module: module) { [weak self] ok in
-                if ok { self?.dtcList.removeAll { $0.module == module } }
+        setDTCStatus("\(module.displayName): clearing…")
+        ensureModule(module) { [weak self] ok in
+            guard let self = self else { return }
+            guard ok else { self.setDTCStatus("\(module.displayName): init failed"); return }
+            let done: (Bool) -> Void = { [weak self] ok in
+                guard let self = self else { return }
+                if ok {
+                    DispatchQueue.main.async { self.dtcList.removeAll { $0.module == module } }
+                    self.setDTCStatus("\(module.displayName): cleared")
+                    // Re-read so a fault that is still present comes back immediately.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.readDTCs(module: module) }
+                } else {
+                    self.setDTCStatus("\(module.displayName): clear failed (no 54)")
+                }
             }
-        case .j1850:
-            kwp.clearJ1850DTCs(module: module) { [weak self] ok in
-                if ok { self?.dtcList.removeAll { $0.module == module } }
+            switch module.bus {
+            case .kLine: kwp.clearDTCs(module: module, completion: done)
+            case .j1850: kwp.clearJ1850DTCs(module: module, completion: done)
             }
         }
     }
@@ -592,8 +643,20 @@ final class WJDiagnostics: ObservableObject {
     // MARK: - Raw Command
 
     func sendCustomCommand(_ cmd: String) {
+        sendCustomCommand(cmd, attempt: 1)
+    }
+
+    /// J1850 actuator commands: an OFF frame ("38 xx 00") that gets NO DATA is
+    /// re-sent (real log 2026-09-24: "38 02 00 -> NO DATA" left the window
+    /// motor running until the door module timed out).
+    private func sendCustomCommand(_ cmd: String, attempt: Int) {
         connection?.sendCommand(cmd) { [weak self] response in
             self?.connection?.log("[CUSTOM] \(cmd) -> \(response)")
+            let isActuatorOff = cmd.uppercased().hasPrefix("38 ") && cmd.uppercased().hasSuffix(" 00")
+            if isActuatorOff && response.contains("NO DATA") && attempt < 3 {
+                self?.connection?.log("[CUSTOM] retry OFF \(attempt)")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self?.sendCustomCommand(cmd, attempt: attempt + 1) }
+            }
         }
     }
 
@@ -602,13 +665,14 @@ final class WJDiagnostics: ObservableObject {
 
     // MARK: - DTC Parsing
 
-    private func parseKLineDTCs(module: WJModule, response: String) {
-        guard let kwp = kwp else { return }
+    @discardableResult
+    private func parseKLineDTCs(module: WJModule, response: String) -> Int {
+        guard let kwp = kwp else { return 0 }
         let bytes = kwp.hexToBytes(response)
-        // Find 58 NN in response
+        // Find 58 NN in response ("58 00" = no DTCs)
         guard let idx = bytes.firstIndex(of: 0x58) else {
-            if response.contains("NO DATA") { /* no DTCs */ }
-            return
+            DispatchQueue.main.async { [weak self] in self?.dtcList.removeAll { $0.module == module } }
+            return 0
         }
         let count = (idx + 1 < bytes.count) ? Int(bytes[idx + 1]) : 0
         var dtcs: [DTCEntry] = []
@@ -622,6 +686,7 @@ final class WJDiagnostics: ObservableObject {
             self?.dtcList.removeAll { $0.module == module }
             self?.dtcList.append(contentsOf: dtcs)
         }
+        return dtcs.count
     }
 
     private func parseJ1850DTCs(module: WJModule, response: String) {
@@ -658,6 +723,7 @@ final class WJDiagnostics: ObservableObject {
                     self?.dtcList.removeAll { $0.module == module }
                     self?.dtcList.append(contentsOf: foundDTCs)
                 }
+                setDTCStatus("\(module.displayName): \(foundDTCs.count) DTC (\(pids.count) PIDs scanned)")
                 return
             }
             let entry = pids[pidIndex]
@@ -701,6 +767,9 @@ final class WJDiagnostics: ObservableObject {
     }
 
     private func findPayload(_ bytes: [UInt8], marker1: UInt8, marker2: UInt8) -> Int? {
+        // "TIMEOUT" / "BUS INIT: ERROR" decode to zero bytes: 0..<-1 is a fatal
+        // range in Swift, so guard before iterating (crash seen 2026-09-24).
+        guard bytes.count >= 2 else { return nil }
         for i in 0..<bytes.count - 1 {
             if bytes[i] == marker1 && bytes[i+1] == marker2 { return i }
         }

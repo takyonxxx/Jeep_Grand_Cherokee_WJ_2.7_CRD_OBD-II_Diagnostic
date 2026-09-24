@@ -34,8 +34,10 @@ final class KWP2000Handler {
             self?.connection?.sendCommand("ATFI", timeout: 5.0) { _ in
                 // 81 = StartCommunication (also serves as keepalive)
                 self?.connection?.sendCommand("81", timeout: 3.0) { response in
-                    let ok = response.contains("C1") || response.contains("BUS INIT")
-                    if ok { self?.onLog?("ECU 0x15 K-Line init OK") }
+                    // Positive = C1 token or "BUS INIT: OK"; "BUS INIT: ERROR"
+                    // used to pass the old contains("BUS INIT") check.
+                    let ok = ELM327Connection.hasToken(response, 0xC1) || response.contains("BUS INIT: OK")
+                    self?.onLog?(ok ? "ECU 0x15 K-Line init OK" : "ECU 0x15 K-Line init FAILED: \(response)")
                     completion(ok)
                 }
             }
@@ -57,8 +59,8 @@ final class KWP2000Handler {
         sendSequence(cmds, index: 0) { [weak self] in
             self?.connection?.sendCommand("ATFI", timeout: 5.0) { _ in
                 self?.connection?.sendCommand("81", timeout: 3.0) { response in
-                    let ok = response.contains("C1") || response.contains("BUS INIT")
-                    if ok { self?.onLog?("TCM 0x20 K-Line init OK") }
+                    let ok = ELM327Connection.hasToken(response, 0xC1) || response.contains("BUS INIT: OK")
+                    self?.onLog?(ok ? "TCM 0x20 K-Line init OK" : "TCM 0x20 K-Line init FAILED: \(response)")
                     completion(ok)
                 }
             }

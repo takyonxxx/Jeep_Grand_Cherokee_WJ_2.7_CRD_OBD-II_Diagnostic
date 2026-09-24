@@ -19,6 +19,7 @@ struct SmokeSample {
     let pedal: Double        // %  (0x36[12-13] / 0x12[12-13], clamped 0-100)
     let gear: Int            // 0x36[2]: 0 = P/N, 1-5
     let b36s: Double         // 0x36[0-1] signed raw (unknown meaning)
+    let speed: Double        // km/h (0x26[2-3]/100, read every ~1.6 s)
     let iq: Double           // mg/str  (0x28)
     let fuelAct: Double      // mg/str  (0x32)
     let maf: Double          // mg/str  (0x36)
@@ -111,6 +112,7 @@ struct SmokeTestSession {
         var sample = SmokeSample(
             t: now.timeIntervalSince(dataStart ?? now), src: src,
             rpm: ecu.rpm, pedal: ecu.pedalPos, gear: ecu.gear, b36s: ecu.blk36signed,
+            speed: ecu.vehicleSpeed,
             iq: ecu.injectionQty, fuelAct: ecu.fuelQuantity, maf: ecu.mafFlow,
             boostAct: ecu.boostPressure, boostSet: ecu.boostSetpoint, map: ecu.mapActual,
             rail: ecu.railPressure, coolant: ecu.coolantTemp, iat: ecu.iat,
@@ -180,6 +182,41 @@ struct SmokeTestSession {
         }
         if !gaps.isEmpty {
             s.lines.append("Sampling gaps > 1 s: \(gaps.count) (max \(f1(gaps.max() ?? 0)) s) - adapter stall, data missing there")
+        }
+
+        // Standing-start acceleration: from the first 0x26 row with speed < 3 km/h
+        // that is followed by pedal >= 60 %, time to 60 / 80 / 100 km/h, linearly
+        // interpolated between the ~1.6 s speed reads (accuracy about +-0.8 s).
+        let speedRows = samples.filter { $0.src == 0x26 }
+        if speedRows.count >= 3 {
+            var launchIdx: Int? = nil
+            for (i, r) in speedRows.enumerated() where r.speed < 3 {
+                let tLaunch = r.t
+                if samples.contains(where: { $0.t > tLaunch && $0.t < tLaunch + 3 && $0.pedal >= 60 }) { launchIdx = i; break }
+            }
+            if let li = launchIdx {
+                // launch time = first sample after the standstill row with pedal >= 60
+                let t0 = samples.first(where: { $0.t >= speedRows[li].t && $0.pedal >= 60 })?.t ?? speedRows[li].t
+                func timeTo(_ v: Double) -> Double? {
+                    for j in (li + 1)..<speedRows.count where speedRows[j].speed >= v {
+                        let a = speedRows[j - 1], b = speedRows[j]
+                        guard b.speed > a.speed else { return b.t - t0 }
+                        return a.t + (b.t - a.t) * (v - a.speed) / (b.speed - a.speed) - t0
+                    }
+                    return nil
+                }
+                let vmax = speedRows[li...].map { $0.speed }.max() ?? 0
+                var line = "Launch t=\(f1(t0))s (standstill, pedal >= 60%) | v max \(Int(vmax)) km/h"
+                for v in [60.0, 80.0, 100.0] {
+                    if let tt = timeTo(v) { line += " | 0-\(Int(v)) \(f1(tt)) s" }
+                }
+                if vmax < 100 { line += " | 100 km/h not reached" }
+                s.lines.append(line)
+            } else if (speedRows.map { $0.speed }.min() ?? 99) >= 3 {
+                s.lines.append("No standing start in this recording (min speed \(Int(speedRows.map { $0.speed }.min() ?? 0)) km/h) - 0-100 not measurable")
+            }
+        } else {
+            s.lines.append("Speed not recorded (block 0x26 missing) - 0-100 not measurable")
         }
 
         // A/F is judged on 0x28 rows (fresh fuel) with the MAF interpolated in
@@ -374,7 +411,7 @@ struct SmokeTestSession {
 
     // MARK: - Text output
 
-    static let csvHeader = "t,src,rpm,ped,gear,b36s,iq,fuel,maf,af,bAct,bSet,map,rail,cool,iat,fq0,fq1,fq2,fq3,fq4,fq5,fq6,egr,wg,b36c,b20a,b20b,b23a,b23g,c1,c2,c3,mark"
+    static let csvHeader = "t,src,rpm,ped,gear,b36s,kmh,iq,fuel,maf,af,bAct,bSet,map,rail,cool,iat,fq0,fq1,fq2,fq3,fq4,fq5,fq6,egr,wg,b36c,b20a,b20b,b23a,b23g,c1,c2,c3,mark"
 
     func csvText() -> String {
         var out = Self.csvHeader + "\n"
@@ -386,6 +423,7 @@ struct SmokeTestSession {
                 String(Int(s.pedal)),
                 String(s.gear),
                 String(Int(s.b36s)),
+                String(Int(s.speed)),
                 String(format: "%.1f", s.iq),
                 String(format: "%.1f", s.fuelAct),
                 String(format: "%.1f", s.maf),
