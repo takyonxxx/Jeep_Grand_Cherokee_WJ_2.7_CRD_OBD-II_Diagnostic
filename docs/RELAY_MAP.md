@@ -420,14 +420,15 @@ Real BLE idle: `01BB 0000 02D8 02F0 0000...`
 
 ### Block 0x34 (14 data bytes) — Voltages
 Real BLE: `0217 03FF 0332 0214 0807 0001 0028`
+Real 2026-09-25 (engine running, P, ATRV 13.3 V): `021E 0134 0332 021D 0504 0000 0007`
 
 | Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
-| [0-1] | u16 | Unknown (NOT trans temp!) | — | |
-| [2-3] | u16 | Unknown (0x03FF=1023) | — | |
+| [0-1] | u16 | Supply voltage? (tracks [6-7]; NOT trans temp) | /40 = V | 535→13.4, 542→13.55 |
+| [2-3] | u16 | Unknown (0x03FF / 0x0134) | — | |
 | [4-5] | u16 | **Sensor Supply** | ×7/1000 = V | ✓ 5.73V |
 | [6-7] | u16 | **Solenoid Supply** | /40 = V | ✓ 13.28V |
-| [8-9] | u16 | **Battery** | /154.5 = V | ✓ 13.32V |
+| [8-9] | u16 | **Unknown — NOT battery** | constant per session (0x0807 → 0x0504) | old "/154.5" mapping gave 8.3 V while ATRV read 13.3 V; apps use ATRV |
 
 ### Block 0x33 (16 data bytes) — Pressures (NOT wheel speeds!)
 Real BLE: `0024 0771 05DC 02B8 02B4 02E3 02E1 0000`

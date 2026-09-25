@@ -66,6 +66,12 @@ ATZ → ATE1 → ATH1 → ATWM8120F13E → ATWM8120F13E → ATSH8120F1 → ATSP5
 Double ATWM for TCM reliability. First `81` can also trigger `BUS INIT: OK` on ELM327
 (alternative to ATFI for bus initialization).
 
+A K-Line module that is still in a session ignores a new 5-baud init until P3max
+(~5 s) of silence has passed → `BUS INIT: ERROR` (real log 2026-09-25: TCM init OK,
+Dashboard Start re-ran the init 3 s later and failed). The apps therefore reuse an
+open session instead of re-initialising, send SID `82` (StopCommunication) before
+switching between K-Line modules, and retry once after 5.5 s on `BUS INIT: ERROR`.
+
 ### Keepalive
 SID `81` (StartCommunication) is used as K-Line keepalive, NOT `3E` (TesterPresent).
 ECU responds with `C1 EF 8F` each time.
