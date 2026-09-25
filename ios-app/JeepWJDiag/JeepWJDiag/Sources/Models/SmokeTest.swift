@@ -245,6 +245,11 @@ struct SmokeTestSession {
         let events = pulls()
         let longPulls = events.filter { $0.tEnd - $0.tStart >= 1.5 }
         func inLongPull(_ t: Double) -> Bool { longPulls.contains { t >= $0.tStart && t <= $0.tEnd } }
+        // Tip-in: fuel steps up on the first 0x28 row after the pedal, MAF
+        // needs 0.3-0.5 s to follow (2026-09-25 log: fuel 36.7 with MAF still
+        // 396 -> A/F 12.5 flagged, 0.5 s later MAF 595 -> 16.2). The first
+        // 0.5 s of a pull is reported separately, not flagged.
+        func inTipIn(_ t: Double) -> Bool { longPulls.contains { t >= $0.tStart && t < $0.tStart + 0.5 } }
 
         struct AFRow { let s: SmokeSample; let maf: Double; let af: Double }
         let afRows: [AFRow] = samples.filter { $0.src == 0x28 && $0.fuelUsed >= 5.0 }.map {
@@ -253,9 +258,12 @@ struct SmokeTestSession {
         if let pk = afRows.max(by: { $0.s.fuelUsed < $1.s.fuelUsed }) {
             s.lines.append("Fuel peak \(f1(pk.s.fuelUsed)) mg/str @\(Int(pk.s.rpm))rpm t=\(f1(pk.s.t))s | MAF \(f1(pk.maf)) -> A/F \(f1(pk.af))")
         }
-        let inPull = afRows.filter { inLongPull($0.s.t) }
+        let inPull = afRows.filter { inLongPull($0.s.t) && !inTipIn($0.s.t) }
+        if let lo = afRows.filter({ inTipIn($0.s.t) }).min(by: { $0.af < $1.af }) {
+            s.lines.append("A/F tip-in (first 0.5 s, MAF lags, not flagged) \(f1(lo.af)) @\(Int(lo.s.rpm))rpm t=\(f1(lo.s.t))s")
+        }
         if let lo = inPull.min(by: { $0.af < $1.af }) {
-            s.lines.append("A/F min (pulls >= 1.5 s) \(f1(lo.af)) @\(Int(lo.s.rpm))rpm t=\(f1(lo.s.t))s (fuel \(f1(lo.s.fuelUsed)) / air \(f1(lo.maf)) interp)")
+            s.lines.append("A/F min (pulls >= 1.5 s, after tip-in) \(f1(lo.af)) @\(Int(lo.s.rpm))rpm t=\(f1(lo.s.t))s (fuel \(f1(lo.s.fuelUsed)) / air \(f1(lo.maf)) interp)")
             if lo.af < 15 { s.flags.append("A/F < 15: cok zengin karisim, kara duman kacinilmaz (hava az veya yakit fazla)") }
             else if lo.af < 17 { s.flags.append("A/F < 17: zengin karisim, duman sinirinda") }
         }

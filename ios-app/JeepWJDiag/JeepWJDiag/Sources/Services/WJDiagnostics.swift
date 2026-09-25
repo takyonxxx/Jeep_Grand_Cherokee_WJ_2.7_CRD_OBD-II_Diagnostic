@@ -64,40 +64,80 @@ final class WJDiagnostics: ObservableObject {
 
     func initModule(_ module: WJModule, completion: @escaping (Bool) -> Void) {
         guard let kwp = kwp else { completion(false); return }
+        let previous = initializedModule
         beginInit()
 
-        switch module.bus {
-        case .kLine:
-            // Any K-Line session dies after P3max (~5 s) without traffic and the
-            // WiFi ELM327 clone then drops the TCP socket (real log 2026-09-23:
-            // 23 s idle after a smoke test -> "connection abort"). Keep SID 81
-            // going for as long as a K-Line module is the active one.
-            if module == .motorECU {
-                kwp.initECU { [weak self] ok in
-                    guard ok else { completion(false); return }
-                    // Security unlock (seed 00 00 = already unlocked, no key is sent)
-                    kwp.securityUnlockECU { unlocked in
-                        self?.ecuSecurityUnlocked = unlocked
-                        self?.connection?.log("ECU security: \(unlocked ? "unlocked" : "locked")")
-                        self?.initializedModule = module
-                        self?.startKeepalive(onlyWhenIdle: false)
-                        completion(true)
-                    }
-                }
-            } else {
-                kwp.initTCM { [weak self] ok in
-                    guard ok else { completion(false); return }
-                    kwp.securityUnlockTCM { _ in
-                        self?.initializedModule = module
-                        self?.startKeepalive(onlyWhenIdle: false)
-                        completion(true)
-                    }
+        // A K-Line module still in a session ignores the next 5-baud init until
+        // P3max (~5 s) of silence has passed (real log 2026-09-25 08:53: TCM
+        // init OK -> Dashboard Start re-ran the init 3 s later -> "BUS INIT:
+        // ERROR", the retry 5 s later worked). Close the old session with SID 82
+        // first, then start the ATZ sequence; if the bus still answers ERROR,
+        // retry once after P3max.
+        if previous?.bus == .kLine, module.bus == .kLine, !kLineRetryPending {
+            connection?.log("[INIT] closing \(previous!.displayName) session (SID 82) before \(module.displayName) init")
+            connection?.sendCommand("82", timeout: 2.0) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    self?.runKLineInit(module, kwp: kwp, completion: completion)
                 }
             }
-        case .j1850:
+            return
+        }
+        // Any K-Line session dies after P3max (~5 s) without traffic and the
+        // WiFi ELM327 clone then drops the TCP socket (real log 2026-09-23:
+        // 23 s idle after a smoke test -> "connection abort"). runKLineInit
+        // keeps SID 81 going for as long as a K-Line module is the active one.
+        if module.bus == .kLine {
+            runKLineInit(module, kwp: kwp, completion: completion)
+        } else {
             kwp.initJ1850(module: module) { [weak self] ok in
                 if ok { self?.initializedModule = module }
                 completion(ok)
+            }
+        }
+    }
+
+    private var kLineRetryPending = false
+
+    /// ATZ... ATFI 81 for a K-Line module, with one automatic retry after P3max
+    /// when the ELM reports "BUS INIT: ERROR" (bus still owned by a session).
+    private func runKLineInit(_ module: WJModule, kwp: KWP2000Handler, completion: @escaping (Bool) -> Void) {
+        let finish: (Bool) -> Void = { [weak self] ok in
+            guard let self = self else { completion(false); return }
+            if ok {
+                self.kLineRetryPending = false
+                self.initializedModule = module
+                self.startKeepalive(onlyWhenIdle: false)
+                completion(true)
+                return
+            }
+            if !self.kLineRetryPending {
+                self.kLineRetryPending = true
+                self.connection?.log("[INIT] \(module.displayName) bus init failed, retrying after P3max (5.5 s)")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5.5) { [weak self] in
+                    self?.initModule(module) { ok in
+                        self?.kLineRetryPending = false
+                        completion(ok)
+                    }
+                }
+                return
+            }
+            self.kLineRetryPending = false
+            completion(false)
+        }
+        if module == .motorECU {
+            kwp.initECU { [weak self] ok in
+                guard ok else { finish(false); return }
+                // Security unlock (seed 00 00 = already unlocked, no key is sent)
+                kwp.securityUnlockECU { unlocked in
+                    self?.ecuSecurityUnlocked = unlocked
+                    self?.connection?.log("ECU security: \(unlocked ? "unlocked" : "locked")")
+                    finish(true)
+                }
+            }
+        } else {
+            kwp.initTCM { ok in
+                guard ok else { finish(false); return }
+                kwp.securityUnlockTCM { _ in finish(true) }
             }
         }
     }
@@ -201,7 +241,7 @@ final class WJDiagnostics: ObservableObject {
         isPollingLive = true
         currentBlockIndex = 0
 
-        initModule(.motorECU) { [weak self] ok in
+        ensureModule(.motorECU) { [weak self] ok in
             guard ok else { self?.isPollingLive = false; return }
 
             // Poll timer: read one block per tick
@@ -220,7 +260,7 @@ final class WJDiagnostics: ObservableObject {
         isPollingLive = true
         currentBlockIndex = 0
 
-        initModule(.kLineTCM) { [weak self] ok in
+        ensureModule(.kLineTCM) { [weak self] ok in
             guard ok else { self?.isPollingLive = false; return }
             self?.pollTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { _ in
                 self?.pollNextTCMBlock()
@@ -253,7 +293,7 @@ final class WJDiagnostics: ObservableObject {
         smokeSlowIndex = 0
         connection?.log("[SMOKE] test started")
 
-        initModule(.motorECU) { [weak self] ok in
+        ensureModule(.motorECU) { [weak self] ok in
             guard let self = self else { return }
             guard ok else {
                 self.smokeTest.error = "ECU init failed"
@@ -559,10 +599,12 @@ final class WJDiagnostics: ObservableObject {
                 if data.count >= 8 { self.tcmStatus.engineRPM = Double(u16(data, 6)) }
 
             case 0x34:
-                // [4-5]=sensorSupply*7/1000, [6-7]=solenoid /40, [8-9]=battery /154.5
-                if data.count >= 6 { self.tcmStatus.solenoidVoltage = Double(u16(data, 4)) * 7.0 / 1000.0 }
+                // [4-5]=sensor supply *7/1000 (5.7 V), [6-7]=solenoid supply /40.
+                // [8-9] is NOT battery voltage: it is constant within a session
+                // and differs between sessions (0x0807 in the BLE captures,
+                // 0x0504 = "8.3 V" in the real log 2026-09-25 while ATRV read
+                // 13.3 V). Battery comes from ATRV only (end of each cycle).
                 if data.count >= 8 { self.tcmStatus.solenoidVoltage = Double(u16(data, 6)) / 40.0 }
-                if data.count >= 10 { self.tcmStatus.batteryVoltage = Double(u16(data, 8)) / 154.5 }
 
             case 0x33:
                 // Block 0x33: Pressures (NOT wheel speeds!)

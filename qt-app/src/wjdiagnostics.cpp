@@ -975,7 +975,9 @@ void WJDiagnostics::parseTCMBlock(uint8_t blk, const QByteArray &d, TCMStatus &t
             // [2-3]=03FF=1023 (unknown/max)
             tcm.sensorSupply = u16(6) * 7.0 / 1000.0;  // [4-5] Sensor V (818*7/1000=5.73) ✓
             tcm.solenoidSupply = u16(8) / 40.0;  // [6-7] Solenoid V (532/40=13.3≈13.28)
-            tcm.tcmBattery = u16(10) / 154.5;    // [8-9] Battery V (2055/154.5=13.3≈13.32)
+            // [8-9] is NOT battery: constant per session, 0x0807 in BLE captures but
+            // 0x0504 ("8.3 V") in the 2026-09-25 real log while ATRV read 13.3 V.
+            tcm.tcmBattery = tcm.batteryVoltage;   // ATRV (see pollTCM) is the only battery source
         }
         break;
     case 0x33:

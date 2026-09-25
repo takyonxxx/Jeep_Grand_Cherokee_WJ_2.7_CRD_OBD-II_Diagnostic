@@ -1001,13 +1001,13 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             }
             // TCM block 0x34: Real vehicle: 020C 03FF 0332 020A 0807 0001 0028
             if (blk == 0x34) {
-                // SensV: 0x0332*7/1000=5.73V, SolV: 0x020A/40=13.05V, BattV: 0x0807/154.5=13.30V
+                // SensV: 0x0332*7/1000=5.73V, SolV: 0x020A/40=13.05V; [8-9] 0x0807 is NOT battery (constant per session; real 2026-09-25 log had 0x0504) — apps use ATRV
                 uint8_t r[] = {0x61,0x34,
                     0x02,0x0C,  // [0-1] unknown dynamic
                     0x03,0xFF,
                     0x03,0x32,  // Sensor Supply *7/1000
                     0x02,0x0A,  // Solenoid Supply /40
-                    0x08,0x07,  // Battery /154.5
+                    0x08,0x07,  // unknown, constant per session (not battery)
                     0x00,0x01, 0x00,0x28};
                 return kwpWrap(r, 16);
             }

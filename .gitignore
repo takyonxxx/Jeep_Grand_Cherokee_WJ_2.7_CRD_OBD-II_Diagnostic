@@ -39,3 +39,7 @@ WJKEY.keystore
 *.crdownload
 *.tmp
 *.log
+
+# --- session scratch (VM transfer ISOs) ---
+tools/w7fix/
+tools/*.iso

@@ -2461,10 +2461,10 @@ void MainWindow::runDiscoveryPhases(
                             p = QString("N2=%1 N3=%2 Turb=%3 EngRPM=%4")
                                 .arg(u16(0)).arg(u16(2)).arg(u16(4)).arg(u16(6));
                         } else if (!isECU && blk == 0x34 && n >= 10) {
-                            p = QString("SensV=%1V SolV=%2V BattV=%3V")
+                            p = QString("SensV=%1V SolV=%2V w8=0x%3")
                                 .arg(u16(4)*7.0/1000,0,'f',2)
                                 .arg(u16(6)/40.0,0,'f',2)
-                                .arg(u16(8)/154.5,0,'f',2);
+                                .arg(u16(8),4,16,QChar('0'));
                         } else if (!isECU && blk == 0x33 && n >= 10) {
                             p = QString("TCC_P=%1Bar ShiftPSI=%2Bar ModPSI=%3Bar")
                                 .arg(u16(0)/1000.0,0,'f',3)

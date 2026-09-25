@@ -14,7 +14,7 @@ All commands and responses verified on real vehicle via BLE full block dumps and
 | `esp32-emulator/` | ESP32-S3 ELM327 emulator (PlatformIO) with real-vehicle response database and smoke-test engine model |
 | `captures/pcap/` | Real-vehicle bus captures (ECU live, TCM live, all modules) — the ground truth for block layouts |
 | `ecu-firmware/` | EDC15C2 flash dumps (`293-822` = this car, stock; `293-822-egr-off` = EGR-off; `293-822-EGR-OFF-BOOST` = currently flashed: EGR-off + eco driver wish + launch boost target + launch fuel, checksum fixed; `409-438` = 2004 reference) and `293-822_maps.md` (extracted maps + applied-changes log) |
-| `docs/` | `RELAY_MAP.md` (full command / block reference), OBD-II pinout, screenshots |
+| `docs/` | `RELAY_MAP.md` (full command / block reference), OBD-II pinout, screenshots; `STATUS.md` = current project status / what is flashed / pending work — read this first |
 | `assets/` | App icons and splash images |
 | `tools/` | Auxiliary tools (EcuParser) |
 
@@ -135,7 +135,8 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 | LINE-P | 0x33 | data[6-7] | **/365 = Bar** | 1.871 |
 | TCC | 0x30 | data[0-1] | signed raw RPM | 12 |
 | SOL V | 0x34 | data[6-7] | /40 = V | 13.05 |
-| BATT | 0x34 | data[8-9] | /154.5 = V | 13.30 |
+| BATT | ATRV | ELM327 | adapter-side V | 13.3 |
+| (0x34 data[8-9]) | 0x34 | data[8-9] | **not battery** — constant per session (0x0807 / 0x0504), unmapped | — |
 
 ## Known ECU Constants
 
