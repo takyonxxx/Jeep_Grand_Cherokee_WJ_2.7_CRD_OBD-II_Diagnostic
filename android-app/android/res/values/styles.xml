@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#15161A</color>
+    <color name="panel">#1F2026</color>
+    <color name="panel2">#2A2B33</color>
+    <color name="panel3">#35363F</color>
+    <color name="fg">#ECECEC</color>
+    <color name="dim">#9A9AA3</color>
+    <color name="orange">#FF8C1A</color>
+    <color name="orange2">#FFA84D</color>
+    <color name="green">#00E08A</color>
+    <color name="amber">#D0A040</color>
+    <color name="red">#FF4D4D</color>
+    <color name="blue">#3D8BFF</color>
+    <color name="danger">#4A2A1A</color>
+    <color name="dangerRed">#7A1F1F</color>
+
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:colorPrimary">@color/panel</item>
+        <item name="android:colorPrimaryDark">@color/bg</item>
+        <item name="android:colorAccent">@color/orange</item>
+        <item name="android:textColorPrimary">@color/fg</item>
+        <item name="android:textColorSecondary">@color/dim</item>
+        <item name="android:colorBackground">@color/bg</item>
+        <item name="android:colorEdgeEffect">@color/orange</item>
+        <item name="android:alertDialogTheme">@style/DialogTheme</item>
+    </style>
+
+    <style name="DialogTheme" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">@color/orange</item>
+        <item name="android:windowBackground">@color/panel</item>
+        <item name="android:textColorPrimary">@color/fg</item>
+    </style>
+
+    <style name="Head">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/orange</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">3dp</item>
+    </style>
+
+    <style name="Hint">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/dim</item>
+        <item name="android:textSize">11sp</item>
+    </style>
+
+    <style name="Btn">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">42dp</item>
+        <item name="android:layout_marginBottom">4dp</item>
+        <item name="android:background">@drawable/btn_plain</item>
+        <item name="android:textColor">@color/fg</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+
+    <style name="BtnAccent" parent="Btn">
+        <item name="android:background">@drawable/btn_accent</item>
+        <item name="android:textColor">#111111</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="BtnDanger" parent="Btn">
+        <item name="android:background">@drawable/btn_danger</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="BtnBlue" parent="Btn">
+        <item name="android:background">@drawable/btn_blue</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="Tab">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">40dp</item>
+        <item name="android:paddingLeft">14dp</item>
+        <item name="android:paddingRight">14dp</item>
+        <item name="android:background">@drawable/tab_bg</item>
+        <item name="android:textColor">@color/dim</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+
+    <style name="Edit">
+        <item name="android:layout_height">40dp</item>
+        <item name="android:background">@drawable/edit_bg</item>
+        <item name="android:textColor">@color/fg</item>
+        <item name="android:textColorHint">@color/dim</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:paddingLeft">8dp</item>
+        <item name="android:paddingRight">8dp</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:typeface">monospace</item>
+    </style>
+</resources>

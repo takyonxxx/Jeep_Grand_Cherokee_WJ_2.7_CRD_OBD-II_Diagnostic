@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/bg">
+
+    <!-- top bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@color/panel"
+        android:paddingLeft="10dp" android:paddingRight="8dp" android:paddingTop="6dp" android:paddingBottom="6dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="WJ Diag" android:textColor="@color/orange" android:textSize="19sp" android:textStyle="bold" android:paddingRight="10dp" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Jeep Grand Cherokee 2.7 CRD" android:textColor="@color/dim" android:textSize="11sp" android:paddingRight="12dp" />
+        <View android:id="@+id/stateDot" android:layout_width="10dp" android:layout_height="10dp" android:background="@drawable/cell_bg" />
+        <TextView android:id="@+id/stateText" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:text="Bağlı değil" android:textColor="@color/fg" android:textSize="13sp" android:textStyle="bold" android:paddingLeft="6dp" android:singleLine="true" android:ellipsize="end" />
+        <Button android:id="@+id/btnTopConnect" style="@style/BtnAccent" android:layout_width="wrap_content" android:layout_height="36dp"
+            android:layout_marginBottom="0dp" android:paddingLeft="16dp" android:paddingRight="16dp" android:text="BAĞLAN" />
+    </LinearLayout>
+
+    <!-- tabs -->
+    <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@color/panel" android:scrollbars="none">
+        <LinearLayout android:id="@+id/tabBar" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" />
+    </HorizontalScrollView>
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/panel3" />
+
+    <!-- content -->
+    <FrameLayout android:id="@+id/content" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+
+        <!-- TAB 0: connection + dashboard + modules -->
+        <LinearLayout android:id="@+id/tabConn" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical">
+            <ScrollView android:id="@+id/dashScroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
+                <LinearLayout android:id="@+id/dashPanel" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="6dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingBottom="4dp">
+                        <View android:id="@+id/liveDot" android:layout_width="9dp" android:layout_height="9dp" android:background="@drawable/cell_bg" />
+                        <TextView android:id="@+id/liveText" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="Durdu" android:textColor="@color/dim" android:textSize="12sp" android:textStyle="bold" android:typeface="monospace" android:paddingLeft="6dp" />
+                        <TextView android:id="@+id/dashTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="MOTOR" android:textColor="@color/orange" android:textSize="12sp" android:textStyle="bold" android:paddingRight="8dp" />
+                        <Button android:id="@+id/btnLive" style="@style/BtnAccent" android:layout_width="wrap_content" android:layout_height="34dp" android:layout_marginBottom="0dp" android:paddingLeft="14dp" android:paddingRight="14dp" android:text="Canlı Başlat" />
+                    </LinearLayout>
+                    <LinearLayout android:id="@+id/ecuDash" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+                    <LinearLayout android:id="@+id/tcmDash" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone" />
+                </LinearLayout>
+            </ScrollView>
+            <ScrollView android:id="@+id/connScroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="6dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:background="@drawable/card_bg" android:padding="8dp">
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="WiFi" android:textColor="@color/fg" android:textSize="13sp" android:textStyle="bold" android:paddingRight="8dp" />
+                            <EditText android:id="@+id/host" style="@style/Edit" android:layout_width="0dp" android:layout_weight="1" android:hint="192.168.0.10" android:inputType="textUri" />
+                            <EditText android:id="@+id/port" style="@style/Edit" android:layout_width="78dp" android:layout_marginLeft="6dp" android:hint="35000" android:inputType="number" />
+                            <Button android:id="@+id/btnConnect" style="@style/BtnAccent" android:layout_width="wrap_content" android:layout_height="40dp" android:layout_marginLeft="6dp" android:layout_marginBottom="0dp" android:paddingLeft="14dp" android:paddingRight="14dp" android:text="Bağlan" />
+                        </LinearLayout>
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingTop="6dp">
+                            <Button android:id="@+id/btnBt" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="36dp" android:layout_marginBottom="0dp" android:paddingLeft="12dp" android:paddingRight="12dp" android:text="Bluetooth" />
+                            <Button android:id="@+id/btnSim" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="36dp" android:layout_marginBottom="0dp" android:layout_marginLeft="6dp" android:paddingLeft="12dp" android:paddingRight="12dp" android:text="PC Simülatör" />
+                            <TextView android:id="@+id/connInfo" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="ELM327 WiFi: 192.168.0.10:35000 (WiFi_OBDII ağına bağlanın)" android:textColor="@color/dim" android:textSize="10sp" android:paddingLeft="8dp" />
+                            <Button android:id="@+id/btnDisconnect" style="@style/BtnDanger" android:layout_width="wrap_content" android:layout_height="36dp" android:layout_marginBottom="0dp" android:paddingLeft="12dp" android:paddingRight="12dp" android:text="Kes" android:visibility="gone" />
+                        </LinearLayout>
+                    </LinearLayout>
+                    <TextView style="@style/Head" android:text="MODÜLLER  (seçmek için dokun)" />
+                    <LinearLayout android:id="@+id/moduleList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+                </LinearLayout>
+            </ScrollView>
+        </LinearLayout>
+
+        <!-- TAB 1: DTC -->
+        <LinearLayout android:id="@+id/tabDtc" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="8dp" android:visibility="gone">
+            <LinearLayout android:id="@+id/dtcSources" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
+                <Button android:id="@+id/btnDtcRead" style="@style/BtnBlue" android:layout_width="0dp" android:layout_weight="1" android:layout_marginRight="4dp" android:text="Arıza Kodlarını Oku" />
+                <Button android:id="@+id/btnDtcClear" style="@style/BtnDanger" android:layout_width="0dp" android:layout_weight="1" android:text="Arıza Kodlarını Sil" />
+            </LinearLayout>
+            <TextView android:id="@+id/dtcCount" style="@style/Hint" android:text="" android:textSize="12sp" />
+            <TextView android:id="@+id/dtcStatus" style="@style/Hint" android:typeface="monospace" android:text="" />
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="4dp">
+                <LinearLayout android:id="@+id/dtcList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+            </ScrollView>
+        </LinearLayout>
+
+        <!-- TAB 2: controls -->
+        <ScrollView android:id="@+id/tabCtrl" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="8dp">
+                <LinearLayout android:id="@+id/ctrlGroups" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" />
+                <TextView android:id="@+id/ctrlInfo" style="@style/Hint" android:text="Bir kontrol grubu seçin. Düğmeyi basılı tutun: basınca AÇ, bırakınca KAPA komutu gider." android:paddingTop="6dp" android:paddingBottom="6dp" />
+                <LinearLayout android:id="@+id/ctrlGrid" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- TAB 3: actuators -->
+        <ScrollView android:id="@+id/tabAct" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="8dp">
+                <TextView android:id="@+id/actTitle" style="@style/Head" android:paddingTop="0dp" android:text="Aktüatörler" />
+                <TextView android:id="@+id/actInfo" style="@style/Hint" android:text="Bağlantı sekmesinden bir modül seçin." android:paddingBottom="6dp" />
+                <LinearLayout android:id="@+id/actGrid" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- TAB 4: smoke test -->
+        <ScrollView android:id="@+id/tabSmoke" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="8dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:background="@drawable/card_bg" android:padding="8dp">
+                    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Kara Duman Testi (ECU 0x15)" android:textColor="@color/orange" android:textSize="14sp" android:textStyle="bold" />
+                    <TextView style="@style/Hint" android:text="1. Motor sıcak olsun (>70°C). ELM'e bağlan, modül seçmeye gerek yok.\n2. BAŞLAT'a bas, 3 sn rölantide bekle.\n3. Yolda D'de ~1500 rpm'den gaza SONUNA KADAR bas, 3500+ rpm'e çek (2 kez).\n4. Duman görüldüğü an sarı İŞARET'e bas (yolcu bassın).\n5. Durunca P/N'de 2 kez gaza sonuna kadar basıp 1-2 sn TUT, sonra DURDUR.\n6. Raporu WhatsApp ile gönder." />
+                </LinearLayout>
+                <LinearLayout android:id="@+id/smokeGrid" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="6dp" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
+                    <Button android:id="@+id/btnSmokeStart" style="@style/BtnAccent" android:layout_width="0dp" android:layout_weight="1" android:layout_height="54dp" android:textSize="16sp" android:text="BAŞLAT" />
+                    <Button android:id="@+id/btnSmokeStop" style="@style/BtnDanger" android:layout_width="0dp" android:layout_weight="1" android:layout_height="54dp" android:textSize="16sp" android:text="DURDUR" android:visibility="gone" />
+                    <Button android:id="@+id/btnSmokeMark" style="@style/Btn" android:layout_width="0dp" android:layout_weight="1" android:layout_height="54dp" android:layout_marginLeft="6dp" android:textSize="15sp" android:textStyle="bold" android:background="#F2C21B" android:textColor="#111111" android:text="İŞARET\nDUMAN" android:visibility="gone" />
+                    <Button android:id="@+id/btnSmokeClear" style="@style/Btn" android:layout_width="90dp" android:layout_height="54dp" android:layout_marginLeft="6dp" android:text="Temizle" android:visibility="gone" />
+                </LinearLayout>
+                <TextView android:id="@+id/smokeNotice" style="@style/Hint" android:textColor="@color/orange" android:text="" />
+                <LinearLayout android:id="@+id/smokeShareRow" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:visibility="gone">
+                    <Button android:id="@+id/btnSmokeWa" style="@style/Btn" android:layout_width="0dp" android:layout_weight="1" android:background="#25A855" android:textColor="#FFFFFF" android:textStyle="bold" android:text="WhatsApp" />
+                    <Button android:id="@+id/btnSmokeShare" style="@style/BtnBlue" android:layout_width="0dp" android:layout_weight="1" android:layout_marginLeft="6dp" android:text="Dosya paylaş" />
+                    <Button android:id="@+id/btnSmokeCopy" style="@style/Btn" android:layout_width="0dp" android:layout_weight="1" android:layout_marginLeft="6dp" android:text="Kopyala" />
+                </LinearLayout>
+                <TextView android:id="@+id/smokeSummary" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="@color/fg" android:textSize="10sp" android:typeface="monospace" android:background="@drawable/cell_big" android:padding="8dp" android:visibility="gone" />
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- TAB 5: log -->
+        <LinearLayout android:id="@+id/tabLog" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="6dp" android:visibility="gone">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+                <EditText android:id="@+id/rawCmd" style="@style/Edit" android:layout_width="0dp" android:layout_weight="1" android:hint="Ham komut (örn. ATRV, 21 12, ATSMOKE2)" android:inputType="textCapCharacters|textNoSuggestions" android:imeOptions="actionSend" />
+                <Button android:id="@+id/btnRawSend" style="@style/BtnAccent" android:layout_width="wrap_content" android:layout_height="40dp" android:layout_marginLeft="6dp" android:layout_marginBottom="0dp" android:paddingLeft="14dp" android:paddingRight="14dp" android:text="Gönder" />
+                <Button android:id="@+id/btnLogClear" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="40dp" android:layout_marginLeft="6dp" android:layout_marginBottom="0dp" android:paddingLeft="12dp" android:paddingRight="12dp" android:text="Temizle" />
+                <Button android:id="@+id/btnLogShare" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="40dp" android:layout_marginLeft="6dp" android:layout_marginBottom="0dp" android:paddingLeft="12dp" android:paddingRight="12dp" android:text="Paylaş" />
+            </LinearLayout>
+            <ScrollView android:id="@+id/logScroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="6dp" android:background="@drawable/card_bg">
+                <TextView android:id="@+id/logText" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="@color/dim" android:textSize="10sp" android:typeface="monospace" android:padding="6dp" />
+            </ScrollView>
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>

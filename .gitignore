@@ -24,6 +24,10 @@ DerivedData/
 *.dSYM.zip
 *.dSYM
 
+# --- Android (android-app, Gradle-less build) ---
+android-app/android/build/
+*.idsig
+
 # --- PlatformIO (esp32-emulator) ---
 .pio/
 .vscode/

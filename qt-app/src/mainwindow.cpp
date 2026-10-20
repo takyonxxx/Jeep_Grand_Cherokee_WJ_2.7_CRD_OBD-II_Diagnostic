@@ -2383,8 +2383,9 @@ void MainWindow::runDiscoveryPhases(
                                 .arg(u16(0)).arg(u16(2)/100.0,0,'f',2)
                                 .arg(u16(4)).arg(u16(6)).arg(u16(8)).arg(u16(10)).arg(u16(12));
                             if (n >= 26) {
-                                p += QString(" InjCorr1=%1 InjCorr2=%2 InjCorr3=%3")
-                                    .arg(s16(20)/100.0,0,'f',2).arg(s16(22)/100.0,0,'f',2).arg(s16(24)/100.0,0,'f',2);
+                                p += QString(" InjCorr1=%1 InjCorr2=%2 InjCorr3=%3 InjCorr4=%4 InjCorr5=%5")
+                                    .arg(s16(16)/100.0,0,'f',2).arg(s16(18)/100.0,0,'f',2).arg(s16(20)/100.0,0,'f',2)
+                                    .arg(s16(22)/100.0,0,'f',2).arg(s16(24)/100.0,0,'f',2);
                             }
                         } else if (isECU && blk == 0x16 && n >= 4) {
                             p = QString("AltRaw=%1 BattV=%2V [%3 bytes]")

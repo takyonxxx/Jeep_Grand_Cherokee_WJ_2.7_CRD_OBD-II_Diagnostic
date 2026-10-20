@@ -165,8 +165,12 @@ struct ECUStatus {
     var injectionQty: Double = 0
     // Block 0x28[4-13]: per-cylinder RPMs
     var cylRPMs: [Double] = Array(repeating: 0, count: 5)
-    // Block 0x28[20-25]: signed /100 = mg/str injection corrections
-    var injCorrections: [Double] = Array(repeating: 0, count: 3)
+    // Block 0x28[16-25]: five signed words /100 = mg/str, one smooth-running
+    // injection correction per cylinder (OM612, 5 cyl). In every real capture
+    // (pcap/full_modules.pcap) the five sum to ~0 (-0.03 mg): the idle governor
+    // redistributes fuel between cylinders. [16-17] / [18-19] are cylinders 1-2,
+    // not a constant / "varies" word. Idle only, 0 while driving.
+    var injCorrections: [Double] = Array(repeating: 0, count: 5)
     // Computed: fuel flow (OM612 5-cyl diesel)
     var fuelFlowLH: Double = 0      // L/h instantaneous
     var fuelLPer100km: Double = 0   // L/100km instantaneous

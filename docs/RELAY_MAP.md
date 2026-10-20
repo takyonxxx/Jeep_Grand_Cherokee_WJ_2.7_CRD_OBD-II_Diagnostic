@@ -298,12 +298,18 @@ Real vehicle idle: `02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 
 | [10-11] | u16 | Cyl 4 RPM | raw | 750 |
 | [12-13] | u16 | Cyl 5 RPM | raw | 750 |
 | [14-15] | u16 | (padding) | 0 | |
-| [16-17] | u16 | (constant) | 0x0016 = 22 | |
-| [18-19] | u16 | (varies) | 17/13/11 per cycle | |
-| [20-21] | s16 | Inj Correction 1 | /100 = mg/str — **idle only**, 0 while driving | -1.42 |
-| [22-23] | s16 | Inj Correction 2 | /100 = mg/str | +0.54 |
-| [24-25] | s16 | Inj Correction 3 | /100 = mg/str | +0.47 |
+| [16-17] | s16 | **Inj Correction Cyl 1** | /100 = mg/str — **idle only**, 0 while driving | +0.22 |
+| [18-19] | s16 | **Inj Correction Cyl 2** | /100 = mg/str | +0.17 |
+| [20-21] | s16 | **Inj Correction Cyl 3** | /100 = mg/str | -1.42 |
+| [22-23] | s16 | **Inj Correction Cyl 4** | /100 = mg/str | +0.54 |
+| [24-25] | s16 | **Inj Correction Cyl 5** | /100 = mg/str | +0.47 |
 | [26-27] | u16 | (padding) | 0 | |
+
+Five corrections, one per cylinder (OM612 = 5 cyl). Proof: in all three 0x28 frames of
+`captures/pcap/full_modules.pcap` the five signed words at [16-25] sum to ≈ 0
+(`0016 000D FF6E 003B 0031` → -0.03 mg, `0016 000B FF6C 003B 0035` → -0.03, `0016 0011 FF72 0036 002F` → -0.02):
+the smooth-running controller only redistributes fuel between cylinders. [16-17] / [18-19] were
+previously listed as "constant" / "varies" — they are cylinders 1 and 2 (WJdiag Pro shows all five).
 
 ### Block 0x30 (24 data bytes) — Idle setpoints
 | Offset | Bytes | Field | Formula |

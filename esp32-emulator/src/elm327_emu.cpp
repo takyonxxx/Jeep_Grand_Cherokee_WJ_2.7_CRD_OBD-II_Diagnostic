@@ -207,14 +207,14 @@ void ELM327Emu::simUpdate(float dt) {
     sim.torque = (fuel < 0.5f && rpm > 900.0f) ? -560.0f : fuel * 90.0f;
 
     // --- Cylinder corrections ---
+    // Five per-cylinder words that sum to ~0 (idle governor redistributes fuel);
+    // mode 3 makes them large and unbalanced (injector / compression fault).
     if (sim.mode == 3) {
-        sim.corr[0] = -4.2f + random(-30, 30) / 100.0f;
-        sim.corr[1] =  3.8f + random(-30, 30) / 100.0f;
-        sim.corr[2] =  0.9f + random(-10, 10) / 100.0f;
+        static const float base3[5] = {-4.2f, 3.8f, 0.9f, -1.1f, 0.6f};
+        for (int i = 0; i < 5; i++) sim.corr[i] = base3[i] + random(-30, 30) / 100.0f;
     } else {
-        sim.corr[0] = -1.42f + random(-10, 10) / 100.0f;
-        sim.corr[1] =  0.54f + random(-5, 5) / 100.0f;
-        sim.corr[2] =  0.47f + random(-5, 5) / 100.0f;
+        static const float base0[5] = {0.22f, 0.17f, -1.42f, 0.54f, 0.47f};  // real car idle
+        for (int i = 0; i < 5; i++) sim.corr[i] = base0[i] + random(-6, 6) / 100.0f;
     }
 }
 
@@ -1091,15 +1091,14 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             // Full 28-byte format (verified 2026-03-17 idle, 2026-09-23 driving)
             // 02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 002F 0000
             // [0-1]=RPM [2-3]=InjQty [4-13]=5x per-cyl RPM [14-15]=0
-            // [16-17]=0x0016 [18-19]=varies [20-25]=inj corrections(s16) [26-27]=0
+            // [16-25]=5x s16 per-cylinder inj corrections (sum ~0) [26-27]=0
             // Per-cylinder RPMs and corrections are only computed by the EDC15
             // at idle (smooth-running control): while driving the real car
             // sends all zeros there, so the emulator does the same.
             bool idle = engineRpm < 1000.0f;
             uint16_t cyl = idle ? rpm : 0;
-            int16_t corr1 = idle ? (int16_t)(sim.corr[0] * 100) : 0;
-            int16_t corr2 = idle ? (int16_t)(sim.corr[1] * 100) : 0;
-            int16_t corr3 = idle ? (int16_t)(sim.corr[2] * 100) : 0;
+            int16_t c[5];
+            for (int i = 0; i < 5; i++) c[i] = idle ? (int16_t)(sim.corr[i] * 100) : 0;
             uint8_t r[] = {0x61,0x28,
                 (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),      // [0-1] RPM
                 (uint8_t)(iq>>8),(uint8_t)(iq&0xFF),         // [2-3] InjQty /100
@@ -1109,11 +1108,11 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
                 (uint8_t)(cyl>>8),(uint8_t)(cyl&0xFF),       // [10-11] Cyl4 RPM
                 (uint8_t)(cyl>>8),(uint8_t)(cyl&0xFF),       // [12-13] Cyl5 RPM
                 0x00,0x00,                                    // [14-15]
-                0x00,0x16,                                    // [16-17] constant
-                0x00,0x11,                                    // [18-19] varies
-                (uint8_t)((uint16_t)corr1>>8),(uint8_t)((uint16_t)corr1&0xFF), // [20-21] injCorr1
-                (uint8_t)((uint16_t)corr2>>8),(uint8_t)((uint16_t)corr2&0xFF), // [22-23] injCorr2
-                (uint8_t)((uint16_t)corr3>>8),(uint8_t)((uint16_t)corr3&0xFF), // [24-25] injCorr3
+                (uint8_t)((uint16_t)c[0]>>8),(uint8_t)((uint16_t)c[0]&0xFF), // [16-17] injCorr cyl1
+                (uint8_t)((uint16_t)c[1]>>8),(uint8_t)((uint16_t)c[1]&0xFF), // [18-19] injCorr cyl2
+                (uint8_t)((uint16_t)c[2]>>8),(uint8_t)((uint16_t)c[2]&0xFF), // [20-21] injCorr cyl3
+                (uint8_t)((uint16_t)c[3]>>8),(uint8_t)((uint16_t)c[3]&0xFF), // [22-23] injCorr cyl4
+                (uint8_t)((uint16_t)c[4]>>8),(uint8_t)((uint16_t)c[4]&0xFF), // [24-25] injCorr cyl5
                 0x00,0x00};                                   // [26-27]
             return kwpWrap(r, 30);
         }

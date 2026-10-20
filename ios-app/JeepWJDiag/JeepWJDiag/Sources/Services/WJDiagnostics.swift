@@ -430,9 +430,10 @@ final class WJDiagnostics: ObservableObject {
                 if data.count >= 14 {
                     for i in 0..<5 { self.ecuStatus.cylRPMs[i] = Double(u16(data, 4 + i*2)) }
                 }
-                // Injection corrections [20-25] signed - idle only as well
+                // Five per-cylinder injection corrections [16-25] signed - idle only as well.
+                // Real car: 0016 0011 FF72 0036 002F = +0.22 +0.17 -1.42 +0.54 +0.47 (sum -0.02).
                 if data.count >= 26 {
-                    for i in 0..<3 { self.ecuStatus.injCorrections[i] = Double(s16(data, 20 + i*2)) / 100.0 }
+                    for i in 0..<5 { self.ecuStatus.injCorrections[i] = Double(s16(data, 16 + i*2)) / 100.0 }
                 }
 
             case 0x22:

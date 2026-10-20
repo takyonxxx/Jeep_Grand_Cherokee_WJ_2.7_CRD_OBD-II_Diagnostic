@@ -37,7 +37,7 @@ struct SmokeSample {
     let b20b: Double         // 0x20[2-3] raw
     let b23a: Double         // 0x23[0-1] raw
     let b23g: Double         // 0x23[6-7] raw
-    let corr: [Double]       // 0x28 injection corrections mg/str
+    let corr: [Double]       // 0x28[16-25] five per-cylinder injection corrections mg/str
     var mark: String
 
     /// Fuel per stroke, always from 0x28 (read every cycle). 0x32 "actual"
@@ -419,7 +419,7 @@ struct SmokeTestSession {
 
     // MARK: - Text output
 
-    static let csvHeader = "t,src,rpm,ped,gear,b36s,kmh,iq,fuel,maf,af,bAct,bSet,map,rail,cool,iat,fq0,fq1,fq2,fq3,fq4,fq5,fq6,egr,wg,b36c,b20a,b20b,b23a,b23g,c1,c2,c3,mark"
+    static let csvHeader = "t,src,rpm,ped,gear,b36s,kmh,iq,fuel,maf,af,bAct,bSet,map,rail,cool,iat,fq0,fq1,fq2,fq3,fq4,fq5,fq6,egr,wg,b36c,b20a,b20b,b23a,b23g,c1,c2,c3,c4,c5,mark"
 
     func csvText() -> String {
         var out = Self.csvHeader + "\n"

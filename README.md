@@ -197,7 +197,7 @@ PlatformIO project for VS Code. WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000
 - **First `81` = BUS INIT**: When K-Line TCM uses `81` for bus init (no ATFI), first `81` response includes `BUS INIT: OK\r` prefix
 - **Seed=0x0000 mode**: ECU returns `67 01 00 00` for first 3 seed requests (simulates already-unlocked state), then switches to dynamic seed. `ecuUnlocked=true` when seed=0 so blocks 62/B0/B1/B2 respond; any key sent after seed 0 gets `7F 27 12` like the real ECU
 - **Bare `27 02` handling**: Returns NRC 0x12 for `27 02` with no key bytes (real vehicle behavior when seed=0)
-- **Block 0x28 full format**: 28 data bytes with per-cylinder RPMs [4-13] and signed injection corrections [20-25] — populated only at idle (< 1000 rpm), zero while driving, as on the real car
+- **Block 0x28 full format**: 28 data bytes with per-cylinder RPMs [4-13] and five signed per-cylinder injection corrections [16-25] (they sum to ~0, see RELAY_MAP) — populated only at idle (< 1000 rpm), zero while driving, as on the real car
 - **Block 0x36 real layout**: [0-1] small signed word, [2] gear, [6-7] MAF, [8-9] boost setpoint, **[12-13] pedal ×100**, [22-23] rail raw, [26-27] MAF copy, [30-31] signed torque-like word; 0x12[12-13] carries the same pedal word
 - **J1850 bus noise injection**: Random `2D 28 02 51` / `2D 28 0A B9` frames prepended to ~15% of J1850 responses
 - **NRC 0x21 simulation**: ~5% of J1850 mode 0x22 reads return `7F 22 21` (busyRepeatRequest) to test retry logic

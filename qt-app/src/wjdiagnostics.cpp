@@ -1268,8 +1268,9 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
     case 0x28:
         // Block 0x28: RPM + Fuel injection + per-cylinder ( 2026-03-17)
         // 02 EF 03 9D 02 EE 02 EE 02 EE 02 EE 02 EE 00 00 00 16 00 11 FF 72 00 36 00 2F 00 00
-        // [0-1]=RPM [2-3]=InjQty/100 [4-13]=5x per-cyl RPM [14-15]=0 [16-17]=const
-        // [18-19]=varies [20-21]=injCorr1(s16) [22-23]=injCorr2 [24-25]=injCorr3
+        // [0-1]=RPM [2-3]=InjQty/100 [4-13]=5x per-cyl RPM [14-15]=0
+        // [16-25]=5x s16 per-cylinder injection corrections /100 mg/str (sum ~0 on the
+        // real car: 0016 0011 FF72 0036 002F; idle only, zeros while driving)
         if (n >= 6) {
             uint16_t rpmVal = u16(2);
             double iqVal = u16(4) / 100.0;
@@ -1282,10 +1283,10 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
                 for (int i = 0; i < 5; i++)
                     ecu.cylRpm[i] = u16(6 + i*2);
             }
-            // Per-cylinder injection corrections (signed,  offsets 20-25)
+            // Per-cylinder injection corrections (signed, data offsets 16-25, cyl 1-5)
             if (n >= 28) {
-                for (int i = 0; i < 3; i++)
-                    ecu.injCorr[i] = s16(22 + i*2) / 100.0;
+                for (int i = 0; i < 5; i++)
+                    ecu.injCorr[i] = s16(18 + i*2) / 100.0;
             }
         }
         break;
