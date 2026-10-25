@@ -305,6 +305,11 @@ Real vehicle idle: `02EF 039D 02EE 02EE 02EE 02EE 02EE 0000 0016 0011 FF72 0036 
 | [24-25] | s16 | **Inj Correction Cyl 5** | /100 = mg/str | +0.47 |
 | [26-27] | u16 | (padding) | 0 | |
 
+**The corrections are only populated while ECU routine 0x25 is running.** In `captures/pcap/full_modules.pcap`
+the app sends `27 01` (seed 00 00 = unlocked), then `31 25 00` -> `71 25 00`, reads `21 28` three times, then
+`32 25` -> `72 25`. Outside that routine the words read zero (also while driving). Sequence to use:
+`81` keepalive, `27 01`, `31 25 00`, poll `21 28` at idle, `32 25` when done.
+
 Five corrections, one per cylinder (OM612 = 5 cyl). Proof: in all three 0x28 frames of
 `captures/pcap/full_modules.pcap` the five signed words at [16-25] sum to ≈ 0
 (`0016 000D FF6E 003B 0031` → -0.03 mg, `0016 000B FF6C 003B 0035` → -0.03, `0016 0011 FF72 0036 002F` → -0.02):

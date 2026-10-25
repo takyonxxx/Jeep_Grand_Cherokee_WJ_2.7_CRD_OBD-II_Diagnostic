@@ -23,6 +23,7 @@ import json
 import math
 import os
 import random
+import re
 import socket
 import sys
 import threading
@@ -137,6 +138,7 @@ class Elm327Emu:
         self.tcmReadCount = 0
         self._simSpeed = 0
         self._speedUp = True
+        self.corrRoutine = False   # ECU routine 0x25 active (31 25 00 / 32 25)
 
     # ------------------------------------------------------------ timing
     def response_delay_ms(self, cmd, resp):
@@ -482,6 +484,19 @@ class Elm327Emu:
         if hit is not None:
             return hit
         if t == 0x60:
+            # Airbag / ORC. WJdiag-Pro reads its DTCs with ATSH246022 + "2E xx 00"
+            # (B10xx <-> PID xx) and clears with mode 0x14. Two stored faults
+            # (B1010, B1051) until cleared; everything else stays NRC like the car.
+            if m == 0x22:
+                mm = re.match(r"2E ([0-9A-F]{2}) 00$", cmdStr)
+                if mm:
+                    pid = int(mm.group(1), 16)
+                    if pid in (0x10, 0x51) and not self.j1850DtcCleared.get(0x60):
+                        return "26 60 62 01 00 02 EB"
+                    return "26 60 62 00 00 00 E8"
+            if m == 0x14:
+                self.j1850DtcCleared[0x60] = True
+                return "26 60 54 FF 00 00 D9"
             return "26 60 7F 22 22 00 44"
         if t in (0x81, 0x62, 0x6D, 0x87, 0x90):
             return "NO DATA"
@@ -581,7 +596,15 @@ class Elm327Emu:
                 return W([0x7F, 0x30, 0x78]) + "\r" + pos
             return pos
         if sid == 0x31:
+            # real car: "31 25 00" -> "71 25 00" (fuel-correction routine); TCM 31 31/32 adaptives
+            if dlen >= 1 and data[0] == 0x25 and self.klTarget != 0x20:
+                self.corrRoutine = True
+                return W([0x71, 0x25, 0x00])
             return W([0x71, data[0] if dlen >= 1 else 0x00])
+        if sid == 0x32:
+            if dlen >= 1 and data[0] == 0x25:
+                self.corrRoutine = False
+            return W([0x72, data[0] if dlen >= 1 else 0x00])
         return W([0x7F, sid, 0x11])
 
     def kwp_ecu_id(self, opt):
@@ -673,7 +696,7 @@ class Elm327Emu:
             idle = self.engineRpm < 1000.0
             cyl = rpm if idle else 0
             # [16-25] = five signed per-cylinder corrections (real car: 0016 0011 FF72 0036 002F, sum ~0)
-            c = [s16raw(int(sim.corr[i] * 100)) if idle else 0 for i in range(5)]
+            c = [s16raw(int(sim.corr[i] * 100)) if (idle and self.corrRoutine) else 0 for i in range(5)]  # only while routine 0x25 runs (pcap)
             r = [0x61,0x28, hi8(rpm),lo8(rpm), hi8(iq),lo8(iq)]
             for _ in range(5):
                 r += [hi8(cyl), lo8(cyl)]

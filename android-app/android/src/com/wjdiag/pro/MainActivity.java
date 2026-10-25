@@ -85,8 +85,12 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
     private int dtcSource = 0;
     private int ctrlGroup = -1;
     private final List<Button> dtcChips = new ArrayList<>(), ctrlChips = new ArrayList<>();
-    private static final WJModule[] DTC_MODULES = {WJModule.KLINE_TCM, WJModule.MOTOR_ECU, WJModule.ABS, WJModule.ESP, WJModule.BODY_COMPUTER, WJModule.RAIN_SENSOR};
-    private static final String[] DTC_LABELS = {"TCM", "ECU", "ABS", "ESP", "BCM", "Yağmur"};
+    private android.widget.CheckBox autoClearAirbag;
+    private boolean autoClearOn, autoClearBusy;
+    private int autoClearCount;
+    private static final int AUTO_CLEAR_MS = 5000;
+    private static final WJModule[] DTC_MODULES = {WJModule.KLINE_TCM, WJModule.MOTOR_ECU, WJModule.ABS, WJModule.AIRBAG, WJModule.ESP, WJModule.BODY_COMPUTER, WJModule.RAIN_SENSOR};
+    private static final String[] DTC_LABELS = {"TCM", "ECU", "ABS", "Airbag", "ESP", "BCM", "Yağmur"};
 
     private final StringBuilder logBuf = new StringBuilder();
     private boolean logDirty, ecuDirty, tcmDirty, smokeDirty;
@@ -115,6 +119,7 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         btnDtcRead = (Button) findViewById(R.id.btnDtcRead); btnDtcClear = (Button) findViewById(R.id.btnDtcClear);
         btnSmokeStart = (Button) findViewById(R.id.btnSmokeStart); btnSmokeStop = (Button) findViewById(R.id.btnSmokeStop);
         btnSmokeMark = (Button) findViewById(R.id.btnSmokeMark); btnSmokeClear = (Button) findViewById(R.id.btnSmokeClear);
+        autoClearAirbag = (android.widget.CheckBox) findViewById(R.id.autoClearAirbag);
         host = (EditText) findViewById(R.id.host); port = (EditText) findViewById(R.id.port); rawCmd = (EditText) findViewById(R.id.rawCmd);
         tabConn = (LinearLayout) findViewById(R.id.tabConn); ecuDash = (LinearLayout) findViewById(R.id.ecuDash); tcmDash = (LinearLayout) findViewById(R.id.tcmDash);
         moduleList = (LinearLayout) findViewById(R.id.moduleList); dtcSources = (LinearLayout) findViewById(R.id.dtcSources); dtcList = (LinearLayout) findViewById(R.id.dtcList);
@@ -246,6 +251,12 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
             cm.setPrimaryClip(ClipData.newPlainText("smoke", diag.smoke.reportText()));
             smokeNotice.setText("Rapor panoya kopyalandı");
         } });
+        autoClearAirbag.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                if (on && !elm.isReady()) { toast("Önce bağlanın"); b.setChecked(false); return; }
+                setAutoClear(on);
+            }
+        });
         findViewById(R.id.btnLogClear).setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { logBuf.setLength(0); elm.clearLog(); logText.setText(""); } });
         findViewById(R.id.btnLogShare).setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { shareFile("WJDiag_log.txt", logBuf.toString()); } });
         findViewById(R.id.btnRawSend).setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { sendRaw(); } });
@@ -346,7 +357,7 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
             default: col = 0xFF666666; txt = "Bağlı değil";
         }
         setDot(stateDot, col);
-        if (s != Elm327.State.READY) { diag.onDisconnected(); selectedModule = null; refreshModuleRows(); }
+        if (s != Elm327.State.READY) { setAutoClear(false); autoClearAirbag.setChecked(false); diag.onDisconnected(); selectedModule = null; refreshModuleRows(); }
         refreshEnabled();
         updateStateText(txt);
     }
@@ -371,7 +382,8 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         host.setEnabled(!ready && s != Elm327.State.CONNECTING); port.setEnabled(host.isEnabled());
         btnBt.setEnabled(!ready && s != Elm327.State.CONNECTING);
         btnLive.setEnabled(ready && !switching);
-        btnDtcRead.setEnabled(ready && !diag.smoke.isRecording); btnDtcClear.setEnabled(ready && !diag.smoke.isRecording);
+        btnDtcRead.setEnabled(ready && !diag.smoke.isRecording && !autoClearOn); btnDtcClear.setEnabled(ready && !diag.smoke.isRecording && !autoClearOn);
+        autoClearAirbag.setEnabled(ready);
         btnSmokeStart.setEnabled(ready);
         for (Button c : ctrlChips) c.setEnabled(ready && !switching);
         for (Map.Entry<WJModule, View> e : moduleRows.entrySet()) { e.getValue().setEnabled(ready && !switching); e.getValue().setAlpha(ready && !switching ? 1f : 0.45f); }
@@ -447,14 +459,19 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         LinearLayout left = column(top, 1f);
         LinearLayout lr1 = row(left); gauge(lr1, "e.speed", "HIZ", "km/h", 1f);
         LinearLayout lr2 = row(left); gauge(lr2, "e.rpm", "DEVİR", "rpm", 1f);
-        bigCell(top, "e.fuel", "YAKIT", "L/sa", "e.fuelL", "e.fuelPct", 1.3f);
+        // Big centre cell = fuel: consumption, tank, injected fuel + air per stroke.
+        // (Gear removed: the ECU cannot tell P/R/N apart; the TCM dashboard shows it exactly.)
+        bigCell(top, "e.fuelBig", "YAKIT", "L/sa", "e.fuelL", "e.fuelMg", 2.0f);
+        { TextView fb = gauges.get("e.fuelBig"); if (fb != null) fb.setTextSize(TypedValue.COMPLEX_UNIT_SP, 56);
+          TextView tank = gauges.get("e.fuelL"); if (tank != null) { tank.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24); tank.setTypeface(Typeface.MONOSPACE, Typeface.BOLD); }
+          TextView mg = gauges.get("e.fuelMg"); if (mg != null) { mg.setTypeface(Typeface.MONOSPACE); mg.setSingleLine(true); mg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13); } }
         LinearLayout right = column(top, 1f);
         LinearLayout rr1 = row(right); gauge(rr1, "e.injq", "ENJ-Q", "mg/str", 1f);
         LinearLayout rr2 = row(right); gauge(rr2, "e.rail", "RAIL", "bar", 1f);
         LinearLayout r2 = row(ecuDash);
         gauge(r2, "e.boost", "BOOST", "bar", 1f); gauge(r2, "e.temp", "M-SICAK", "°C", 1f); gauge(r2, "e.maf", "MAF", "mg/str", 1f); gauge(r2, "e.batt", "AKÜ", "V", 1f);
         LinearLayout r3 = row(ecuDash);
-        gauge(r3, "e.pedal", "PEDAL", "%", 1f); gauge(r3, "e.bset", "B-HEDEF", "bar", 1f); gauge(r3, "e.iat", "EMME HAVA", "°C", 1f); gauge(r3, "e.gear", "VİTES", "0x36", 1f);
+        gauge(r3, "e.pedal", "PEDAL", "%", 1f); gauge(r3, "e.bset", "B-HEDEF", "bar", 1f); gauge(r3, "e.iat", "EMME HAVA", "°C", 1f); gauge(r3, "e.map", "MAP", "mbar", 1f);
         LinearLayout r4 = row(ecuDash);
         gauge(r4, "e.cyl", "SİLİNDİR RPM", "1-5", 2f); gauge(r4, "e.corr", "ENJ DÜZELTME (silindir 1-5)", "mg/str  (+ yakıt ekleniyor, − kısılıyor)", 2f);
         LinearLayout r5 = row(ecuDash);
@@ -485,13 +502,19 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         set("e.speed", f("%.0f", e.vehicleSpeed));
         set("e.rpm", f("%.0f", e.rpm), e.rpm > 4500 ? C_RED : e.rpm > 3500 ? C_ORANGE : C_GREEN);
         boolean moving = e.vehicleSpeed > 5;
-        set("e.fuel", f("%.1f", moving ? e.fuelLPer100km : e.fuelFlowLH));
-        set("e.fuel.unit", moving ? "L/100km" : "L/sa");
+        double fuelVal = moving ? e.fuelLPer100km : e.fuelFlowLH;
+        String fuelUnit = moving ? "L/100km" : "L/sa";
+        // ECU block 0x36[2] only knows 0 (= P/N) or the engaged gear 1-5 (shown as D1-D5).
+        // P / N / R are told apart only by the TCM (selector byte in block 0x30) -> TCM dashboard.
+        set("e.fuelBig", f("%.1f", fuelVal), C_GREEN); set("e.fuelBig.unit", fuelUnit);
         if (e.fuelLevel > 0) {
             double liters = e.fuelLevel * 78.7 / 100.0;
             int col = liters < 10 ? C_RED : liters < 20 ? C_ORANGE : C_CYAN;
-            set("e.fuelL", f("%.1f L", liters), col); set("e.fuelPct", f("(%%%.0f depo)", e.fuelLevel), col);
-        } else { set("e.fuelL", ""); set("e.fuelPct", ""); }
+            set("e.fuelL", String.format(Locale.US, "DEPO %.1f L  (%%%.0f)", liters, e.fuelLevel), col);
+        } else set("e.fuelL", "");
+        set("e.map", f("%.0f", e.mapActual));
+        double iqNow = e.fuelQuantity > 0 ? e.fuelQuantity : e.injectionQty;
+        set("e.fuelMg", f("enj %.1f mg/str", iqNow) + "   ·   " + f("hava %.0f mg/str", e.mafFlow), C_CYAN);
         set("e.injq", f("%.1f", e.fuelQuantity > 0 ? e.fuelQuantity : e.injectionQty));
         set("e.rail", f("%.0f", e.railPressure), e.railPressure > 1400 ? C_RED : C_GREEN);
         set("e.boost", f("%.2f", e.boostPressure), e.boostPressure > 2.0 ? C_RED : C_GREEN);
@@ -501,13 +524,18 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         set("e.pedal", f("%.0f", e.pedalPos), e.pedalPos > 60 ? C_ORANGE : C_GREEN);
         set("e.bset", f("%.2f", e.boostSetpoint), (e.boostSetpoint - e.boostPressure) > 0.4 && e.pedalPos > 50 ? C_RED : C_GREEN);
         set("e.iat", f("%.0f", e.iat), e.iat > 60 ? C_ORANGE : C_GREEN);
-        set("e.gear", e.gear == 0 ? "P/N" : String.valueOf(e.gear));
         StringBuilder cyl = new StringBuilder();
         for (int i = 0; i < 5; i++) { if (i > 0) cyl.append(' '); cyl.append((int) e.cylRPMs[i]); }
         set("e.cyl", cyl.toString());
         double maxCorr = 0; StringBuilder corr = new StringBuilder();
         for (int i = 0; i < 5; i++) { if (i > 0) corr.append(" "); corr.append(f("%+.2f", e.injCorrections[i])); maxCorr = Math.max(maxCorr, Math.abs(e.injCorrections[i])); }
-        set("e.corr", corr.toString(), maxCorr > 3 ? C_RED : C_GREEN);
+        set("e.corr", corr.toString(), maxCorr > 3 ? C_RED : e.injCorrLive ? C_GREEN : C_DIM);
+        TextView cu = gauges.get("e.corr"); if (cu != null && cu.getParent() instanceof LinearLayout) {
+            View u = ((LinearLayout) cu.getParent()).getChildAt(2);
+            if (u instanceof TextView) ((TextView) u).setText(e.injCorrAt == 0 ? "mg/str  (rölantide, rutin 31 25 ile)"
+                : e.injCorrLive ? "mg/str  rölanti, canlı  (+ yakıt ekleniyor, − kısılıyor)"
+                : "mg/str  son rölanti değeri " + ((System.currentTimeMillis() - e.injCorrAt) / 1000) + " sn önce");
+        }
         set("e.egr", diag.ecuSecurityUnlocked ? f("%.0f", e.egrDuty) : "kilit", C_GREEN);
         set("e.wg", diag.ecuSecurityUnlocked ? f("%.0f", e.wastegateDuty) : "kilit", C_GREEN);
         set("e.fsens", f("%.2f", e.fuelSensorVoltage));
@@ -600,6 +628,41 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
     }
 
     // ================================================================== DTC
+
+    /** Periodic airbag DTC clear (every 5 s) while the option is ticked. */
+    private final Runnable autoClearTick = new Runnable() {
+        @Override public void run() {
+            if (!autoClearOn) return;
+            if (elm.isReady() && !autoClearBusy) {
+                autoClearBusy = true;
+                diag.clearDTCsQuiet(WJModule.AIRBAG, new Kwp2000.BoolCb() {
+                    @Override public void on(boolean ok) {
+                        autoClearBusy = false;
+                        autoClearCount++;
+                        diag.dtcStatus = "Airbag otomatik silme #" + autoClearCount + (ok ? " gönderildi (54 OK)" : " cevapsız");
+                        refreshDtc();
+                    }
+                });
+            }
+            h.postDelayed(this, AUTO_CLEAR_MS);
+        }
+    };
+
+    private void setAutoClear(boolean on) {
+        if (autoClearOn == on) return;
+        autoClearOn = on;
+        h.removeCallbacks(autoClearTick);
+        if (on) {
+            diag.stopLiveData();
+            autoClearCount = 0;
+            diag.dtcStatus = "Airbag otomatik silme başladı (her 5 sn)";
+            h.post(autoClearTick);
+        } else {
+            diag.dtcStatus = "Airbag otomatik silme durdu (" + autoClearCount + " kez gönderildi)";
+        }
+        refreshDtc();
+        refreshEnabled();
+    }
 
     private void buildDtcSources() {
         for (int i = 0; i < DTC_MODULES.length; i++) {

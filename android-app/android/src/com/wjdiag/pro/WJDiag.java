@@ -53,6 +53,9 @@ public final class WJDiag {
     private static final int[] SMOKE_SLOW = {0x12, 0x26, 0x21, 0x26, 0x12, 0x26, 0x32, 0x26, 0x12, 0x26, 0x37, 0x26, 0x12, 0x26, 0x20, 0x26, 0x12, 0x26, 0x23, 0x26};
 
     private int currentBlockIndex, smokeStep, smokeSlowIndex;
+    /** ECU routine 0x25 ("fuel correction test") active: the EDC15 only fills the per-cylinder
+     *  corrections of block 0x28 while it runs (real car, pcap/full_modules.pcap: 31 25 00 -> 71 25 00). */
+    private boolean corrRoutine;
     private long lastSmokeRead;
     private boolean kLineRetryPending;
     private int pollGeneration;
@@ -132,6 +135,7 @@ public final class WJDiag {
     }
 
     private void beginInit() {
+        corrRoutine = false;   // a new ATZ init ends any running routine
         stopKeepalive();
         conn.cancelQueuedCommands();
         initializedModule = null;
@@ -181,6 +185,24 @@ public final class WJDiag {
 
     // ------------------------------------------------------------------ live data
 
+    /** 31 25 00 -> 71 25 00 : start the EDC15 smooth-running / fuel-correction routine so 0x28[16-25] is populated. */
+    private void startCorrRoutine(final Runnable then) {
+        conn.sendCommand("31 25 00", 3000, new Elm327.Callback() {
+            @Override public void onResponse(String r) {
+                corrRoutine = Models.hasToken(r, 0x71);
+                log("[ECU] rutin 0x25 (enjeksiyon düzeltme) " + (corrRoutine ? "başladı" : "başlamadı: " + r.trim()));
+                if (then != null) then.run();
+            }
+        });
+    }
+
+    /** 32 25 -> 72 25 : stop the routine (sent when live data / smoke test stops). */
+    private void stopCorrRoutine() {
+        if (!corrRoutine) return;
+        corrRoutine = false;
+        if (conn.isReady()) conn.sendCommand("32 25", 2000, null);
+    }
+
     public void startECULiveData() {
         if (isPollingLive) return;
         setActiveModule(WJModule.MOTOR_ECU);
@@ -191,8 +213,11 @@ public final class WJDiag {
             @Override public void on(boolean ok) {
                 if (gen != pollGeneration) return;
                 if (!ok) { setPolling(false); return; }
-                h.post(ecuPoll);
-                startKeepalive(false);
+                startCorrRoutine(new Runnable() { @Override public void run() {
+                    if (gen != pollGeneration) return;
+                    h.post(ecuPoll);
+                    startKeepalive(false);
+                } });
             }
         });
     }
@@ -219,6 +244,7 @@ public final class WJDiag {
         setPolling(false);
         h.removeCallbacks(ecuPoll); h.removeCallbacks(tcmPoll);
         conn.cancelQueuedCommands();
+        stopCorrRoutine();
         resumeIdleKeepalive();
     }
 
@@ -285,7 +311,16 @@ public final class WJDiag {
                 // Five per-cylinder smooth-running corrections at [16-25] (real car: 0016 0011 FF72 0036 002F,
                 // sum = -0.02 mg in every capture - they redistribute fuel, so they add up to zero). RELAY_MAP's
                 // "[16-17] constant / [18-19] varies" are cylinders 1 and 2. Idle only, zero while driving.
-                if (n >= 26) for (int i = 0; i < 5; i++) ecu.injCorrections[i] = Models.s16(d, 16 + i * 2) / 100.0;
+                // The EDC15 only computes them at idle (< ~1000 rpm): while driving the
+                // car sends zeros. Keep the last idle set on screen instead of flashing 0.
+                if (n >= 26) {
+                    boolean any = false;
+                    for (int i = 0; i < 5; i++) if (Models.s16(d, 16 + i * 2) != 0) { any = true; break; }
+                    if (any) {
+                        for (int i = 0; i < 5; i++) ecu.injCorrections[i] = Models.s16(d, 16 + i * 2) / 100.0;
+                        ecu.injCorrLive = true; ecu.injCorrAt = System.currentTimeMillis();
+                    } else ecu.injCorrLive = false;
+                }
                 break;
             case 0x22:
                 if (n >= 2) ecu.coolantTemp = Models.u16(d, 0) / 10.0 - 273.1;
@@ -438,7 +473,7 @@ public final class WJDiag {
                         conn.sendCommand("ATST 19", 2000, new Elm327.Callback() {
                             @Override public void onResponse(String r2) {
                                 log("[SMOKE] ELM zamanlama (ATAT2, ATST 19)");
-                                pollNextSmokeBlock(gen);
+                                startCorrRoutine(new Runnable() { @Override public void run() { pollNextSmokeBlock(gen); } });
                             }
                         });
                     }
@@ -452,6 +487,7 @@ public final class WJDiag {
         pollGeneration++;
         smoke.finish();
         setPolling(false);
+        stopCorrRoutine();
         log(String.format(Locale.US, "[SMOKE] durdu: %d örnek, %.1f s", smoke.samples.size(), smoke.duration()));
         resumeIdleKeepalive();
         notifySmoke();
@@ -522,6 +558,16 @@ public final class WJDiag {
         });
     }
 
+    /** Clear only (no re-read afterwards): used by the periodic airbag auto-clear. */
+    public void clearDTCsQuiet(final WJModule module, final Kwp2000.BoolCb cb) {
+        ensureModule(module, new Kwp2000.BoolCb() {
+            @Override public void on(boolean ok) {
+                if (!ok) { cb.on(false); return; }
+                if (module.bus == Bus.KLINE) kwp.clearDTCs(module, cb); else kwp.clearJ1850DTCs(module, cb);
+            }
+        });
+    }
+
     private void removeDtcs(WJModule m) {
         for (Iterator<DtcEntry> it = dtcList.iterator(); it.hasNext(); ) if (it.next().module == m) it.remove();
     }
@@ -551,6 +597,8 @@ public final class WJDiag {
                     {"2E 25","C0085"},{"2E 26","C0110"},{"2E 27","C0111"},{"2E 30","C1014"}}; break;
             case BODY_COMPUTER: pids = new String[][]{{"2E 00","B1A00"},{"2E 01","B1A10"},{"2E 02","B2100"},{"2E 03","B2101"},{"2E 05","B2102"},{"2E 0D","B2200"},{"2E 12","B2300"}}; break;
             case RAIN_SENSOR: pids = new String[][]{{"2E 00","B1A00"},{"2E 01","B1A10"}}; break;
+            // Airbag / ORC: same method as WJdiag-Pro (ATSH246022, "2E xx 00" scan, B10xx <-> PID xx)
+            case AIRBAG: pids = new String[][]{{"2E 00","B1000"},{"2E 01","B1001"},{"2E 10","B1010"},{"2E 11","B1011"},{"2E 12","B1012"},{"2E 13","B1013"},{"2E 14","B1014"},{"2E 15","B1015"},{"2E 16","B1016"},{"2E 17","B1017"},{"2E 20","B1020"},{"2E 21","B1021"},{"2E 22","B1022"},{"2E 23","B1023"},{"2E 24","B1024"},{"2E 25","B1025"},{"2E 26","B1026"},{"2E 27","B1027"},{"2E 30","B1030"},{"2E 31","B1031"},{"2E 32","B1032"},{"2E 33","B1033"},{"2E 34","B1034"},{"2E 35","B1035"},{"2E 36","B1036"},{"2E 40","B1040"},{"2E 41","B1041"},{"2E 42","B1042"},{"2E 43","B1043"},{"2E 50","B1050"},{"2E 51","B1051"},{"2E 52","B1052"},{"2E 53","B1053"},{"2E 54","B1054"},{"2E 55","B1055"}}; break;
             case ESP: pids = new String[][]{{"2E 10","C1010"},{"2E 13","C1013"},{"2E 16","C1016"},{"2E 19","C1019"},{"2E 1C","C101C"},{"2E 1F","C101F"},
                     {"2E 22","C1022"},{"2E 25","C1025"},{"2E 28","C1028"},{"2E 2B","C102B"},{"2E 2E","C102E"},{"2E 37","C1037"},{"2E 3A","C103A"},
                     {"2E 3D","C103D"},{"2E 43","C1043"},{"2E 49","C1049"},{"2E 4C","C104C"},{"2E 4F","C104F"},{"2E 52","C1052"},{"2E 70","C1070"},

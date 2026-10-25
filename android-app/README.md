@@ -58,7 +58,12 @@ adb install -r C:\Users\turka\Desktop\Jeep_Grand_Cherokee_WJ_2.7_CRD_OBD-II_Diag
 * **Bağlantı** sekmesi: modül listesinden seç (ECU/TCM K-Line init + güvenlik, diğerleri J1850).
   ECU/TCM seçiliyken **Canlı Başlat** 14 (+4 güvenlik) / 5 blok döngüsüyle göstergeleri doldurur;
   akü voltajı her tur sonunda `ATRV` ile okunur. Seçili K-Line modülü SID 81 ile canlı tutulur.
-* **DTC**: TCM/ECU (SID 18/14), ABS/ESP/BCM/Yağmur (J1850 mod 0x22 PID taraması, ESP silme 10 deneme).
+* **DTC**: TCM/ECU (SID 18/14), ABS/ESP/BCM/Yağmur/Airbag (J1850 mod 0x22 PID taraması, ESP silme 10 deneme).
+  Airbag (ORC, 0x60) WJdiag-Pro ile aynı yöntem: `ATSH246022` + `2E xx 00` (B10xx ↔ PID xx), silme mod 0x14 `FF 00 00`.
+  Gerçek araç kaydında 0x60 yalnızca `7F 22 22` ile görülmüştü; airbag PID yanıtları araçta doğrulanmadı.
+  DTC sekmesindeki **"Airbag arıza kodlarını her 5 saniyede otomatik sil"** seçeneği işaretliyken uygulama
+  5 sn periyotla `ATSH246014` + `FF 00 00` gönderir (sayaç durum satırında); canlı veri durdurulur, Oku/Sil pasifleşir,
+  bağlantı kopunca kendini kapatır.
 * **Kontrol**: kapı camları/aynalar/kilit ve BCM röleleri — basılı tut = AÇ, bırak = KAPA
   (`38 xx 12` / `38 xx 00`; OFF'a NO DATA gelirse 3 kez tekrarlanır).
 * **Aktüatör**: seçili modülün tüm testleri (ECU SID 30, TCM 31/30, gösterge 3A, klima, SKIM, tavan, ABS).
@@ -74,4 +79,6 @@ Tüm blok ofsetleri/formüller `docs/RELAY_MAP.md` ve iOS `WJDiagnostics.swift` 
 (0016 0011 FF72 0036 002F → +0.22 +0.17 −1.42 +0.54 +0.47 = −0.02 mg). Rölanti düzgünlük kontrolü yakıtı
 silindirler arasında yeniden dağıttığı için düzeltmelerin toplamı sıfırdır; RELAY_MAP'teki "[16-17] sabit,
 [18-19] değişken" aslında 1. ve 2. silindirdir (Qt ve iOS uygulamaları yalnızca 3 silindir gösterir,
-WJdiag-Pro 5 gösterir). Bu uygulama ve simülatör 5 düzeltme kullanır.
+WJdiag-Pro 5 gösterir). Bu uygulama ve simülatör 5 düzeltme kullanır. **Değerler yalnızca ECU rutini 0x25 çalışırken dolar:** pcap'te ticari
+uygulama `31 25 00` → `71 25 00` gönderip sonra `21 28` okuyor, bitince `32 25`. Uygulama canlı veri ve duman testi
+başlarken rutini başlatır, dururken kapatır; gösterge son rölanti değerini tutar (sürüşte ECU sıfır yollar).

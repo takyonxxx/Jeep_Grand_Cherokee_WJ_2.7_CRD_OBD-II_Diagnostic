@@ -21,7 +21,7 @@ public final class Models {
         ATC(0x98, Bus.J1850, "Klima / ATC", "J1850 0x98 | 10 motor testi"),
         DRIVER_DOOR(0xA0, Bus.J1850, "Sürücü Kapısı", "J1850 0xA0 | 16 aktüatör"),
         PASSENGER_DOOR(0xA1, Bus.J1850, "Yolcu Kapısı", "J1850 0xA1 | 15 aktüatör"),
-        ELECTRO_CLUSTER(0x60, Bus.J1850, "Elektromekanik Gösterge", "J1850 0x60 | NRC"),
+        AIRBAG(0x60, Bus.J1850, "Airbag (ORC)", "J1850 0x60 | B10xx arıza kodları"),
         OVERHEAD(0x68, Bus.J1850, "Tavan Konsolu", "J1850 0x68"),
         NAVIGATION(0x6D, Bus.J1850, "Navigasyon", "J1850 0x6D"),
         RADIO(0x80, Bus.J1850, "Radyo", "J1850 0x80 | NO DATA"),
@@ -66,6 +66,8 @@ public final class Models {
         public double batteryVoltage, vehicleSpeed, fuelLevel, fuelSensorVoltage, injectionQty;
         public double[] cylRPMs = new double[5];
         public double[] injCorrections = new double[5];   // 0x28[16-25]: 5 signed words, sum ~0 (real car)
+        public boolean injCorrLive;      // true = values from the current (idle) read, false = held from the last idle
+        public long injCorrAt;           // ms timestamp of the last idle read
         public double fuelFlowLH, fuelLPer100km;
         public double pedalPos;
         public int gear;
