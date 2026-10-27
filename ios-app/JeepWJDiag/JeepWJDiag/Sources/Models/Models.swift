@@ -54,9 +54,9 @@ enum WJModule: UInt8, CaseIterable, Identifiable {
     case abs            = 0x28  // J1850
     case adjustablePedal = 0x2A // J1850, NO DATA
     case bodyComputer   = 0x40  // J1850
-    case espModule      = 0x58  // J1850
-    case electroCluster = 0x60  // J1850, NRC 7F 22 22
-    case cluster        = 0x61  // J1850
+    case espModule      = 0x58  // J1850 — Airbag/ORC (WJdiag-Pro capture 2026-10-28: Airbag reads 0x58)
+    case electroCluster = 0x60  // J1850 — Electro Mech Cluster
+    case cluster        = 0x61  // J1850 — Shifter Lever (vites seçici)
     case overhead       = 0x68  // J1850
     case navigation     = 0x6D  // J1850, 62 00 00 00
     case radio          = 0x80  // J1850, NO DATA
@@ -86,9 +86,9 @@ enum WJModule: UInt8, CaseIterable, Identifiable {
         case .abs: return "ABS"
         case .adjustablePedal: return "Adjustable Pedal"
         case .bodyComputer: return "Body Computer (BCM)"
-        case .espModule: return "ESP / Traction"
+        case .espModule: return "Airbag (ORC)"
         case .electroCluster: return "Electro Mech Cluster"
-        case .cluster: return "Instrument Cluster"
+        case .cluster: return "Shifter Lever"
         case .overhead: return "Overhead Console"
         case .navigation: return "Navigation"
         case .radio: return "Radio"

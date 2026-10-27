@@ -33,7 +33,7 @@ public:
         ABS          = 0x28,   // ABS / TCM J1850
         EVIC         = 0x2A,   // Overhead Console / EVIC
         BodyComputer = 0x40,   // Body Computer (hazard/horn/mirrors)
-        Airbag       = 0x60,   // Airbag (ORC/AOSIM)
+        Airbag       = 0x60,   // NOT airbag! 0x60 = Electro Mech Cluster. Gercek airbag = 0x58 (ESP_Module). Isim degismedi (referanslar), anlami EMC.
         SKIM         = 0xC0,   // SKIM/Immobilizer 
         ATC          = 0x98,   // HVAC/ATC (verified, same as MemSeat)
         Radio80      = 0x80,   // Radio (NO DATA on EU)
@@ -41,8 +41,8 @@ public:
         // MemSeat uses same address as ATC (0x98)
         DriverDoor   = 0xA0,   // Driver Door (left windows)
         PassengerDoor= 0xA1,   // Passenger Door (right windows)
-        ESP_Module  = 0x58,   // ESP/Traction Control
-        Cluster      = 0x61,   // Instrument Cluster
+        ESP_Module  = 0x58,   // GERCEKTE Airbag/ORC (WJdiag-Pro capture 2026-10-28). Isim eski (referanslar).
+        Cluster      = 0x61,   // GERCEKTE Shifter Lever (vites secici). Isim eski.
         Overhead     = 0x68,   // Overhead Console
         Navigation   = 0x6D,   // Navigation System
         SatAudio     = 0x87,   // Satellite Audio

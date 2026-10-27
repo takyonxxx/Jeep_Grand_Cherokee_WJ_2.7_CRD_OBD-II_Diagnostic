@@ -58,21 +58,27 @@ void httpHandleRoot() {
 
     String modName = "none";
     uint8_t t = emu.targetModule;
-    if (t == 0x15) modName = "ECU (K-Line)";
-    else if (t == 0x20) modName = "TCM (K-Line)";
-    else if (t == 0x28) modName = "TCM (J1850)";
-    else if (t == 0x40) modName = "ABS/Door R";
-    else if (t == 0x58) modName = "ESP";
-    else if (t == 0x60) modName = "Airbag";
-    else if (t == 0x61) modName = "Compass";
-    else if (t == 0x68) modName = "HVAC";
-    else if (t == 0x80) modName = "BCM";
-    else if (t == 0x98) modName = "MemSeat";
-    else if (t == 0xA0) modName = "Door L";
-    else if (t == 0xA1) modName = "Liftgate";
-    else if (t == 0xA7) modName = "Siren";
-    else if (t == 0xC0) modName = "VTSS";
-    else if (t == 0x2A) modName = "EVIC";
+    // Verified module map (WJdiag-Pro capture 2026-10-28)
+    if (t == 0x15) modName = "Engine (K-Line)";
+    else if (t == 0x20) modName = "Transmission (K-Line)";
+    else if (t == 0x28) modName = "ABS";
+    else if (t == 0x40) modName = "Body Computer";
+    else if (t == 0x58) modName = "Airbag (ORC)";
+    else if (t == 0x60) modName = "Electro Mech Cluster";
+    else if (t == 0x61) modName = "Shifter Lever";
+    else if (t == 0x68) modName = "Overhead Console";
+    else if (t == 0x80) modName = "Radio";
+    else if (t == 0x81) modName = "CD Changer";
+    else if (t == 0x87) modName = "Satellite Audio";
+    else if (t == 0x90) modName = "Hands Free";
+    else if (t == 0x98) modName = "ATC / HVAC";
+    else if (t == 0xA0) modName = "Driver Door";
+    else if (t == 0xA1) modName = "Passenger Door";
+    else if (t == 0xA7) modName = "Rain Sensor";
+    else if (t == 0xC0) modName = "SKIM";
+    else if (t == 0x62) modName = "Park Assist";
+    else if (t == 0x6D) modName = "Navigation";
+    else if (t == 0x2A) modName = "Adjustable Pedal";
 
     String proto = "none";
     if (emu.protocol == 2) proto = "J1850 VPW";

@@ -299,6 +299,26 @@ String ELM327Emu::processCommand(const String &rawCmd) {
     if (nBytes == 0) return "?";
     tick();
 
+    // OBD-II mode 01 current-data probe (e.g. 010D speed, 0100 supported PIDs). WJdiag-Pro
+    // polls these on connect; the real car answers, so answer positively or the app loops on
+    // "7F 01 11" and never reaches the diagnostic menus. J1850 module commands like
+    // "01 05 00" are 3 bytes, so gate on exactly 2 bytes (01 + PID).
+    if (bytes[0] == 0x01 && nBytes == 2) {
+        uint8_t pid = bytes[1];
+        if (pid == 0x00) return "41 00 BE 3E B8 11";   // supported PIDs 01-20
+        if (pid == 0x0C) return "41 0C 0B B8";         // RPM ~750
+        if (pid == 0x0D) return "41 0D 00";            // speed 0 km/h
+        if (pid == 0x05) return "41 05 55";            // coolant 45 C
+        if (pid == 0x0F) return "41 0F 46";            // IAT 30 C
+        if (pid == 0x11) return "41 11 20";            // throttle ~12 %
+        return "41 " + hex8(pid) + " 00 00";           // generic positive for any other PID
+    }
+    // OBD-II mode 09 vehicle info (e.g. 0902 VIN) — answer so the probe passes.
+    if (bytes[0] == 0x09 && nBytes == 2) {
+        if (bytes[1] == 0x00) return "49 00 55 00 00 00";
+        return "49 " + hex8(bytes[1]) + " 00";
+    }
+
     if (protocol == 2) {
         // J1850: try vehicle data lookup first, then generic fallback
         String cmdUpper = cmd; cmdUpper.toUpperCase(); cmdUpper.trim();
@@ -394,9 +414,35 @@ String ELM327Emu::j1850_generic(uint8_t t, uint8_t m, uint8_t sid, const uint8_t
     // Generic positive for read modes
     return "26 " + hex8(t) + " 62 " + hex8(pid) + " 00 00 DD";
 }
+// Capture mode: answer the ORC/airbag module (0x60) with a generic positive reply
+// (service id | 0x40, echoing the rest) instead of the real-car NRC, so WJdiag-Pro
+// treats the module as present and sends its WHOLE airbag read/clear/security sequence.
+// Every command it sends is printed on Serial by main.cpp, which is what we capture.
+// NOTE: 0x60 turned out to be the Electro Mech Cluster, NOT the airbag (airbag = 0x58,
+// handled realistically by the 0x58 2E-scan path). Capture is done, so default to the
+// realistic 7F 22 behaviour for 0x60. Set to 1 again only to re-capture a module at 0x60.
+#define AIRBAG_CAPTURE 0
+
+String ELM327Emu::airbagEcho(const String &cmdStr) {
+    int sp = cmdStr.indexOf(' ');
+    String first = (sp < 0) ? cmdStr : cmdStr.substring(0, sp);
+    uint8_t sid = parseHexByte(first.c_str());
+    String rest = (sp < 0) ? String("") : cmdStr.substring(sp + 1);
+    rest.trim();
+    // Security access seed: hand back a 2-byte seed so WJdiag-Pro computes a key and continues.
+    if (sid == 0x27 && rest.startsWith("01")) return "26 60 67 01 12 34 DD";
+    String out = "26 60 " + hex8((uint8_t)(sid | 0x40));
+    if (rest.length() > 0) out += " " + rest;
+    out += " DD";
+    return out;
+}
+
 // J1850 response database from real vehicle bus captures
 // WJ 2.7 CRD 2003 EU, WiFi ELM327
 String ELM327Emu::j1850_vehicle_lookup(uint8_t t, uint8_t m, const String &cmdStr) {
+#if AIRBAG_CAPTURE
+    if (t == 0x60) return airbagEcho(cmdStr);
+#endif
     // Lookup exact match from real vehicle captures
     if (t == 0x28) {
         // Mode 0x30 valve test (real vehicle) — echo parameters back
@@ -1095,10 +1141,12 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
             // Per-cylinder RPMs and corrections are only computed by the EDC15
             // at idle (smooth-running control): while driving the real car
             // sends all zeros there, so the emulator does the same.
-            bool idle = engineRpm < 1000.0f;
-            uint16_t cyl = idle ? rpm : 0;
+            // Real car: per-cylinder RPM + corrections only populate while the fuel-correction
+            // routine (31 25 00) is active AND the engine is at idle. Otherwise all zeros.
+            bool active = fuelCorrActive && engineRpm < 1000.0f;
+            uint16_t cyl = active ? rpm : 0;
             int16_t c[5];
-            for (int i = 0; i < 5; i++) c[i] = idle ? (int16_t)(sim.corr[i] * 100) : 0;
+            for (int i = 0; i < 5; i++) c[i] = active ? (int16_t)(sim.corr[i] * 100) : 0;
             uint8_t r[] = {0x61,0x28,
                 (uint8_t)(rpm>>8),(uint8_t)(rpm&0xFF),      // [0-1] RPM
                 (uint8_t)(iq>>8),(uint8_t)(iq&0xFF),         // [2-3] InjQty /100
@@ -1389,9 +1437,10 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
         }
         return posResp;
     }
-    // SID 0x31 RoutineControl (TCM reset/store adaptives)
+    // SID 0x31 RoutineControl (fuel-correction 0x25, TCM reset/store adaptives)
     if (sid == 0x31) {
         if (dlen >= 1) {
+            if (data[0] == 0x25) fuelCorrActive = true;   // enables block 0x28 per-cyl corrections
             uint8_t r[] = {0x71, data[0]};
             return kwpWrap(r, 2);
         }

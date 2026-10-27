@@ -484,9 +484,31 @@ class Elm327Emu:
         if hit is not None:
             return hit
         if t == 0x60:
-            # Airbag / ORC. WJdiag-Pro reads its DTCs with ATSH246022 + "2E xx 00"
-            # (B10xx <-> PID xx) and clears with mode 0x14. Two stored faults
-            # (B1010, B1051) until cleared; everything else stays NRC like the car.
+            # Capture mode: answer anything to the airbag module with a generic positive
+            # reply (SID|0x40) so WJdiag-Pro keeps going and we log its whole sequence.
+            if getattr(self, "airbagEcho", False):
+                toks = cmdStr.split()
+                try:
+                    sid = int(toks[0], 16)
+                except Exception:
+                    sid = 0
+                rest = " ".join(toks[1:])
+                if sid == 0x27 and rest.startswith("01"):
+                    return "26 60 67 01 12 34 DD"          # security seed -> WJdiag-Pro sends the key next
+                pos = "%02X" % ((sid | 0x40) & 0xFF)
+                return ("26 60 %s %s DD" % (pos, rest)).replace("  ", " ").strip()
+            # Airbag / ORC. Real WJdiag-Pro method (confirmed from APK v28, libnative-lib.so):
+            # header ATSH246022, DTC read = service "18 02 FF 00" -> 58 frame,
+            # clear = "14 00 00" -> 54. Two stored faults (B1010=90 10, B1051=90 51)
+            # until cleared. Legacy 2E/mode-0x14 branches kept for the old app build.
+            cs = cmdStr.strip()
+            if cs.startswith("18 02"):
+                if self.j1850DtcCleared.get(0x60):
+                    return "26 60 58 00"
+                return "26 60 58 02 90 10 20 90 51 20 DD"
+            if cs.startswith("14 00"):
+                self.j1850DtcCleared[0x60] = True
+                return "26 60 54 00 00 DD"
             if m == 0x22:
                 mm = re.match(r"2E ([0-9A-F]{2}) 00$", cmdStr)
                 if mm:
@@ -779,13 +801,18 @@ class ClientHandler(threading.Thread):
         self.addr = addr
         self.args = args
         self.emu = Elm327Emu(real_timing=not args.fast, smoke_mode=args.smoke)
+        self.emu.airbagEcho = getattr(args, "airbag_echo", False)
         self.t0 = time.monotonic()
 
     def log(self, direction, text):
-        if self.args.quiet:
-            return
         el = int((time.monotonic() - self.t0) * 1000)
-        print("%6d %s %s" % (el, direction, text.replace("\r", " | ")), flush=True)
+        line = "%6d %s %s" % (el, direction, text.replace("\r", " | "))
+        if not self.args.quiet:
+            print(line, flush=True)
+        lf = getattr(self.args, "logf", None)
+        if lf:
+            lf.write(line + "\n")
+            lf.flush()
 
     def run(self):
         print("*** Client connected: %s:%d ***" % self.addr, flush=True)
@@ -864,7 +891,10 @@ def main():
     ap.add_argument("--smoke", type=int, default=1, choices=[0, 1, 2, 3], help="smoke fault scenario (default 1)")
     ap.add_argument("--quiet", action="store_true", help="do not print every TX/RX line")
     ap.add_argument("--status", type=float, default=5.0, help="engine status line interval in s (0 = off)")
+    ap.add_argument("--logfile", default=None, help="append every TX/RX line to this file (for capturing WJdiag-Pro)")
+    ap.add_argument("--airbag-echo", action="store_true", help="answer the airbag module (0x60) with generic positive replies so WJdiag-Pro sends its full sequence")
     args = ap.parse_args()
+    args.logf = open(args.logfile, "a", encoding="latin-1") if args.logfile else None
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

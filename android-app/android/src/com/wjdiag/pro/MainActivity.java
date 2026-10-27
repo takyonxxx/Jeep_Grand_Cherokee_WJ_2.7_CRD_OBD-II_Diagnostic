@@ -23,6 +23,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.StrictMode;
+import android.os.Environment;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -89,8 +90,9 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
     private boolean autoClearOn, autoClearBusy;
     private int autoClearCount;
     private static final int AUTO_CLEAR_MS = 5000;
-    private static final WJModule[] DTC_MODULES = {WJModule.KLINE_TCM, WJModule.MOTOR_ECU, WJModule.ABS, WJModule.AIRBAG, WJModule.ESP, WJModule.BODY_COMPUTER, WJModule.RAIN_SENSOR};
-    private static final String[] DTC_LABELS = {"TCM", "ECU", "ABS", "Airbag", "ESP", "BCM", "Yağmur"};
+    // Airbag/ORC and "ESP" are the same J1850 module (0x58); the Airbag chip covers it.
+    private static final WJModule[] DTC_MODULES = {WJModule.KLINE_TCM, WJModule.MOTOR_ECU, WJModule.ABS, WJModule.AIRBAG, WJModule.BODY_COMPUTER, WJModule.RAIN_SENSOR};
+    private static final String[] DTC_LABELS = {"TCM", "ECU", "ABS", "Airbag", "BCM", "Yağmur"};
 
     private final StringBuilder logBuf = new StringBuilder();
     private boolean logDirty, ecuDirty, tcmDirty, smokeDirty;
@@ -259,6 +261,7 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         });
         findViewById(R.id.btnLogClear).setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { logBuf.setLength(0); elm.clearLog(); logText.setText(""); } });
         findViewById(R.id.btnLogShare).setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { shareFile("WJDiag_log.txt", logBuf.toString()); } });
+        findViewById(R.id.btnLogUsb).setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { writeLogToUsb(); } });
         findViewById(R.id.btnRawSend).setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { sendRaw(); } });
         rawCmd.setOnEditorActionListener(new TextView.OnEditorActionListener() {
             @Override public boolean onEditorAction(TextView v, int a, android.view.KeyEvent e) { if (a == EditorInfo.IME_ACTION_SEND) { sendRaw(); return true; } return false; }
@@ -465,6 +468,7 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         { TextView fb = gauges.get("e.fuelBig"); if (fb != null) fb.setTextSize(TypedValue.COMPLEX_UNIT_SP, 56);
           TextView tank = gauges.get("e.fuelL"); if (tank != null) { tank.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24); tank.setTypeface(Typeface.MONOSPACE, Typeface.BOLD); }
           TextView mg = gauges.get("e.fuelMg"); if (mg != null) { mg.setTypeface(Typeface.MONOSPACE); mg.setSingleLine(true); mg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13); } }
+        { TextView fbx = gauges.get("e.fuelBig"); if (fbx != null && fbx.getParent() instanceof View) ((View) fbx.getParent()).setOnLongClickListener(new View.OnLongClickListener() { @Override public boolean onLongClick(View v) { calibrateFuel(); return true; } }); }
         LinearLayout right = column(top, 1f);
         LinearLayout rr1 = row(right); gauge(rr1, "e.injq", "ENJ-Q", "mg/str", 1f);
         LinearLayout rr2 = row(right); gauge(rr2, "e.rail", "RAIL", "bar", 1f);
@@ -507,14 +511,21 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         // ECU block 0x36[2] only knows 0 (= P/N) or the engaged gear 1-5 (shown as D1-D5).
         // P / N / R are told apart only by the TCM (selector byte in block 0x30) -> TCM dashboard.
         set("e.fuelBig", f("%.1f", fuelVal), C_GREEN); set("e.fuelBig.unit", fuelUnit);
-        if (e.fuelLevel > 0) {
-            double liters = e.fuelLevel * 78.7 / 100.0;
-            int col = liters < 10 ? C_RED : liters < 20 ? C_ORANGE : C_CYAN;
-            set("e.fuelL", String.format(Locale.US, "DEPO %.1f L  (%%%.0f)", liters, e.fuelLevel), col);
-        } else set("e.fuelL", "");
+        double pct = fuelPercent(e);                 // calibrated if the user set points, else -1
+        if (pct >= 0) {
+            double liters = pct * 78.7 / 100.0;
+            int col = liters < 8 ? C_RED : liters < 16 ? C_ORANGE : C_CYAN;
+            String tag = fuelSinglePoint() ? "  ~tahmini" : "";
+            set("e.fuelL", String.format(Locale.US, "DEPO ~%.0f L  (%%%.0f)%s", liters, pct, tag), col);
+        } else {
+            set("e.fuelL", "DEPO: kalibre edilmedi", C_DIM);
+        }
         set("e.map", f("%.0f", e.mapActual));
         double iqNow = e.fuelQuantity > 0 ? e.fuelQuantity : e.injectionQty;
         set("e.fuelMg", f("enj %.1f mg/str", iqNow) + "   ·   " + f("hava %.0f mg/str", e.mafFlow), C_CYAN);
+        set("e.fsens", f("%.2f", e.fuelSensorVoltage));
+        { TextView fv = gauges.get("e.fsens"); if (fv != null && fv.getParent() instanceof LinearLayout) { View u = ((LinearLayout) fv.getParent()).getChildAt(2);
+            if (u instanceof TextView) ((TextView) u).setText(String.format(Locale.US, "V  (ECU ham %%%.0f)", e.fuelLevel)); } }
         set("e.injq", f("%.1f", e.fuelQuantity > 0 ? e.fuelQuantity : e.injectionQty));
         set("e.rail", f("%.0f", e.railPressure), e.railPressure > 1400 ? C_RED : C_GREEN);
         set("e.boost", f("%.2f", e.boostPressure), e.boostPressure > 2.0 ? C_RED : C_GREEN);
@@ -791,7 +802,7 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
                 a.add(new ActDef("Modül Reset", "01 05 00", null, "ATSH244011"));
                 break;
             }
-            case CLUSTER: {
+            case SHIFTER_LEVER: {
                 String hd = "ATSH246122";
                 String[][] d = {{"Hız Göstergesi","3A 00 80","3A 00 00"},{"Devir Göstergesi","3A 00 40","3A 00 00"},{"3 Led","3A 00 20","3A 00 00"},{"4 Led","3A 00 10","3A 00 00"},
                         {"Yakıt / Drive","3A 00 08","3A 00 00"},{"Sıcaklık / Neutral","3A 00 04","3A 00 00"},{"Geri Led","3A 00 02","3A 00 00"},{"Park Led","3A 00 01","3A 00 00"},
@@ -941,6 +952,134 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
             startActivity(Intent.createChooser(i, "Dosyayı paylaş"));
             toast("Kaydedildi: " + fl.getAbsolutePath());
         } catch (Exception e) { toast("Paylaşım hatası: " + e.getMessage()); shareText(content, null); }
+    }
+
+    // ================================================================== fuel + usb log
+
+    /** Calibrated fuel %: linear map of the ECU fuel-sensor voltage (0x21[16-17]/100) between two
+     *  user-entered reference points. The ECU "fuel level" word (0x21[14-15]) sits near a constant
+     *  (~50 in every real capture) so it is NOT used for the tank reading; only shown as "ham". */
+    // Empty-tank (0 %) voltage anchor derived from the real-car captures: the ECU fuel
+    // sensor voltage rises with level (ecu_live.pcap dipped to ~1.61 V at low fuel, the
+    // 25 % car log read ~1.94 V), so 0 % sits a little below the lowest observed value.
+    private static final double FUEL_EMPTY_V = 1.20;
+
+    private boolean fuelSinglePoint() {
+        return prefs.getFloat("fv1", -1) >= 0 && prefs.getFloat("fv2", -1) < 0;
+    }
+
+    private double fuelPercent(Models.EcuStatus e) {
+        double v = e.fuelSensorVoltage;
+        if (v <= 0) return -1;
+        float v1 = prefs.getFloat("fv1", -1), p1 = prefs.getFloat("fp1", -1);
+        float v2 = prefs.getFloat("fv2", -1), p2 = prefs.getFloat("fp2", -1);
+        if (v1 < 0) return -1;                             // no calibration at all
+        if (v2 < 0) { v2 = (float) FUEL_EMPTY_V; p2 = 0; } // one point: complete the line with the empty anchor (estimate)
+        if (Math.abs(v1 - v2) < 0.01f) return -1;
+        double pct = p1 + (p2 - p1) * (v - v1) / (v2 - v1);
+        return Math.max(0, Math.min(100, pct));
+    }
+
+    /** Long-press the fuel box: store (current sensor voltage -> real tank %) as a calibration point. */
+    private void calibrateFuel() {
+        final double v = diag.ecu.fuelSensorVoltage;
+        if (v <= 0) { toast("Önce ECU canlı veriyi başlatın (yakıt sensör voltajı gelsin)"); return; }
+        final EditText in = new EditText(this); in.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        in.setHint("gerçek depo yüzdesi, örn. 20");
+        new AlertDialog.Builder(this)
+            .setTitle("Yakıt kalibrasyonu")
+            .setMessage(String.format(Locale.US, "Sensör voltajı şu an %.2f V.\nDeponun şu anki gerçek yüzdesini girin.\nFarklı dolulukta iki nokta girince depo yüzdesi hesaplanır.", v))
+            .setView(in)
+            .setPositiveButton("Kaydet", new android.content.DialogInterface.OnClickListener() {
+                @Override public void onClick(android.content.DialogInterface d, int w) {
+                    double pct; try { pct = Double.parseDouble(in.getText().toString().trim()); } catch (Exception e) { toast("Sayı girin"); return; }
+                    boolean has1 = prefs.getFloat("fv1", -1) >= 0;
+                    // keep the oldest point as #1, overwrite #2 (or set #1 first)
+                    if (!has1) prefs.edit().putFloat("fv1", (float) v).putFloat("fp1", (float) pct).apply();
+                    else prefs.edit().putFloat("fv2", (float) v).putFloat("fp2", (float) pct).apply();
+                    int n = (prefs.getFloat("fv1", -1) >= 0 ? 1 : 0) + (prefs.getFloat("fv2", -1) >= 0 ? 1 : 0);
+                    toast(n < 2 ? "1. nokta kaydedildi; farklı dolulukta 2. noktayı girin" : "Kalibrasyon tamam (2 nokta)");
+                    diag.dtcStatus = "";
+                }
+            })
+            .setNeutralButton("Sıfırla", new android.content.DialogInterface.OnClickListener() {
+                @Override public void onClick(android.content.DialogInterface d, int w) {
+                    prefs.edit().remove("fv1").remove("fp1").remove("fv2").remove("fp2").apply(); toast("Kalibrasyon silindi");
+                }
+            }).setNegativeButton("Vazgeç", null).show();
+    }
+
+    /** Write the full log as a .txt. Prefers an attached USB / removable drive; if none is
+     *  mounted it writes to the phone's public Downloads folder and shows the exact path. */
+    private void writeLogToUsb() {
+        if (Build.VERSION.SDK_INT >= 23 && Build.VERSION.SDK_INT <= 29
+                && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.WRITE_EXTERNAL_STORAGE}, 9);
+            toast("Depolama izni verip 'USB'ye yaz'a tekrar basın"); return;
+        }
+        String name = "WJDiag_log_" + new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new java.util.Date()) + ".txt";
+        String content = "WJDiag log  " + Build.MANUFACTURER + " " + Build.MODEL + "  Android " + Build.VERSION.RELEASE + "\n\n" + logBuf;
+
+        String primaryPath = "";
+        try { File pr = Environment.getExternalStorageDirectory(); if (pr != null) primaryPath = pr.getAbsolutePath(); } catch (Exception ignored) {}
+
+        // 1) look for a mounted removable (USB/SD) volume root
+        java.util.List<File> removable = new java.util.ArrayList<>();
+        String[] roots = {"/storage", "/mnt/media_rw", "/mnt", "/"};
+        for (String rp : roots) {
+            File[] ls = new File(rp).listFiles();
+            if (ls == null) continue;
+            for (File x : ls) {
+                if (x == null || !x.isDirectory() || !x.canWrite()) continue;
+                String base = x.getName().toLowerCase(Locale.US);
+                String ap = x.getAbsolutePath();
+                if (ap.equals(primaryPath) || base.equals("emulated") || base.equals("self")
+                        || base.equals("sdcard0") || ap.startsWith("/storage/emulated")) continue;
+                boolean looksRemovable = base.matches("[0-9a-f]{4}-[0-9a-f]{4}") || base.contains("usb") || base.contains("udisk")
+                        || base.contains("otg") || base.contains("sd") || base.startsWith("sda") || rp.equals("/mnt/media_rw");
+                if (looksRemovable) removable.add(x);
+            }
+        }
+        // 2) app-specific dirs on removable volumes (always writable, land on the stick under Android/data/...)
+        try { File[] ds = getExternalFilesDirs(null); for (int i = 1; i < ds.length; i++) if (ds[i] != null) removable.add(ds[i]); } catch (Exception ignored) {}
+
+        for (File dir : removable) {
+            File fl = tryWrite(dir, name, content);
+            if (fl != null) {
+                new AlertDialog.Builder(this).setTitle("USB'ye yazıldı")
+                    .setMessage(fl.getAbsolutePath()).setPositiveButton("Tamam", null).show();
+                return;
+            }
+        }
+
+        // 3) no USB: write to the public Downloads folder so the user can copy it off with a file manager
+        File dl = null;
+        try { dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS); } catch (Exception ignored) {}
+        File fl = dl != null ? tryWrite(dl, name, content) : null;
+        if (fl == null) fl = tryWrite(getExternalFilesDir(null), name, content);
+        final File saved = fl;
+        if (saved != null) {
+            new AlertDialog.Builder(this).setTitle("USB bulunamadı — telefona yazıldı")
+                .setMessage(saved.getAbsolutePath() + "\n\nDosya yöneticisiyle USB'ye kopyalayabilir veya paylaşabilirsiniz.")
+                .setPositiveButton("Tamam", null)
+                .setNeutralButton("Paylaş", new android.content.DialogInterface.OnClickListener() {
+                    @Override public void onClick(android.content.DialogInterface d, int w) {
+                        Intent i = new Intent(Intent.ACTION_SEND); i.setType("text/plain");
+                        i.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(saved)); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        try { startActivity(Intent.createChooser(i, "Logu paylaş")); } catch (Exception e) { toast("Paylaşılamadı"); }
+                    }
+                }).show();
+        } else toast("Dosya yazılamadı");
+    }
+
+    private File tryWrite(File dir, String name, String content) {
+        try {
+            if (dir == null) return null;
+            if (!dir.exists()) dir.mkdirs();
+            File fl = new File(dir, name);
+            OutputStreamWriter w = new OutputStreamWriter(new FileOutputStream(fl), "UTF-8"); w.write(content); w.close();
+            return fl;
+        } catch (Exception e) { return null; }
     }
 
     // ================================================================== helpers

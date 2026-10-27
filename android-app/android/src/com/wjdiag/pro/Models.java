@@ -14,14 +14,14 @@ public final class Models {
         MOTOR_ECU(0x15, Bus.KLINE, "Motor ECU (EDC15C2)", "K-Line 0x15 | EDC15C2 | 14 blok + 9 aktüatör"),
         KLINE_TCM(0x20, Bus.KLINE, "Şanzıman (NAG1)", "K-Line 0x20 | NAG1 722.6 | 5 blok + 4 test"),
         ABS(0x28, Bus.J1850, "ABS", "J1850 0x28 | 12 valf testi"),
-        ESP(0x58, Bus.J1850, "ESP / Çekiş", "J1850 0x58 | 50 PID"),
-        CLUSTER(0x61, Bus.J1850, "Gösterge Paneli", "J1850 0x61 | gösterge testleri"),
+        SHIFTER_LEVER(0x61, Bus.J1850, "Shifter Lever (Vites Seçici)", "J1850 0x61 | vites seçici P/R/N/D"),
         SKIM(0xC0, Bus.J1850, "SKIM / Immobilizer", "J1850 0xC0 | VIN + anahtar"),
         BODY_COMPUTER(0x40, Bus.J1850, "Body Computer (BCM)", "J1850 0x40 | 14 röle"),
         ATC(0x98, Bus.J1850, "Klima / ATC", "J1850 0x98 | 10 motor testi"),
         DRIVER_DOOR(0xA0, Bus.J1850, "Sürücü Kapısı", "J1850 0xA0 | 16 aktüatör"),
         PASSENGER_DOOR(0xA1, Bus.J1850, "Yolcu Kapısı", "J1850 0xA1 | 15 aktüatör"),
-        AIRBAG(0x60, Bus.J1850, "Airbag (ORC)", "J1850 0x60 | B10xx arıza kodları"),
+        AIRBAG(0x58, Bus.J1850, "Airbag (ORC)", "J1850 0x58 | 2E/2F tarama + 01 00 00 sil"),
+        ELECTRO_MECH_CLUSTER(0x60, Bus.J1850, "Electro Mech Cluster", "J1850 0x60 | gösterge modülü"),
         OVERHEAD(0x68, Bus.J1850, "Tavan Konsolu", "J1850 0x68"),
         NAVIGATION(0x6D, Bus.J1850, "Navigasyon", "J1850 0x6D"),
         RADIO(0x80, Bus.J1850, "Radyo", "J1850 0x80 | NO DATA"),
@@ -76,6 +76,8 @@ public final class Models {
         public double egrMafSetpoint, wastegateRaw, blk20a, blk20b, blk23a, blk23g;
         // security / calibration blocks
         public double egrDuty, wastegateDuty;
+        public double fuelRaw14;        // block 0x21[14-15] raw (ECU "fuel level" word, often ~constant)
+        public double fuelPctCalibrated; // from sensor voltage via user calibration (-1 = not calibrated)
         public String vin = "";
 
         public EcuStatus copy() {

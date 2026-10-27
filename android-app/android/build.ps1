@@ -24,8 +24,11 @@ if ($LASTEXITCODE) { throw "aapt2 link failed" }
 
 Write-Host "== javac"
 $sources = Get-ChildItem -Recurse "$root\src", "$out\gen" -Filter *.java | ForEach-Object { $_.FullName }
+$eapOld = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 & $javac -source 1.8 -target 1.8 -encoding UTF-8 -classpath $platform -d "$out\classes" -nowarn -Xlint:-options $sources
-if ($LASTEXITCODE) { throw "javac failed" }
+$javacCode = $LASTEXITCODE
+$ErrorActionPreference = $eapOld
+if ($javacCode) { throw "javac failed" }
 
 Write-Host "== d8"
 & "$jdk\bin\jar.exe" cf "$out\classes.jar" -C "$out\classes" .

@@ -161,8 +161,11 @@ public final class Kwp2000 {
 
     /** ESP 0x58 uses "01 00 00" and needs up to 10 attempts; others "FF 00 00". */
     public void clearJ1850DTCs(final WJModule m, final BoolCb cb) {
-        final String clearCmd = m == WJModule.ESP ? "01 00 00" : "FF 00 00";
-        final int maxAttempts = m == WJModule.ESP ? 10 : 1;
+        // 0x58 (ESP and airbag/ORC) clear with "01 00 00" and needs several retries
+        // until the positive 54; other modules use "FF 00 00".
+        boolean m58 = (m == WJModule.AIRBAG);   // 0x58 = airbag/ORC, "01 00 00" + retry
+        final String clearCmd = m58 ? "01 00 00" : "FF 00 00";
+        final int maxAttempts = m58 ? 10 : 1;
         setJ1850Header(m, 0x14, new Runnable() {
             @Override public void run() { attempt(1); }
             void attempt(final int n) {
@@ -179,6 +182,30 @@ public final class Kwp2000 {
 
     public void readJ1850Data(WJModule m, final String pid, final Elm327.Callback cb) {
         setJ1850Header(m, 0x22, new Runnable() { @Override public void run() { conn.sendCommand(pid + " 00 00", 3000, cb); } });
+    }
+
+    /** DTC read on a J1850 module via KWP service 0x18 (the real WJdiag-Pro method):
+     *  header ATSH24<addr>22, then "18 02 FF 00" -> "58 <count> [dtc dtc status]*". */
+    public void readJ1850By18(final WJModule m, final Elm327.Callback cb) {
+        setJ1850Header(m, 0x22, new Runnable() { @Override public void run() { conn.sendCommand("18 02 FF 00", 6000, cb); } });
+    }
+
+    /** DTC clear on a J1850 module via KWP service 0x14: header ATSH24<addr>22,
+     *  then "14 00 00" -> "54". Retries a few times on a pending 0x78 / NO DATA. */
+    public void clearJ1850By14(final WJModule m, final BoolCb cb) {
+        setJ1850Header(m, 0x22, new Runnable() {
+            @Override public void run() { attempt(1); }
+            void attempt(final int n) {
+                conn.sendCommand("14 00 00", 4000, new Elm327.Callback() {
+                    @Override public void onResponse(String r) {
+                        if (Models.hasToken(r, 0x54)) { cb.on(true); return; }
+                        if (n < 3 && (Models.hasNRC(r, 0x78) || r.contains("NO DATA")))
+                            h.postDelayed(new Runnable() { @Override public void run() { attempt(n + 1); } }, 500);
+                        else cb.on(false);
+                    }
+                });
+            }
+        });
     }
 
     /** ECU actuator (SID 0x30): strip the NRC 0x78 pending line, return the positive part. */

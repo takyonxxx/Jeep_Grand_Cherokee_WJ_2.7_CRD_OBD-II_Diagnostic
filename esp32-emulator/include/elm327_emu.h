@@ -76,6 +76,7 @@ private:
     // J1850 — vehicle data lookup + generic fallback
     String j1850_vehicle_lookup(uint8_t t, uint8_t m, const String &cmdStr);
     String j1850_generic(uint8_t t, uint8_t m, uint8_t sid, const uint8_t *data, int dlen);
+    String airbagEcho(const String &cmdStr);   // capture mode: generic positive reply for ORC 0x60
 
     // KWP2000 (K-Line)
     String kwpProcess(uint8_t sid, const uint8_t *data, int dlen);
@@ -86,6 +87,7 @@ private:
     uint8_t  klTarget     = 0x20;
     bool     ecuUnlocked  = false;
     bool     ecuDtcCleared = false;
+    bool     fuelCorrActive = false;  // set by routine 31 25 00; block 0x28 corrections only then (real car)
     bool     tcmUnlocked  = false;
     uint16_t ecuSeed      = 0;
     int      ecuSeedZeroCount = 0;  // track seed=0 requests

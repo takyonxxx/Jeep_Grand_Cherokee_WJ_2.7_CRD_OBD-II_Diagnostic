@@ -353,7 +353,7 @@ public final class WJDiag {
                 break;
             case 0x21:
                 for (int i = 0; i < 7; i++) if (n >= (i + 1) * 2) ecu.fuelQty21[i] = Models.u16(d, i * 2) / 100.0;
-                if (n >= 16) ecu.fuelLevel = Models.u16(d, 14) / 10.0;
+                if (n >= 16) { ecu.fuelRaw14 = Models.u16(d, 14); ecu.fuelLevel = ecu.fuelRaw14 / 10.0; }
                 if (n >= 18) ecu.fuelSensorVoltage = Models.u16(d, 16) / 100.0;
                 break;
             case 0x37:
@@ -553,7 +553,8 @@ public final class WJDiag {
                         } else setDTCStatus(module.displayName + ": silme başarısız (54 yok)");
                     }
                 };
-                if (module.bus == Bus.KLINE) kwp.clearDTCs(module, done); else kwp.clearJ1850DTCs(module, done);
+                if (module.bus == Bus.KLINE) kwp.clearDTCs(module, done);
+                else kwp.clearJ1850DTCs(module, done);
             }
         });
     }
@@ -563,7 +564,8 @@ public final class WJDiag {
         ensureModule(module, new Kwp2000.BoolCb() {
             @Override public void on(boolean ok) {
                 if (!ok) { cb.on(false); return; }
-                if (module.bus == Bus.KLINE) kwp.clearDTCs(module, cb); else kwp.clearJ1850DTCs(module, cb);
+                if (module.bus == Bus.KLINE) kwp.clearDTCs(module, cb);
+                else kwp.clearJ1850DTCs(module, cb);
             }
         });
     }
@@ -597,9 +599,9 @@ public final class WJDiag {
                     {"2E 25","C0085"},{"2E 26","C0110"},{"2E 27","C0111"},{"2E 30","C1014"}}; break;
             case BODY_COMPUTER: pids = new String[][]{{"2E 00","B1A00"},{"2E 01","B1A10"},{"2E 02","B2100"},{"2E 03","B2101"},{"2E 05","B2102"},{"2E 0D","B2200"},{"2E 12","B2300"}}; break;
             case RAIN_SENSOR: pids = new String[][]{{"2E 00","B1A00"},{"2E 01","B1A10"}}; break;
-            // Airbag / ORC: same method as WJdiag-Pro (ATSH246022, "2E xx 00" scan, B10xx <-> PID xx)
-            case AIRBAG: pids = new String[][]{{"2E 00","B1000"},{"2E 01","B1001"},{"2E 10","B1010"},{"2E 11","B1011"},{"2E 12","B1012"},{"2E 13","B1013"},{"2E 14","B1014"},{"2E 15","B1015"},{"2E 16","B1016"},{"2E 17","B1017"},{"2E 20","B1020"},{"2E 21","B1021"},{"2E 22","B1022"},{"2E 23","B1023"},{"2E 24","B1024"},{"2E 25","B1025"},{"2E 26","B1026"},{"2E 27","B1027"},{"2E 30","B1030"},{"2E 31","B1031"},{"2E 32","B1032"},{"2E 33","B1033"},{"2E 34","B1034"},{"2E 35","B1035"},{"2E 36","B1036"},{"2E 40","B1040"},{"2E 41","B1041"},{"2E 42","B1042"},{"2E 43","B1043"},{"2E 50","B1050"},{"2E 51","B1051"},{"2E 52","B1052"},{"2E 53","B1053"},{"2E 54","B1054"},{"2E 55","B1055"}}; break;
-            case ESP: pids = new String[][]{{"2E 10","C1010"},{"2E 13","C1013"},{"2E 16","C1016"},{"2E 19","C1019"},{"2E 1C","C101C"},{"2E 1F","C101F"},
+            // Airbag/ORC is module 0x58. Confirmed from the WJdiag-Pro ESP32 capture: its airbag
+            // read = ATSH245822 + the SAME 2E/2F PID scan below; clear = ATSH245814 + "01 00 00".
+            case AIRBAG: pids = new String[][]{{"2E 10","C1010"},{"2E 13","C1013"},{"2E 16","C1016"},{"2E 19","C1019"},{"2E 1C","C101C"},{"2E 1F","C101F"},
                     {"2E 22","C1022"},{"2E 25","C1025"},{"2E 28","C1028"},{"2E 2B","C102B"},{"2E 2E","C102E"},{"2E 37","C1037"},{"2E 3A","C103A"},
                     {"2E 3D","C103D"},{"2E 43","C1043"},{"2E 49","C1049"},{"2E 4C","C104C"},{"2E 4F","C104F"},{"2E 52","C1052"},{"2E 70","C1070"},
                     {"2E 73","C1073"},{"2E 76","C1076"},{"2E 79","C1079"},{"2E 7C","C107C"},{"2E 7F","C107F"},{"2E 82","C1082"},{"2E 85","C1085"},
@@ -631,6 +633,7 @@ public final class WJDiag {
                     boolean unsupported = d1 == 0xFF && d2 == 0xFF;
                     if (raw != 0 && raw != 0xFFFF && !unsupported) found.add(new DtcEntry(module, pids[i][1], DtcNames.describe(pids[i][1])));
                 }
+                conn.log("[DTC " + module.hex() + "] " + pids[i][0] + " -> " + r.replace("\r", " | "));
                 setDTCStatus(module.displayName + ": taranıyor " + (i + 1) + "/" + pids.length + "…");
                 h.postDelayed(new Runnable() { @Override public void run() { scanNext(module, pids, i + 1, found); } }, 100);
             }

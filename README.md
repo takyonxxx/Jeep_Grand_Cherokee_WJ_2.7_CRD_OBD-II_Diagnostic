@@ -89,8 +89,8 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 | 1 | 0x15 | K-Line | Engine ECU (Bosch EDC15C2 OM612) | OK — 9 actuators + 14-block live data |
 | 2 | 0x20 | K-Line | Transmission (NAG1 722.6) | OK — 4 tests + 5-block live data |
 | 3 | 0x28 | J1850 | ABS | OK — read + 12 valve tests + DTC |
-| 4 | 0x58 | J1850 | ESP / Traction Control | OK — read + 50 live PIDs. DTC clear: NO DATA |
-| 5 | 0x61 | J1850 | Instrument Cluster | OK — 11 LED + gauge tests (SID 0x3A) |
+| 4 | 0x58 | J1850 | **Airbag (ORC)** | OK — 2E/2F DTC scan + clear `01 00 00` (7 retries). (Was mislabeled "ESP") |
+| 5 | 0x61 | J1850 | **Shifter Lever** | OK — selector P/R/N/D + LED tests (SID 0x3A). (Was mislabeled "Instrument Cluster") |
 | 6 | 0xC0 | J1850 | SKIM / Immobilizer | OK — reset + VIN + key program |
 | 7 | 0x40 | J1850 | Body Computer | OK — 14 relays + mode 0xB4 config |
 | 8 | 0x98 | J1850 | HVAC / ATC / Memory Seat | OK — 10 motor tests |
@@ -170,7 +170,7 @@ PID 0x01=Front Up, 0x02=Front Down, 0x03=Rear Up, 0x04=Rear Down.
 ### Body Computer 0x40
 Hazard: `38 06 20`, Horn: `38 0D 01`, Hi Beam: `38 06 08`, Park: `38 06 04`
 
-### Cluster 0x61 Gauge Test
+### Shifter Lever 0x61 (was "Cluster")
 SID 0x3A: `3A 00 80`=Speedo, `3A 00 40`=Tacho, `3A 00 08`=Fuel, `3A 00 04`=Temp
 
 ## ECU Security — ArvutaKoodi
@@ -182,9 +182,10 @@ SID 0x3A: `3A 00 80`=Speedo, `3A 00 40`=Tacho, `3A 00 08`=Fuel, `3A 00 04`=Temp
 
 ## DTC
 
-K-Line: `18 02 00 00` read (ECU), `18 02 FF 00` read (TCM), `14 00 00` clear
-J1850: `ATSH24xx18` + `FF 00 00` read, `ATSH24xx14` + `FF 00 00` clear
-ESP 0x58 DTC clear: `01 00 00` (7 retries before positive response)
+K-Line: `18 02 00 00` read (ECU), `18 02 FF 00` read (TCM), `14 00 00` clear → `54`
+J1850 read: `ATSH24xx22` + `2E/2F <pid> 00` PID scan → `26 xx 62 hi lo status` (hi/lo≠0 = fault). (NOT service 0x18.)
+J1850 clear: `ATSH24xx14` + `FF 00 00` (most modules) / `01 00 00` (Airbag 0x58, ~7 retries) → `54`
+Verified from WJdiag-Pro capture 2026-10-28. Airbag = **0x58** (not 0x60). 0x60 = Electro Mech Cluster, 0x61 = Shifter Lever.
 
 **NRC 0x78 on DTC clear**: ECU may return `7F 14 78` (ResponsePending) before `54 00 00` (success). Both arrive in same ELM327 frame.
 

@@ -35,7 +35,7 @@ QList<WJDiagnostics::ModuleInfo> WJDiagnostics::allModules()
          BusType::J1850, "ATSH242A22", "", "ATSP2", "ATRA2A"},
         {Module::BodyComputer, "Body Computer / ESP Braking", "ABS",
          BusType::J1850, "ATSH244022", "", "ATSP2", "ATRA40"},
-        {Module::Airbag, "Airbag (ORC/AOSIM)", "Airbag",
+        {Module::Airbag, "Electro Mech Cluster", "EMC",   // 0x60 = EMC, NOT airbag (airbag=0x58)
          BusType::J1850, "ATSH246022", "", "ATSP2", "ATRA60"},
         {Module::SKIM, "SKIM Immobilizer", "SKIM",
          BusType::J1850, "ATSH246222", "", "ATSP2", "ATRA62"},
@@ -53,9 +53,9 @@ QList<WJDiagnostics::ModuleInfo> WJDiagnostics::allModules()
          BusType::J1850, "ATSH24A022", "", "ATSP2", "ATRAA0"},
         {Module::PassengerDoor, "Liftgate / HandsFree", "HFM",
          BusType::J1850, "ATSH24A122", "", "ATSP2", "ATRAA1"},
-        {Module::ESP_Module, "ESP / Traction Control", "ESP",
+        {Module::ESP_Module, "Airbag (ORC)", "Airbag",   // 0x58 = Airbag (confirmed WJdiag-Pro capture)
          BusType::J1850, "ATSH245822", "", "ATSP2", "ATRA58"},
-        {Module::Cluster, "Instrument Cluster", "Cluster",
+        {Module::Cluster, "Shifter Lever", "Shifter",    // 0x61 = Shifter Lever (vites seçici)
          BusType::J1850, "ATSH246122", "", "ATSP2", "ATRA61"},
         {Module::RainSensor, "Siren / Security", "Siren",
          BusType::J1850, "ATSH24A722", "", "ATSP2", "ATRAA7"},
