@@ -71,7 +71,7 @@ struct DashboardPanel: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                     // Fuel level sub-row
                     if ecu.fuelLevel > 0 {
-                        let liters = ecu.fuelLevel * 78.7 / 100.0
+                        let liters = ecu.fuelLevel * 78.0 / 100.0
                         let col = liters < 10 ? Color.red : liters < 20 ? Color.orange : Color.cyan
                         Text(String(format: "%.1f L", liters))
                             .font(.system(size: 22, weight: .bold, design: .monospaced))

@@ -535,61 +535,101 @@ struct J1850DtcPidEntry {
     uint8_t pidHi;   // first byte of PID (e.g. 0x2E)
     uint8_t pidLo;   // second byte (e.g. 0x10)
     const char *dtcCode;
+    const char *name;  // airbag: WJdiag-Pro fault name; other modules: nullptr (use dtcDescription)
 };
 
 // ABS 0x28: PID range 2E 10 ~ 2E 30 
+// ABS 0x28. code = PID, name = WJdiag-Pro's exact name (res VeadABS2E<pid>00).
 static const J1850DtcPidEntry kAbsDtcPids[] = {
-    {0x2E,0x10,"C0031"}, // LF Sensor Circuit
-    {0x2E,0x11,"C0032"}, // LF Wheel Speed Signal
-    {0x2E,0x12,"C0035"}, // RF Sensor Circuit
-    {0x2E,0x13,"C0036"}, // RF Wheel Speed Signal
-    {0x2E,0x14,"C0041"}, // LR Sensor Circuit
-    {0x2E,0x15,"C0042"}, // LR Wheel Speed Signal
-    {0x2E,0x16,"C0045"}, // RR Sensor Circuit
-    {0x2E,0x17,"C0046"}, // RR Wheel Speed Signal
-    {0x2E,0x20,"C0051"}, // Valve Power Feed
-    {0x2E,0x21,"C0060"}, // Pump Motor Circuit
-    {0x2E,0x22,"C0070"}, // CAB Internal
-    {0x2E,0x23,"C0080"}, // ABS Lamp Circuit Short
-    {0x2E,0x24,"C0081"}, // ABS Lamp Open
-    {0x2E,0x25,"C0085"}, // Brake Lamp Circuit Short
-    {0x2E,0x26,"C0110"}, // Brake Fluid Level Switch
-    {0x2E,0x27,"C0111"}, // G-Switch / Sensor Failure
-    {0x2E,0x30,"C1014"}, // ABS Messages Not Received
+    {0x2E,0x10,"2E 10","Left Front Sensor Circuit Failure"},
+    {0x2E,0x11,"2E 11","Left Front Wheel Speed Signal Failure"},
+    {0x2E,0x12,"2E 12","Right Front Sensor Circuit Failure"},
+    {0x2E,0x13,"2E 13","Right Front Wheel Speed Signal Failure"},
+    {0x2E,0x14,"2E 14","Left Rear Sensor Circuit Failure"},
+    {0x2E,0x15,"2E 15","Left Rear Wheel Speed Signal Failure"},
+    {0x2E,0x16,"2E 16","Right Rear Sensor Circuit Failure"},
+    {0x2E,0x17,"2E 17","Right Rear Wheel Speed Signal Failure"},
+    {0x2E,0x20,"2E 20","Pump Circuit Failure"},
+    {0x2E,0x21,"2E 21","Valve Power Feed Failure"},
+    {0x2E,0x22,"2E 22","CAB Internal Failure"},
+    {0x2E,0x23,"2E 23","G-Switch / Sensor Failure"},
+    {0x2E,0x24,"2E 24","System Under Voltage"},
+    {0x2E,0x25,"2E 25","Cluster Lamp Failure"},
+    {0x2E,0x26,"2E 26","BUS System Communication"},
+    {0x2E,0x27,"2E 27","System Over Voltage"},
+    {0x2E,0x30,"2E 30","Brake Fluid Level Switch"},
 };
 
-// ESP 0x58: PID range 2E 10 ~ 2F 3C (, 3-step increments)
+// Airbag/ORC 0x58: PID range 2E 10 ~ 2F 3C. code = PID, name = WJdiag-Pro's exact fault
+// name (res VeadAirbag2E1000_<scan-index>). 2E E5 = "Right Front Impact Sensor Internal 1"
+// matches the real car / pcap. Scan index maps 1:1 to the fault name.
 static const J1850DtcPidEntry kEspDtcPids[] = {
-    {0x2E,0x10,"C0031"}, {0x2E,0x13,"C0032"}, {0x2E,0x16,"C0035"},
-    {0x2E,0x19,"C0036"}, {0x2E,0x1C,"C0041"}, {0x2E,0x1F,"C0042"},
-    {0x2E,0x22,"C0045"}, {0x2E,0x25,"C0046"}, {0x2E,0x28,"C0051"},
-    {0x2E,0x2B,"C0060"}, {0x2E,0x2E,"C0070"}, {0x2E,0x37,"C0110"},
-    {0x2E,0x3A,"C0111"}, {0x2E,0x3D,"C1014"}, {0x2E,0x43,"C1015"},
-    {0x2E,0x49,"C1031"}, {0x2E,0x4C,"C1032"}, {0x2E,0x4F,"C1035"},
-    {0x2E,0x52,"C1036"}, {0x2E,0x70,"C1041"}, {0x2E,0x73,"C1042"},
-    {0x2E,0x76,"C1045"}, {0x2E,0x79,"C1046"}, {0x2E,0x7C,"C1051"},
-    {0x2E,0x7F,"C1060"}, {0x2E,0x82,"C1070"}, {0x2E,0x85,"C1071"},
-    {0x2E,0x88,"C1073"}, {0x2E,0x8B,"C1075"}, {0x2E,0x8E,"C1080"},
-    {0x2E,0x91,"C1085"}, {0x2E,0x94,"C1090"}, {0x2E,0x97,"C1095"},
-    {0x2E,0xDC,"C2100"}, {0x2E,0xDF,"C2101"}, {0x2E,0xE2,"C2102"},
-    {0x2E,0xE5,"C2103"}, {0x2E,0xFA,"C2200"}, {0x2E,0xFD,"C2201"},
-    {0x2F,0x00,"C2202"}, {0x2F,0x03,"C2203"}, {0x2F,0x06,"C2204"},
-    {0x2F,0x18,"C2300"}, {0x2F,0x1B,"C2301"}, {0x2F,0x1E,"C2302"},
-    {0x2F,0x21,"C2303"}, {0x2F,0x24,"C2304"}, {0x2F,0x27,"C2305"},
-    {0x2F,0x2A,"C2306"}, {0x2F,0x2D,"C2307"}, {0x2F,0x30,"C2308"},
-    {0x2F,0x33,"C2309"}, {0x2F,0x36,"C2310"}, {0x2F,0x39,"C2311"},
-    {0x2F,0x3C,"C2312"},
+    {0x2E,0x10,"2E 10","Accelerometer 1"},
+    {0x2E,0x13,"2E 13","Output Driver 1"},
+    {0x2E,0x16,"2E 16","Driver SQUIB 1 Circuit Open"},
+    {0x2E,0x19,"2E 19","Passenger SQUIB 1 Circuit Open"},
+    {0x2E,0x1C,"2E 1C","Internal 1"},
+    {0x2E,0x1F,"2E 1F","Driver SQUIB 1 Circuit Short"},
+    {0x2E,0x22,"2E 22","Passenger SQUIB 1 Circuit Short"},
+    {0x2E,0x25,"2E 25","Driver SQUIB 1 Short To Battery"},
+    {0x2E,0x28,"2E 28","Passenger SQUIB 1 Short To Battery"},
+    {0x2E,0x2B,"2E 2B","Driver SQUIB 1 Short To Ground"},
+    {0x2E,0x2E,"2E 2E","Passenger SQUIB 1 Short To Ground"},
+    {0x2E,0x37,"2E 37","Stored Energy Firing 1"},
+    {0x2E,0x3A,"2E 3A","Warning Indicator Short"},
+    {0x2E,0x3D,"2E 3D","Warning Indicator Open"},
+    {0x2E,0x43,"2E 43","No PCI Transmission"},
+    {0x2E,0x49,"2E 49","Loss Of Ignition / Run-Start"},
+    {0x2E,0x4C,"2E 4C","Loss Of Ignition / Run Only"},
+    {0x2E,0x4F,"2E 4F","No Cluster Message"},
+    {0x2E,0x52,"2E 52","Cluster Message Mismatch"},
+    {0x2E,0x70,"2E 70","Driver SQUIB 2 Circuit Open"},
+    {0x2E,0x73,"2E 73","Passenger SQUIB 2 Circuit Open"},
+    {0x2E,0x76,"2E 76","Driver SQUIB 2 Circuit Short"},
+    {0x2E,0x79,"2E 79","Passenger SQUIB 2 Circuit Short"},
+    {0x2E,0x7C,"2E 7C","Driver SQUIB 2 Short To Battery"},
+    {0x2E,0x7F,"2E 7F","Passenger SQUIB 2 Short To Battery"},
+    {0x2E,0x82,"2E 82","Driver SQUIB 2 Short To Ground"},
+    {0x2E,0x85,"2E 85","Passenger SQUIB 2 Short To Ground"},
+    {0x2E,0x88,"2E 88","Driver Seat Belt Switch Circuit Open"},
+    {0x2E,0x8B,"2E 8B","Passenger Seat Belt Switch Circuit Open"},
+    {0x2E,0x8E,"2E 8E","Driver Seat Belt Switch Shorted To Ground"},
+    {0x2E,0x91,"2E 91","Passenger Seat Belt Switch Shorted To Ground"},
+    {0x2E,0x94,"2E 94","Driver Seat Belt Switch Shorted To Battery"},
+    {0x2E,0x97,"2E 97","Passenger Seat Belt Switch Shorted To Battery"},
+    {0x2E,0xDC,"2E DC","No Left Front Impact Sensor Communication"},
+    {0x2E,0xDF,"2E DF","No Right Front Impact Sensor Communication"},
+    {0x2E,0xE2,"2E E2","Left Front Impact Sensor Internal 1"},
+    {0x2E,0xE5,"2E E5","Right Front Impact Sensor Internal 1"},
+    {0x2E,0xFA,"2E FA","Interrogate AOSIM"},
+    {0x2E,0xFD,"2E FD","No AOSIM Message"},
+    {0x2F,0x00,"2F 00","AOSIM Driver Off Indicator Failure"},
+    {0x2F,0x03,"2F 03","AOSIM Passenger Off Indicator Failure"},
+    {0x2F,0x06,"2F 06","Module Not Configured For AOSIM"},
+    {0x2F,0x18,"2F 18","Driver Curtain SQUIB Circuit Open"},
+    {0x2F,0x1B,"2F 1B","Passenger Curtain SQUIB Circuit Open"},
+    {0x2F,0x1E,"2F 1E","Driver Curtain SQUIB Circuit Short"},
+    {0x2F,0x21,"2F 21","Passenger Curtain SQUIB Circuit Short"},
+    {0x2F,0x24,"2F 24","Driver Curtain SQUIB Short To Battery"},
+    {0x2F,0x27,"2F 27","Passenger Curtain SQUIB Short To Battery"},
+    {0x2F,0x2A,"2F 2A","Driver Curtain SQUIB Short To Ground"},
+    {0x2F,0x2D,"2F 2D","Passenger Curtain SQUIB Short To Ground"},
+    {0x2F,0x30,"2F 30","Accelerometer 2"},
+    {0x2F,0x33,"2F 33","No Driver Side Impact Sensor Communication"},
+    {0x2F,0x36,"2F 36","No Passenger Side Impact Sensor Communication"},
+    {0x2F,0x39,"2F 39","Driver Side Impact Sensor Internal 1"},
+    {0x2F,0x3C,"2F 3C","Passenger Side Impact Sensor Internal 1"},
 };
 
 // Body 0x40: limited DTC PIDs 
+// BCM 0x40. code = PID, name = WJdiag-Pro primary name (res VeadBody2E<pid>00_0).
 static const J1850DtcPidEntry kBodyDtcPids[] = {
-    {0x2E,0x00,"B1A00"}, // Interior Lamp Circuit
-    {0x2E,0x01,"B1A10"}, // Door Ajar Switch
-    {0x2E,0x02,"B2100"}, // SKIM Comm Error
-    {0x2E,0x03,"B2101"}, // Bus Comm Error
-    {0x2E,0x05,"B2102"}, // Key-In Circuit
-    {0x2E,0x0D,"B2200"}, // Door Lock Circuit
-    {0x2E,0x12,"B2300"}, // Horn Relay Circuit
+    {0x2E,0x00,"2E 00","BCM Eeprom Checksum Failure"},
+    {0x2E,0x01,"2E 01","Head Lamp Sw Open Ckt"},
+    {0x2E,0x02,"2E 02","Pcm Message Not Recd"},
+    {0x2E,0x03,"2E 03","Ambient Temperature Sensor Ckt Open"},
+    {0x2E,0x05,"2E 05","Wiper Park Switch Failure"},
+    {0x2E,0x12,"2E 12","Fog Lamp Relay Ckt Shorted Hi"},
 };
 
 // HVAC/ATC 0x98: DTC PIDs
@@ -608,8 +648,9 @@ static const J1850DtcPidEntry kOverheadDtcPids[] = {
 };
 
 // RainSensor 0xA7
+// Rain Sensor 0xA7. WJdiag-Pro scans PID 2E 10 (res VeadRainSensor2E1000_0..2).
 static const J1850DtcPidEntry kRainDtcPids[] = {
-    {0x2E,0x10,"B1200"}, // Rain Sensor Circuit
+    {0x2E,0x10,"2E 10","Rain Sensor Internal/Optical Fault"},
 };
 
 // SKIM 0xC0
@@ -710,7 +751,9 @@ void WJDiagnostics::readJ1850DTCsByPIDScan(Module mod, std::function<void(const 
                         if (dtcRaw != 0x0000 && dtcRaw != 0xFFFF) {
                             DTCEntry e;
                             e.code = QString(pid.dtcCode);
-                            e.description = dtcDescription(e.code, mod);
+                            // Airbag entries carry the WJdiag-Pro fault name directly; other
+                            // modules resolve the description from the DTC code table.
+                            e.description = pid.name ? QString::fromLatin1(pid.name) : dtcDescription(e.code, mod);
                             e.status = d2;
                             e.isActive = true;
                             e.occurrences = (d2 > 0) ? d2 : 1;
@@ -731,7 +774,25 @@ void WJDiagnostics::readJ1850DTCsByPIDScan(Module mod, std::function<void(const 
         });
     };
 
-    (*scanNext)();
+    // WJdiag-Pro warms the airbag (0x58) module with a 20/24/28 identity+status block
+    // read before the DTC scan; replicate it so the module reliably answers 2E/2F reads.
+    // (switchToModule has already re-asserted the ATSH245822 read header.)
+    if (static_cast<uint8_t>(mod) == 0x58) {
+        static const char *kWarm[] = {"20 00 00","20 01 00","20 02 00","24 00 00","28 00 00","20 07 00"};
+        auto warmIdx = std::make_shared<int>(0);
+        auto warmNext = std::make_shared<std::function<void()>>();
+        *warmNext = [this, warmIdx, warmNext, scanNext]() {
+            if (*warmIdx >= 6) { (*scanNext)(); return; }
+            QString c = QString::fromLatin1(kWarm[*warmIdx]);
+            ++(*warmIdx);
+            m_elm->sendCommand(c, [this, warmNext](const QString&) {
+                QTimer::singleShot(80, this, [warmNext]() { (*warmNext)(); });
+            });
+        };
+        (*warmNext)();
+    } else {
+        (*scanNext)();
+    }
 }
 
 void WJDiagnostics::clearDTCs(Module mod, std::function<void(bool)> cb)
@@ -1221,8 +1282,10 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
             // data[8-9] = NOT fuelActual (fuelActual comes from 0x32)
             ecu.fuelStartSet = u16(12) / 100.0;        // data[10-11] Fuel QTY Start Setpoint
             ecu.fuelLimit = u16(14) / 100.0;           // data[12-13] Fuel QTY Limit
-            ecu.fuelLevel = u16(16) / 10.0;            // data[14-15] Fuel Level % (verified: 501→50%)
-            ecu.fuelLevelV = u16(18) / 100.0;          // data[16-17] Fuel Level Sensor V (verified: 191→1.91V)
+            // Fuel (verified real car + WJdiag-Pro 2026-10-28): data[0-1] = fuel sender ADC;
+            //   voltage = raw*0.0048 (465 -> 2.23 V). "Fuel Level" % = (V - 1.27)*33.3 clamped.
+            ecu.fuelLevelV = u16(2) * 0.0048;          // data[0-1] Fuel Level Sensor Voltage
+            ecu.fuelLevel = qBound(0.0, (ecu.fuelLevelV - 1.27) * 33.3, 100.0);
         }
         break;
 
@@ -1551,14 +1614,20 @@ QString WJDiagnostics::dtcDescription(const QString &code, Module src)
         {"P0202","Cyl 2 Injector Circuit"}, {"P0203","Cyl 3 Injector Circuit"},
         {"P0204","Cyl 4 Injector Circuit"}, {"P0205","Cyl 5 Injector Circuit"},
         {"P0335","CKP Position Sensor"}, {"P0340","CMP Position Sensor"},
-        {"P0380","Glow Plug Circuit"}, {"P0403","EGR Solenoid Circuit"},
+        {"P0380","Glow Plug 1 Relay Control Circuit"}, {"P0381","Glow Plug 2 Relay Control Circuit"},
+        {"P0403","EGR Solenoid Circuit"}, {"P0460","Fuel Level Sensor Circuit"},
         {"P0500","Vehicle Speed Sensor"}, {"P1130","Boost Pressure Sensor"},
         {"P0520","Oil Pressure Sensor/Switch Circuit"},
         {"P0579","Cruise Control Multi-Function Input"},
+        {"P0645","A/C Clutch Relay Circuit"}, {"P2120","Accelerator Pedal Position Sensor 1"},
+        {"P2125","Accelerator Pedal Position Sensor 2"},
+        {"P0702","Transmission Control"},  // real car: ECU 18 02 00 00 -> 58 01 07 02 E0
         {"P2602","Fuel Pressure Solenoid"},
     };
 
     static const QMap<QString, QString> tcmDtcs = {
+        {"P2210","ID 17 Shifter signal invalid"},  // real car: TCM 18 02 FF 00 -> 58 01 22 10 20
+        {"P0703","Brake Switch B Circuit"},
         {"P0700","Transmission Control System"}, {"P0705","Range Sensor Circuit"},
         {"P0710","Trans Fluid Temp Sensor"}, {"P0715","Input Speed Sensor"},
         {"P0720","Output Speed Sensor"}, {"P0730","Incorrect Gear Ratio"},

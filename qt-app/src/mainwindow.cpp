@@ -1804,9 +1804,9 @@ void MainWindow::onECUDataUpdated(const TCMDiagnostics::ECUStatus &ecu)
     ESET(m_dashWgVal, QString::number(ecu.wastegate, 'f', 0));
 
     // Fuel Level (liters) from block 0x21 data[14-15] / 10 = %
-    // Tank: 78.7L, liters = pct * 78.7 / 100
+    // Tank: 78L (resmi spec), liters = pct * 78.0 / 100
     if (m_dashFuelLevelVal && ecu.fuelLevel > 0) {
-        double liters = ecu.fuelLevel * 78.7 / 100.0;
+        double liters = ecu.fuelLevel * 78.0 / 100.0;
         m_dashFuelLevelVal->setText(QString::number(liters, 'f', 1));
         m_dashFuelLevelUnit->setText(QString("L (%1%)").arg(ecu.fuelLevel, 0, 'f', 0));
         QString col = liters < 10 ? "#e04040" : liters < 20 ? "#d09030" : "#60b8a0";
@@ -2432,7 +2432,7 @@ void MainWindow::runDiscoveryPhases(
                             if (n >= 20) {
                                 double fuelPct = u16(14) / 10.0;
                                 double fuelV = u16(16) / 100.0;
-                                double fuelL = fuelPct * 78.7 / 100.0;
+                                double fuelL = fuelPct * 78.0 / 100.0;
                                 p += QString(" FuelLevel=%1%(%2L) SensorV=%3V [18-19]=%4")
                                     .arg(fuelPct,0,'f',1).arg(fuelL,0,'f',1)
                                     .arg(fuelV,0,'f',2).arg(u16(18)/100.0,0,'f',2);

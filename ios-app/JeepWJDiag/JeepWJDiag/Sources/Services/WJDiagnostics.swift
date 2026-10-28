@@ -497,8 +497,12 @@ final class WJDiagnostics: ObservableObject {
                     self.ecuStatus.fuelQty21[i] = Double(u16(data, i * 2)) / 100.0
                 }
                 // Fuel level [14-15] /10 = %, Fuel sensor V [16-17] /100
-                if data.count >= 16 { self.ecuStatus.fuelLevel = Double(u16(data, 14)) / 10.0 }
-                if data.count >= 18 { self.ecuStatus.fuelSensorVoltage = Double(u16(data, 16)) / 100.0 }
+                // Fuel (verified real car + WJdiag-Pro 2026-10-28): block 0x21 data[0-1] = fuel sender
+                // ADC; voltage = raw*0.0048 (465 -> 2.23 V). "Fuel Level" % = (V - 1.27)*33.3 clamped.
+                if data.count >= 2 {
+                    self.ecuStatus.fuelSensorVoltage = Double(u16(data, 0)) * 0.0048
+                    self.ecuStatus.fuelLevel = max(0, min(100, (self.ecuStatus.fuelSensorVoltage - 1.27) * 33.3))
+                }
 
             case 0x37:
                 // EGR/MAF setpoint [0-1] raw, wastegate/EGR actuator [2-3] raw
@@ -709,6 +713,44 @@ final class WJDiagnostics: ObservableObject {
     // MARK: - DTC Parsing
 
     @discardableResult
+    /// K-Line (ECU/TCM) DTC code -> description. P2210/P0702 confirmed on the real car;
+    /// the rest are the standard WJ 2.7 CRD (EDC15C2 / NAG1 722.6) codes.
+    private static let kLineDtcNames: [String: String] = [
+        // Engine (EDC15C2)
+        "P0100": "MAF Sensor Circuit", "P0105": "Boost/MAP Sensor Circuit",
+        "P0110": "Intake Air Temp Sensor", "P0115": "Coolant Temp Sensor",
+        "P0190": "Fuel Rail Pressure Sensor",
+        "P0201": "Cylinder 1 Injector Circuit", "P0202": "Cylinder 2 Injector Circuit",
+        "P0203": "Cylinder 3 Injector Circuit", "P0204": "Cylinder 4 Injector Circuit",
+        "P0205": "Cylinder 5 Injector Circuit",
+        "P0335": "CKP Position Sensor Circuit", "P0340": "CMP Position Sensor Circuit",
+        "P0380": "Glow Plug 1 Relay Control Circuit", "P0381": "Glow Plug 2 Relay Control Circuit",
+        "P0403": "EGR Solenoid Circuit", "P0460": "Fuel Level Sensor Circuit",
+        "P0500": "Vehicle Speed Sensor", "P0645": "A/C Clutch Relay Circuit",
+        "P2120": "Accelerator Pedal Position Sensor 1", "P2125": "Accelerator Pedal Position Sensor 2",
+        "P0702": "Transmission Control",  // real car: ECU 18 02 00 00 -> 58 01 07 02 E0
+        // Transmission (NAG1 722.6)
+        "P2210": "ID 17 Shifter signal invalid",  // real car: TCM 18 02 FF 00 -> 58 01 22 10 20
+        "P0700": "Transmission Control System", "P0703": "Brake Switch B Circuit",
+        "P0705": "Range Sensor Circuit (PRNDL)", "P0710": "Trans Fluid Temp Sensor",
+        "P0715": "Input/Turbine Speed Sensor", "P0720": "Output Speed Sensor",
+        "P0730": "Incorrect Gear Ratio", "P0731": "Gear 1 Ratio Error",
+        "P0732": "Gear 2 Ratio Error", "P0733": "Gear 3 Ratio Error",
+        "P0734": "Gear 4 Ratio Error", "P0735": "Gear 5 Ratio Error",
+        "P0740": "TCC Solenoid Circuit", "P0741": "TCC Stuck Off",
+    ]
+
+    static func dtcName(_ code: String) -> String {
+        if let d = kLineDtcNames[code] { return d }
+        switch code.first {
+        case "P": return "Powertrain fault code"
+        case "C": return "Chassis fault code"
+        case "B": return "Body fault code"
+        case "U": return "Network fault code"
+        default: return ""
+        }
+    }
+
     private func parseKLineDTCs(module: WJModule, response: String) -> Int {
         guard let kwp = kwp else { return 0 }
         let bytes = kwp.hexToBytes(response)
@@ -722,7 +764,7 @@ final class WJDiagnostics: ObservableObject {
         var i = idx + 2
         while i + 2 < bytes.count && dtcs.count < count {
             let code = decodeDTC(hi: bytes[i], lo: bytes[i+1])
-            dtcs.append(DTCEntry(module: module, code: code, description: ""))
+            dtcs.append(DTCEntry(module: module, code: code, description: Self.dtcName(code)))
             i += 3
         }
         DispatchQueue.main.async { [weak self] in
@@ -740,21 +782,53 @@ final class WJDiagnostics: ObservableObject {
     /// Mode 0x18 is NOT supported by any WJ J1850 module.
     /// Instead, scan known DTC PID ranges via mode 0x22.
     private func readJ1850DTCsByPIDScan(module: WJModule) {
-        let pids: [(pid: String, code: String)]
+        let pids: [(pid: String, code: String, desc: String)]
         switch module {
         case .abs:
-            pids = [("2E 10","C0031"),("2E 11","C0032"),("2E 12","C0035"),("2E 13","C0036"),
-                    ("2E 14","C0041"),("2E 15","C0042"),("2E 16","C0045"),("2E 17","C0046"),
-                    ("2E 20","C0051"),("2E 21","C0060"),("2E 22","C0070"),("2E 23","C0080"),
-                    ("2E 24","C0081"),("2E 25","C0085"),("2E 26","C0110"),("2E 27","C0111"),
-                    ("2E 30","C1014")]
+            // code = PID, desc = WJdiag-Pro's exact name (res VeadABS2E<pid>00).
+            pids = [("2E 10","2E 10","Left Front Sensor Circuit Failure"),("2E 11","2E 11","Left Front Wheel Speed Signal Failure"),
+                    ("2E 12","2E 12","Right Front Sensor Circuit Failure"),("2E 13","2E 13","Right Front Wheel Speed Signal Failure"),
+                    ("2E 14","2E 14","Left Rear Sensor Circuit Failure"),("2E 15","2E 15","Left Rear Wheel Speed Signal Failure"),
+                    ("2E 16","2E 16","Right Rear Sensor Circuit Failure"),("2E 17","2E 17","Right Rear Wheel Speed Signal Failure"),
+                    ("2E 20","2E 20","Pump Circuit Failure"),("2E 21","2E 21","Valve Power Feed Failure"),
+                    ("2E 22","2E 22","CAB Internal Failure"),("2E 23","2E 23","G-Switch / Sensor Failure"),
+                    ("2E 24","2E 24","System Under Voltage"),("2E 25","2E 25","Cluster Lamp Failure"),
+                    ("2E 26","2E 26","BUS System Communication"),("2E 27","2E 27","System Over Voltage"),
+                    ("2E 30","2E 30","Brake Fluid Level Switch")]
         case .bodyComputer:
-            pids = [("2E 00","B1A00"),("2E 01","B1A10"),("2E 02","B2100"),("2E 03","B2101"),
-                    ("2E 05","B2102"),("2E 0D","B2200"),("2E 12","B2300")]
+            // code = PID, desc = WJdiag-Pro primary name (res VeadBody2E<pid>00_0).
+            pids = [("2E 00","2E 00","BCM Eeprom Checksum Failure"),("2E 01","2E 01","Head Lamp Sw Open Ckt"),
+                    ("2E 02","2E 02","Pcm Message Not Recd"),("2E 03","2E 03","Ambient Temperature Sensor Ckt Open"),
+                    ("2E 05","2E 05","Wiper Park Switch Failure"),("2E 12","2E 12","Fog Lamp Relay Ckt Shorted Hi")]
         case .rainSensor:
-            pids = [("2E 00","B1A00"),("2E 01","B1A10")]
+            // WJdiag-Pro scans PID 2E 10 (res VeadRainSensor2E1000_0..2).
+            pids = [("2E 10","2E 10","Rain Sensor Internal/Optical Fault")]
+        case .espModule:
+            // Airbag/ORC is module 0x58. WJdiag-Pro capture: ATSH245822 + the 2E/2F PID scan
+            // below; a non-zero 62 payload = fault. Clear = ATSH245814 + "01 00 00". code = PID,
+            // desc = WJdiag-Pro's exact fault name (res VeadAirbag2E1000_<scan-index>); 2E E5 =
+            // "Right Front Impact Sensor Internal 1" matches the real car / pcap.
+            pids = [("2E 10","2E 10","Accelerometer 1"),("2E 13","2E 13","Output Driver 1"),("2E 16","2E 16","Driver SQUIB 1 Circuit Open"),
+                    ("2E 19","2E 19","Passenger SQUIB 1 Circuit Open"),("2E 1C","2E 1C","Internal 1"),("2E 1F","2E 1F","Driver SQUIB 1 Circuit Short"),
+                    ("2E 22","2E 22","Passenger SQUIB 1 Circuit Short"),("2E 25","2E 25","Driver SQUIB 1 Short To Battery"),("2E 28","2E 28","Passenger SQUIB 1 Short To Battery"),
+                    ("2E 2B","2E 2B","Driver SQUIB 1 Short To Ground"),("2E 2E","2E 2E","Passenger SQUIB 1 Short To Ground"),("2E 37","2E 37","Stored Energy Firing 1"),
+                    ("2E 3A","2E 3A","Warning Indicator Short"),("2E 3D","2E 3D","Warning Indicator Open"),("2E 43","2E 43","No PCI Transmission"),
+                    ("2E 49","2E 49","Loss Of Ignition / Run-Start"),("2E 4C","2E 4C","Loss Of Ignition / Run Only"),("2E 4F","2E 4F","No Cluster Message"),
+                    ("2E 52","2E 52","Cluster Message Mismatch"),("2E 70","2E 70","Driver SQUIB 2 Circuit Open"),("2E 73","2E 73","Passenger SQUIB 2 Circuit Open"),
+                    ("2E 76","2E 76","Driver SQUIB 2 Circuit Short"),("2E 79","2E 79","Passenger SQUIB 2 Circuit Short"),("2E 7C","2E 7C","Driver SQUIB 2 Short To Battery"),
+                    ("2E 7F","2E 7F","Passenger SQUIB 2 Short To Battery"),("2E 82","2E 82","Driver SQUIB 2 Short To Ground"),("2E 85","2E 85","Passenger SQUIB 2 Short To Ground"),
+                    ("2E 88","2E 88","Driver Seat Belt Switch Circuit Open"),("2E 8B","2E 8B","Passenger Seat Belt Switch Circuit Open"),("2E 8E","2E 8E","Driver Seat Belt Switch Shorted To Ground"),
+                    ("2E 91","2E 91","Passenger Seat Belt Switch Shorted To Ground"),("2E 94","2E 94","Driver Seat Belt Switch Shorted To Battery"),("2E 97","2E 97","Passenger Seat Belt Switch Shorted To Battery"),
+                    ("2E DC","2E DC","No Left Front Impact Sensor Communication"),("2E DF","2E DF","No Right Front Impact Sensor Communication"),("2E E2","2E E2","Left Front Impact Sensor Internal 1"),
+                    ("2E E5","2E E5","Right Front Impact Sensor Internal 1"),("2E FA","2E FA","Interrogate AOSIM"),("2E FD","2E FD","No AOSIM Message"),
+                    ("2F 00","2F 00","AOSIM Driver Off Indicator Failure"),("2F 03","2F 03","AOSIM Passenger Off Indicator Failure"),("2F 06","2F 06","Module Not Configured For AOSIM"),
+                    ("2F 18","2F 18","Driver Curtain SQUIB Circuit Open"),("2F 1B","2F 1B","Passenger Curtain SQUIB Circuit Open"),("2F 1E","2F 1E","Driver Curtain SQUIB Circuit Short"),
+                    ("2F 21","2F 21","Passenger Curtain SQUIB Circuit Short"),("2F 24","2F 24","Driver Curtain SQUIB Short To Battery"),("2F 27","2F 27","Passenger Curtain SQUIB Short To Battery"),
+                    ("2F 2A","2F 2A","Driver Curtain SQUIB Short To Ground"),("2F 2D","2F 2D","Passenger Curtain SQUIB Short To Ground"),("2F 30","2F 30","Accelerometer 2"),
+                    ("2F 33","2F 33","No Driver Side Impact Sensor Communication"),("2F 36","2F 36","No Passenger Side Impact Sensor Communication"),("2F 39","2F 39","Driver Side Impact Sensor Internal 1"),
+                    ("2F 3C","2F 3C","Passenger Side Impact Sensor Internal 1")]
         default:
-            pids = [("2E 00","U0001"),("2E 10","U0010")]
+            pids = [("2E 00","U0001"),("2E 10","U0010")].map { ($0.0, $0.1, "") }
         }
 
         var foundDTCs: [DTCEntry] = []
@@ -793,13 +867,34 @@ final class WJDiagnostics: ObservableObject {
                     // capture, which reads as "not supported", not as 10 faults.
                     let unsupported = (d1 == 0xFF && d2 == 0xFF)
                     if raw != 0x0000 && raw != 0xFFFF && !unsupported {
-                        foundDTCs.append(DTCEntry(module: module, code: entry.code, description: ""))
+                        foundDTCs.append(DTCEntry(module: module, code: entry.code, description: entry.desc))
                     }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { scanNext() }
             }
         }
-        scanNext()
+
+        // Sequentially send the WJdiag-Pro airbag warm-up blocks, then start the scan.
+        func sendWarmup(_ cmds: [String], _ index: Int, _ done: @escaping () -> Void) {
+            guard index < cmds.count else { done(); return }
+            connection?.sendCommand(cmds[index], timeout: 2.0) { [weak self] _ in
+                guard self != nil else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { sendWarmup(cmds, index + 1, done) }
+            }
+        }
+
+        // Re-assert the J1850 read header (ATSH24xx22 + ATRAxx) before scanning: ensureModule
+        // skips re-init when the module is already current, so a prior clear (which leaves the
+        // header in mode 0x14) would otherwise make every 2E/2F read come back NO DATA. For the
+        // airbag (0x58) module, warm it with WJdiag-Pro's 20/24/28 block read first.
+        guard let kwp = self.kwp else { scanNext(); return }
+        kwp.setJ1850Header(module: module, mode: 0x22) {
+            if module == .espModule {
+                sendWarmup(["20 00 00", "20 01 00", "20 02 00", "24 00 00", "28 00 00", "20 07 00"], 0) { scanNext() }
+            } else {
+                scanNext()
+            }
+        }
     }
 
     // MARK: - Helpers

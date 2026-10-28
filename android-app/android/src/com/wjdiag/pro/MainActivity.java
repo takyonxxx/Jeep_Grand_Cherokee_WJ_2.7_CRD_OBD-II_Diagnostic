@@ -511,21 +511,17 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         // ECU block 0x36[2] only knows 0 (= P/N) or the engaged gear 1-5 (shown as D1-D5).
         // P / N / R are told apart only by the TCM (selector byte in block 0x30) -> TCM dashboard.
         set("e.fuelBig", f("%.1f", fuelVal), C_GREEN); set("e.fuelBig.unit", fuelUnit);
-        double pct = fuelPercent(e);                 // calibrated if the user set points, else -1
-        if (pct >= 0) {
-            double liters = pct * 78.7 / 100.0;
-            int col = liters < 8 ? C_RED : liters < 16 ? C_ORANGE : C_CYAN;
-            String tag = fuelSinglePoint() ? "  ~tahmini" : "";
-            set("e.fuelL", String.format(Locale.US, "DEPO ~%.0f L  (%%%.0f)%s", liters, pct, tag), col);
-        } else {
-            set("e.fuelL", "DEPO: kalibre edilmedi", C_DIM);
-        }
+        // WJdiag-Pro-style fuel: direct % from the ECU, no user calibration.
+        double pct = Math.max(0, Math.min(100, e.fuelLevel));
+        double liters = pct * 78.0 / 100.0;
+        int col = pct < 10 ? C_RED : pct < 25 ? C_ORANGE : C_CYAN;
+        set("e.fuelL", String.format(Locale.US, "DEPO %%%.0f  (~%.0f L)", pct, liters), col);
         set("e.map", f("%.0f", e.mapActual));
         double iqNow = e.fuelQuantity > 0 ? e.fuelQuantity : e.injectionQty;
         set("e.fuelMg", f("enj %.1f mg/str", iqNow) + "   ·   " + f("hava %.0f mg/str", e.mafFlow), C_CYAN);
         set("e.fsens", f("%.2f", e.fuelSensorVoltage));
         { TextView fv = gauges.get("e.fsens"); if (fv != null && fv.getParent() instanceof LinearLayout) { View u = ((LinearLayout) fv.getParent()).getChildAt(2);
-            if (u instanceof TextView) ((TextView) u).setText(String.format(Locale.US, "V  (ECU ham %%%.0f)", e.fuelLevel)); } }
+            if (u instanceof TextView) ((TextView) u).setText("V  (yakıt sensörü)"); } }
         set("e.injq", f("%.1f", e.fuelQuantity > 0 ? e.fuelQuantity : e.injectionQty));
         set("e.rail", f("%.0f", e.railPressure), e.railPressure > 1400 ? C_RED : C_GREEN);
         set("e.boost", f("%.2f", e.boostPressure), e.boostPressure > 2.0 ? C_RED : C_GREEN);

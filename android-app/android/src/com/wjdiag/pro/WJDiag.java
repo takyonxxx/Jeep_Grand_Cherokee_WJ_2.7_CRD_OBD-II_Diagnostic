@@ -353,8 +353,15 @@ public final class WJDiag {
                 break;
             case 0x21:
                 for (int i = 0; i < 7; i++) if (n >= (i + 1) * 2) ecu.fuelQty21[i] = Models.u16(d, i * 2) / 100.0;
-                if (n >= 16) { ecu.fuelRaw14 = Models.u16(d, 14); ecu.fuelLevel = ecu.fuelRaw14 / 10.0; }
-                if (n >= 18) ecu.fuelSensorVoltage = Models.u16(d, 16) / 100.0;
+                // Fuel (verified against real car + WJdiag-Pro screen 2026-10-28):
+                //   block 0x21 data[0-1] = fuel sender ADC; voltage = raw * 0.0048  (real: 465 -> 2.23 V)
+                //   WJdiag-Pro "Fuel Level" % is derived from that voltage; linear sender fit from two
+                //   real points (2.02 V~25 %, 2.23 V=32 %): % = (V - 1.27) * 33.3, clamped 0..100.
+                if (n >= 2) {
+                    ecu.fuelRaw14 = Models.u16(d, 0);
+                    ecu.fuelSensorVoltage = ecu.fuelRaw14 * 0.0048;
+                    ecu.fuelLevel = Math.max(0, Math.min(100, (ecu.fuelSensorVoltage - 1.27) * 33.3));
+                }
                 break;
             case 0x37:
                 if (n >= 2) ecu.egrMafSetpoint = Models.u16(d, 0);
@@ -594,25 +601,65 @@ public final class WJDiag {
     private void readJ1850DTCsByPIDScan(final WJModule module) {
         final String[][] pids;
         switch (module) {
-            case ABS: pids = new String[][]{{"2E 10","C0031"},{"2E 11","C0032"},{"2E 12","C0035"},{"2E 13","C0036"},{"2E 14","C0041"},{"2E 15","C0042"},
-                    {"2E 16","C0045"},{"2E 17","C0046"},{"2E 20","C0051"},{"2E 21","C0060"},{"2E 22","C0070"},{"2E 23","C0080"},{"2E 24","C0081"},
-                    {"2E 25","C0085"},{"2E 26","C0110"},{"2E 27","C0111"},{"2E 30","C1014"}}; break;
-            case BODY_COMPUTER: pids = new String[][]{{"2E 00","B1A00"},{"2E 01","B1A10"},{"2E 02","B2100"},{"2E 03","B2101"},{"2E 05","B2102"},{"2E 0D","B2200"},{"2E 12","B2300"}}; break;
-            case RAIN_SENSOR: pids = new String[][]{{"2E 00","B1A00"},{"2E 01","B1A10"}}; break;
+            // ABS 0x28. code = PID, description = WJdiag-Pro's exact name (res VeadABS2E<pid>00).
+            case ABS: pids = new String[][]{{"2E 10","2E 10","Left Front Sensor Circuit Failure"},{"2E 11","2E 11","Left Front Wheel Speed Signal Failure"},{"2E 12","2E 12","Right Front Sensor Circuit Failure"},{"2E 13","2E 13","Right Front Wheel Speed Signal Failure"},{"2E 14","2E 14","Left Rear Sensor Circuit Failure"},{"2E 15","2E 15","Left Rear Wheel Speed Signal Failure"},
+                    {"2E 16","2E 16","Right Rear Sensor Circuit Failure"},{"2E 17","2E 17","Right Rear Wheel Speed Signal Failure"},{"2E 20","2E 20","Pump Circuit Failure"},{"2E 21","2E 21","Valve Power Feed Failure"},{"2E 22","2E 22","CAB Internal Failure"},{"2E 23","2E 23","G-Switch / Sensor Failure"},{"2E 24","2E 24","System Under Voltage"},
+                    {"2E 25","2E 25","Cluster Lamp Failure"},{"2E 26","2E 26","BUS System Communication"},{"2E 27","2E 27","System Over Voltage"},{"2E 30","2E 30","Brake Fluid Level Switch"}}; break;
+            // BCM 0x40. code = PID, description = WJdiag-Pro primary name (res VeadBody2E<pid>00_0).
+            case BODY_COMPUTER: pids = new String[][]{{"2E 00","2E 00","BCM Eeprom Checksum Failure"},{"2E 01","2E 01","Head Lamp Sw Open Ckt"},{"2E 02","2E 02","Pcm Message Not Recd"},{"2E 03","2E 03","Ambient Temperature Sensor Ckt Open"},{"2E 05","2E 05","Wiper Park Switch Failure"},{"2E 12","2E 12","Fog Lamp Relay Ckt Shorted Hi"}}; break;
+            // Rain Sensor 0xA7. WJdiag-Pro scans PID 2E 10 (res VeadRainSensor2E1000_0..2).
+            case RAIN_SENSOR: pids = new String[][]{{"2E 10","2E 10","Rain Sensor Internal/Optical Fault"}}; break;
             // Airbag/ORC is module 0x58. Confirmed from the WJdiag-Pro ESP32 capture: its airbag
             // read = ATSH245822 + the SAME 2E/2F PID scan below; clear = ATSH245814 + "01 00 00".
-            case AIRBAG: pids = new String[][]{{"2E 10","C1010"},{"2E 13","C1013"},{"2E 16","C1016"},{"2E 19","C1019"},{"2E 1C","C101C"},{"2E 1F","C101F"},
-                    {"2E 22","C1022"},{"2E 25","C1025"},{"2E 28","C1028"},{"2E 2B","C102B"},{"2E 2E","C102E"},{"2E 37","C1037"},{"2E 3A","C103A"},
-                    {"2E 3D","C103D"},{"2E 43","C1043"},{"2E 49","C1049"},{"2E 4C","C104C"},{"2E 4F","C104F"},{"2E 52","C1052"},{"2E 70","C1070"},
-                    {"2E 73","C1073"},{"2E 76","C1076"},{"2E 79","C1079"},{"2E 7C","C107C"},{"2E 7F","C107F"},{"2E 82","C1082"},{"2E 85","C1085"},
-                    {"2E 88","C1088"},{"2E 8B","C108B"},{"2E 8E","C108E"},{"2E 91","C1091"},{"2E 94","C1094"},{"2E 97","C1097"},{"2E DC","C10DC"},
-                    {"2E DF","C10DF"},{"2E E2","C10E2"},{"2E E5","C2103"},{"2E FA","C10FA"},{"2E FD","C10FD"},{"2F 00","C2000"},{"2F 03","C2003"},
-                    {"2F 06","C2006"},{"2F 18","C2018"},{"2F 1B","C201B"},{"2F 1E","C201E"},{"2F 21","C2021"},{"2F 24","C2024"},{"2F 27","C2027"},
-                    {"2F 2A","C202A"},{"2F 2D","C202D"},{"2F 30","C2030"},{"2F 33","C2033"},{"2F 36","C2036"},{"2F 39","C2039"},{"2F 3C","C203C"}}; break;
+            // Airbag/ORC (0x58). code = PID, description = WJdiag-Pro's exact fault name
+            // (resources VeadAirbag2E1000_<scan-index>). 2E E5 = "Right Front Impact Sensor
+            // Internal 1" matches the real car / pcap. The 2E/2F scan index maps 1:1 to the name.
+            case AIRBAG: pids = new String[][]{{"2E 10","2E 10","Accelerometer 1"},{"2E 13","2E 13","Output Driver 1"},{"2E 16","2E 16","Driver SQUIB 1 Circuit Open"},
+                    {"2E 19","2E 19","Passenger SQUIB 1 Circuit Open"},{"2E 1C","2E 1C","Internal 1"},{"2E 1F","2E 1F","Driver SQUIB 1 Circuit Short"},
+                    {"2E 22","2E 22","Passenger SQUIB 1 Circuit Short"},{"2E 25","2E 25","Driver SQUIB 1 Short To Battery"},{"2E 28","2E 28","Passenger SQUIB 1 Short To Battery"},
+                    {"2E 2B","2E 2B","Driver SQUIB 1 Short To Ground"},{"2E 2E","2E 2E","Passenger SQUIB 1 Short To Ground"},{"2E 37","2E 37","Stored Energy Firing 1"},
+                    {"2E 3A","2E 3A","Warning Indicator Short"},{"2E 3D","2E 3D","Warning Indicator Open"},{"2E 43","2E 43","No PCI Transmission"},
+                    {"2E 49","2E 49","Loss Of Ignition / Run-Start"},{"2E 4C","2E 4C","Loss Of Ignition / Run Only"},{"2E 4F","2E 4F","No Cluster Message"},
+                    {"2E 52","2E 52","Cluster Message Mismatch"},{"2E 70","2E 70","Driver SQUIB 2 Circuit Open"},{"2E 73","2E 73","Passenger SQUIB 2 Circuit Open"},
+                    {"2E 76","2E 76","Driver SQUIB 2 Circuit Short"},{"2E 79","2E 79","Passenger SQUIB 2 Circuit Short"},{"2E 7C","2E 7C","Driver SQUIB 2 Short To Battery"},
+                    {"2E 7F","2E 7F","Passenger SQUIB 2 Short To Battery"},{"2E 82","2E 82","Driver SQUIB 2 Short To Ground"},{"2E 85","2E 85","Passenger SQUIB 2 Short To Ground"},
+                    {"2E 88","2E 88","Driver Seat Belt Switch Circuit Open"},{"2E 8B","2E 8B","Passenger Seat Belt Switch Circuit Open"},{"2E 8E","2E 8E","Driver Seat Belt Switch Shorted To Ground"},
+                    {"2E 91","2E 91","Passenger Seat Belt Switch Shorted To Ground"},{"2E 94","2E 94","Driver Seat Belt Switch Shorted To Battery"},{"2E 97","2E 97","Passenger Seat Belt Switch Shorted To Battery"},
+                    {"2E DC","2E DC","No Left Front Impact Sensor Communication"},{"2E DF","2E DF","No Right Front Impact Sensor Communication"},{"2E E2","2E E2","Left Front Impact Sensor Internal 1"},
+                    {"2E E5","2E E5","Right Front Impact Sensor Internal 1"},{"2E FA","2E FA","Interrogate AOSIM"},{"2E FD","2E FD","No AOSIM Message"},
+                    {"2F 00","2F 00","AOSIM Driver Off Indicator Failure"},{"2F 03","2F 03","AOSIM Passenger Off Indicator Failure"},{"2F 06","2F 06","Module Not Configured For AOSIM"},
+                    {"2F 18","2F 18","Driver Curtain SQUIB Circuit Open"},{"2F 1B","2F 1B","Passenger Curtain SQUIB Circuit Open"},{"2F 1E","2F 1E","Driver Curtain SQUIB Circuit Short"},
+                    {"2F 21","2F 21","Passenger Curtain SQUIB Circuit Short"},{"2F 24","2F 24","Driver Curtain SQUIB Short To Battery"},{"2F 27","2F 27","Passenger Curtain SQUIB Short To Battery"},
+                    {"2F 2A","2F 2A","Driver Curtain SQUIB Short To Ground"},{"2F 2D","2F 2D","Passenger Curtain SQUIB Short To Ground"},{"2F 30","2F 30","Accelerometer 2"},
+                    {"2F 33","2F 33","No Driver Side Impact Sensor Communication"},{"2F 36","2F 36","No Passenger Side Impact Sensor Communication"},{"2F 39","2F 39","Driver Side Impact Sensor Internal 1"},
+                    {"2F 3C","2F 3C","Passenger Side Impact Sensor Internal 1"}}; break;
             default: pids = new String[][]{{"2E 00","U0001"},{"2E 10","U0010"}};
         }
         final List<DtcEntry> found = new ArrayList<>();
-        scanNext(module, pids, 0, found);
+        // Re-assert the J1850 read header (ATSH24xx22 + ATRAxx) before scanning.
+        // ensureModule() short-circuits re-init when the module is already current, so a
+        // previous clear/auto-clear (which leaves the header in mode 0x14) would otherwise
+        // make every 2E/2F read come back NO DATA. WJdiag-Pro also warms the airbag module
+        // with a 20/24/28 identity+status block read first — replicate that for 0x58.
+        kwp.setJ1850Header(module, 0x22, new Runnable() {
+            @Override public void run() {
+                if (module == WJModule.AIRBAG) {
+                    String[] warm = {"20 00 00", "20 01 00", "20 02 00", "24 00 00", "28 00 00", "20 07 00"};
+                    sendWarmup(warm, 0, new Runnable() { @Override public void run() { scanNext(module, pids, 0, found); } });
+                } else scanNext(module, pids, 0, found);
+            }
+        });
+    }
+
+    /** Sequentially send the WJdiag-Pro airbag warm-up blocks before the DTC scan. */
+    private void sendWarmup(final String[] cmds, final int i, final Runnable done) {
+        if (i >= cmds.length) { done.run(); return; }
+        conn.sendCommand(cmds[i], 2000, new Elm327.Callback() {
+            @Override public void onResponse(String r) {
+                conn.log("[DTC warm] " + cmds[i] + " -> " + r.replace("\r", " | "));
+                h.postDelayed(new Runnable() { @Override public void run() { sendWarmup(cmds, i + 1, done); } }, 80);
+            }
+        });
     }
 
     private void scanNext(final WJModule module, final String[][] pids, final int i, final List<DtcEntry> found) {
@@ -631,7 +678,10 @@ public final class WJDiag {
                     int d0 = b[idx62 + 1] & 0xFF, d1 = b[idx62 + 2] & 0xFF, d2 = b[idx62 + 3] & 0xFF;
                     int raw = (d0 << 8) | d1;
                     boolean unsupported = d1 == 0xFF && d2 == 0xFF;
-                    if (raw != 0 && raw != 0xFFFF && !unsupported) found.add(new DtcEntry(module, pids[i][1], DtcNames.describe(pids[i][1])));
+                    if (raw != 0 && raw != 0xFFFF && !unsupported) {
+                        String desc = pids[i].length > 2 ? pids[i][2] : DtcNames.describe(pids[i][1]);
+                        found.add(new DtcEntry(module, pids[i][1], desc));
+                    }
                 }
                 conn.log("[DTC " + module.hex() + "] " + pids[i][0] + " -> " + r.replace("\r", " | "));
                 setDTCStatus(module.displayName + ": taranıyor " + (i + 1) + "/" + pids.length + "…");

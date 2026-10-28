@@ -40,6 +40,27 @@ AK_T2 = [0x02,0x03,0x00,0x01,0x06,0x07,0x04,0x05,0x0A,0x0B,0x08,0x09,0x0E,0x0F,0
 AK_T3 = [0x90,0x80,0xF0,0xE0,0xD0,0xC0,0x30,0x20,0x10,0x00,0x70,0x60,0x50,0x40,0xB0,0xA0]
 AK_T4 = [0x0D,0x0C,0x0F,0x0E,0x09,0x08,0x0B,0x0A,0x05,0x04,0x07,0x06,0x01,0x00,0x03,0x02]
 
+# Gercek arac ECU canli veri anlik goruntusu (car_log 2026-10-28 14:31, WJdiag-Pro ekraniyla
+# dogrulandi: RPM 751, Fuel %32/2.23V, Boost 0.916Bar, Coolant 56.7C, Battery 13.5V ...).
+# kwp_read_block ECU baglaminda bu ham baytlari dondurur -> emulator gercek aracin degerlerini verir.
+_REAL_ECU_HEX = {
+ 0x12:"0C 04 0B 9D 08 B7 08 B7 00 00 02 EC 00 00 02 3B 03 8C 0B E0 02 51 01 2A 00 58 09 7F 03 A0 00 12",
+ 0x13:"03 94 02 4E 02 E4 02 E4 00 00 08 B7 00 00 02 53 FF FA 0B A2 00 50 03 FD 0B 92",
+ 0x16:"01 2C 21 34 01 2C 00 00 00 00 00 00 00 00 00 00 01 F4 00 00 27 10 07 95 00 00 00 00 00 00 00 00 01 F4 00 00 00 00",
+ 0x20:"02 C0 02 9A 03 FE 00 00 00 92 00 48 01 9D 01 63 01 09 02 E5 02 50 00 8D 00 A9 03 A0 02 35",
+ 0x21:"01 D1 03 E4 03 FD 00 02 01 2A 03 FE 02 51 01 F0 00 A9 02 0B",
+ 0x22:"0C 04 0B 9D 08 B7 08 B7 00 00 00 00 02 3E 03 8E 0B 97 03 94 02 51 02 E4 02 E4 02 B1 08 B7 00 00",
+ 0x23:"09 7F 02 52 FF FA 0B A2 03 A0 02 51 00 4F 00 57 03 FD 01 2A",
+ 0x26:"00 00 00 00 00 00 79 6D 7F FF 00 00 2F A0 00 29 00 29 00 29 00 29 00 48 00 23 00 00 0B FF",
+ 0x28:"02 EF 03 E6 02 EE 02 EE 02 EE 02 EE 02 EE 00 00 FF FE 00 1A FF A0 FF E0 00 68 00 00",
+ 0x30:"02 EE 00 00 00 00 32 DD 32 DE 03 B1 00 00 00 00 00 00 0B AA 00 00 00 00",
+ 0x32:"03 E6 0E 7F 00 00 00 00 0D 50 03 E6 03 E6 01 B8 01 C6 01 1F 00 5E 02 9A 03 54 00 00 00 00 00 00",
+ 0x34:"00 08 10 00 00 00 00 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 04 00 00",
+ 0x36:"00 00 00 00 02 DE 13 E7 03 8D 03 94 00 00 00 00 03 9B 00 00 02 B1 0B BB FF FF 13 E7 00 50 FF B9 00 2D 88 F0 00 00",
+ 0x37:"0B A2 11 FD 00 79 00 89 00 08 00 00 00 00 00 00 00 5D 00 00 00 00 01 05 00 40 00 00 00 00 00 01 00 00",
+}
+REAL_ECU = {b: [int(x,16) for x in h.split()] for b, h in _REAL_ECU_HEX.items()}
+
 
 def millis():
     return int(time.monotonic() * 1000)
@@ -121,6 +142,7 @@ class Elm327Emu:
         self.ecuUnlocked = False
         self.tcmUnlocked = False
         self.ecuDtcCleared = False
+        self.tcmDtcCleared = False
         self.j1850DtcCleared = {}
         self.lastHeader = ""
         self.cmdCount = 0
@@ -600,14 +622,20 @@ class Elm327Emu:
             return self.kwp_ecu_id(data[0] if dlen > 0 else 0x86)
         if sid in (0x17, 0x18):
             if self.klTarget == 0x20:
-                if self.ecuDtcCleared:
+                # TCM DTC (independent from ECU): real car P2210 "ID 17 Shifter signal invalid"
+                if self.tcmDtcCleared:
                     return W([0x58, 0x00])
                 return W([0x58, 0x01, 0x22, 0x10, 0x20])
+            # ECU DTC (independent from TCM): real car P0702 "Transmission Control"
             if self.ecuDtcCleared:
                 return W([0x58, 0x00])
             return W([0x58, 0x01, 0x07, 0x02, 0xE0])
         if sid == 0x14:
-            self.ecuDtcCleared = True
+            # clear only the addressed module so TCM/ECU states stay independent
+            if self.klTarget == 0x20:
+                self.tcmDtcCleared = True
+            else:
+                self.ecuDtcCleared = True
             return W([0x54, 0x00, 0x00])
         if sid == 0x30:
             if self.klTarget == 0x20:
@@ -688,7 +716,9 @@ class Elm327Emu:
                 return W([0x61,0x32, self._simSpeed & 0xFF] + [0]*12)
             return W([0x61, blk] + [0]*16)
 
-        # ECU blocks
+        # ECU blocks - gercek arac anlik degerleri (WJdiag-Pro ekraniyla ayni)
+        if blk in REAL_ECU:
+            return W([0x61, blk] + REAL_ECU[blk])
         if blk == 0x12:
             self.tick()
             cr = int((self.coolantTemp + 273.1) * 10)
@@ -745,7 +775,7 @@ class Elm327Emu:
             self.tick()
             wish = u16clamp(sim.driver * 100); lim = u16clamp(sim.limiter * 100)
             dem = u16clamp(sim.fuel * 100); drv = u16clamp((sim.pedal / 100.0) * 52.0 * 100)
-            return W([0x61,0x21, hi8(wish),lo8(wish), hi8(lim),lo8(lim), hi8(dem),lo8(dem), hi8(drv),lo8(drv),
+            return W([0x61,0x21, 0x01,0xD1, hi8(lim),lo8(lim), hi8(dem),lo8(dem), hi8(drv),lo8(drv),
                       0x01,0x2A, 0x01,0x2A, hi8(lim),lo8(lim), 0x01,0xEF, 0x00,0xB4, 0x01,0x5D])
         if blk == 0x16:
             return W([0x61,0x16, 0x01,0x2C, 0x21,0x40] + [0]*18 + [0x27,0x10, 0x07,0xDA] + [0]*6 + [0,0, 0x01,0xF4, 0,0, 0,0])

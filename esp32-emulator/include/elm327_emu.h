@@ -87,6 +87,7 @@ private:
     uint8_t  klTarget     = 0x20;
     bool     ecuUnlocked  = false;
     bool     ecuDtcCleared = false;
+    bool     tcmDtcCleared = false;
     bool     fuelCorrActive = false;  // set by routine 31 25 00; block 0x28 corrections only then (real car)
     bool     tcmUnlocked  = false;
     uint16_t ecuSeed      = 0;
