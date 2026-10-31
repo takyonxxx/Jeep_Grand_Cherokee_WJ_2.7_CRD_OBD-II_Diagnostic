@@ -29,25 +29,45 @@ public final class Kwp2000 {
     /** ECU 0x15: ATZ ATZ ATE1 ATH1 ATWM8115F13E ATSH8115F1 ATSP5 ATFI 81 */
     public void initECU(final BoolCb cb) {
         String[] cmds = {"ATZ", "ATZ", "ATE1", "ATH1", "ATWM8115F13E", "ATSH8115F1", "ATSP5"};
-        sendSequence(cmds, 0, new Runnable() { @Override public void run() { busInit("ECU 0x15", cb); } });
+        sendSequence(cmds, 0, new Runnable() { @Override public void run() { busInit("ECU 0x15", true, cb); } });
     }
 
-    /** TCM 0x20: double ATWM for reliability. */
+    /** TCM 0x20: WJdiag-Pro birebir -> ATWM8120F13E (x2), ATSH8120F1, ATSP5, 81 (x2).
+     *  ATFI YOK (ELM ATSP5'te 81 ile fast-init'i kendi yapar), guvenlik YOK.
+     *  Cift ATWM ve cift 81 oturumu 18 02'den once saglamlastirir (pcap ile dogrulandi). */
     public void initTCM(final BoolCb cb) {
         String[] cmds = {"ATZ", "ATZ", "ATE1", "ATH1", "ATWM8120F13E", "ATWM8120F13E", "ATSH8120F1", "ATSP5"};
-        sendSequence(cmds, 0, new Runnable() { @Override public void run() { busInit("TCM 0x20", cb); } });
+        sendSequence(cmds, 0, new Runnable() { @Override public void run() { busInit("TCM 0x20", false, cb); } });
     }
 
-    private void busInit(final String name, final BoolCb cb) {
-        conn.sendCommand("ATFI", 5000, new Elm327.Callback() {
-            @Override public void onResponse(String r) {
-                conn.sendCommand("81", 3000, new Elm327.Callback() {
-                    @Override public void onResponse(String r2) {
-                        boolean ok = Models.hasToken(r2, 0xC1) || r2.contains("BUS INIT: OK");
-                        log(name + " K-Line init " + (ok ? "OK" : "BAŞARISIZ: " + r2));
-                        cb.on(ok);
-                    }
-                });
+    /** fastInit=true: ATFI + 81 (ECU). fastInit=false: 81 iki kez, ELM otomatik init (TCM). */
+    private void busInit(final String name, final boolean fastInit, final BoolCb cb) {
+        if (fastInit) {
+            conn.sendCommand("ATFI", 5000, new Elm327.Callback() {
+                @Override public void onResponse(String r) { startComm(name, false, cb); }
+            });
+        } else {
+            startComm(name, true, cb);   // TCM: 81'i iki kez gonder (WJdiag-Pro gibi)
+        }
+    }
+
+    private void startComm(final String name, final boolean repeat, final BoolCb cb) {
+        conn.sendCommand("81", 5000, new Elm327.Callback() {
+            @Override public void onResponse(String r2) {
+                boolean ok = Models.hasToken(r2, 0xC1) || r2.contains("BUS INIT: OK");
+                if (ok && repeat) {
+                    // Ikinci 81: ilk gercek istekten (18 02) once oturumu dogrula.
+                    conn.sendCommand("81", 5000, new Elm327.Callback() {
+                        @Override public void onResponse(String r3) {
+                            boolean ok2 = Models.hasToken(r3, 0xC1) || r3.contains("BUS INIT: OK");
+                            log(name + " K-Line init " + (ok2 ? "OK" : "BAŞARISIZ: " + r3));
+                            cb.on(ok2);
+                        }
+                    });
+                } else {
+                    log(name + " K-Line init " + (ok ? "OK" : "BAŞARISIZ: " + r2));
+                    cb.on(ok);
+                }
             }
         });
     }
@@ -159,10 +179,23 @@ public final class Kwp2000 {
         });
     }
 
-    /** ESP 0x58 uses "01 00 00" and needs up to 10 attempts; others "FF 00 00". */
+    /** Airbag 0x58 uses "01 00 00" (+retries); ABS 0x28 needs a 0x10 "02 00 00" pre-step
+     *  before the 0x14 clear (WJdiag-Pro capture); others just "FF 00 00". */
     public void clearJ1850DTCs(final WJModule m, final BoolCb cb) {
-        // 0x58 (ESP and airbag/ORC) clear with "01 00 00" and needs several retries
-        // until the positive 54; other modules use "FF 00 00".
+        if (m == WJModule.ABS) {
+            setJ1850Header(m, 0x10, new Runnable() {
+                @Override public void run() {
+                    conn.sendCommand("02 00 00", 2000, new Elm327.Callback() {
+                        @Override public void onResponse(String r) { clearJ1850Main(m, cb); }
+                    });
+                }
+            });
+        } else clearJ1850Main(m, cb);
+    }
+
+    private void clearJ1850Main(final WJModule m, final BoolCb cb) {
+        // 0x58 (airbag/ORC) clear with "01 00 00" and needs several retries until the
+        // positive 54; other modules use "FF 00 00".
         boolean m58 = (m == WJModule.AIRBAG);   // 0x58 = airbag/ORC, "01 00 00" + retry
         final String clearCmd = m58 ? "01 00 00" : "FF 00 00";
         final int maxAttempts = m58 ? 10 : 1;

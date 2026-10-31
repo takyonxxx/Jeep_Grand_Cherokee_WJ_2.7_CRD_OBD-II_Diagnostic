@@ -120,11 +120,10 @@ public final class WJDiag {
                 }
             });
         } else {
+            // TCM DTC oku/sil ve canlı veri güvenlik istemiyor (WJdiag-Pro da göndermiyor);
+            // araya 27 01/27 02 koymak oturumu geciktirip 18 02'den önce düşürüyordu.
             kwp.initTCM(new Kwp2000.BoolCb() {
-                @Override public void on(boolean ok) {
-                    if (!ok) { finish.on(false); return; }
-                    kwp.securityUnlockTCM(new Kwp2000.BoolCb() { @Override public void on(boolean u) { finish.on(true); } });
-                }
+                @Override public void on(boolean ok) { finish.on(ok); }
             });
         }
     }
@@ -643,21 +642,38 @@ public final class WJDiag {
         // with a 20/24/28 identity+status block read first — replicate that for 0x58.
         kwp.setJ1850Header(module, 0x22, new Runnable() {
             @Override public void run() {
-                if (module == WJModule.AIRBAG) {
-                    String[] warm = {"20 00 00", "20 01 00", "20 02 00", "24 00 00", "28 00 00", "20 07 00"};
-                    sendWarmup(warm, 0, new Runnable() { @Override public void run() { scanNext(module, pids, 0, found); } });
-                } else scanNext(module, pids, 0, found);
+                String[] warm = warmupFor(module);
+                if (warm != null) sendWarmup(warm, 0, new Runnable() { @Override public void run() { scanNext(module, pids, 0, found); } });
+                else scanNext(module, pids, 0, found);
             }
         });
     }
 
-    /** Sequentially send the WJdiag-Pro airbag warm-up blocks before the DTC scan. */
-    private void sendWarmup(final String[] cmds, final int i, final Runnable done) {
+    /** Per-module J1850 DTC-read warm-up blocks (20/24/28), captured 1:1 from WJdiag-Pro.
+     *  WJdiag-Pro sends these identity/status reads to every J1850 module before the 2E/2F scan. */
+    private String[] warmupFor(WJModule m) {
+        switch (m) {
+            case ABS:           return new String[]{"20 00 00","20 00 00","20 01 00","20 02 00","24 00 00","28 01 00","20 07 00","20 08 00"};
+            case BODY_COMPUTER: return new String[]{"20 00 00","20 01 00","20 02 00","24 00 00","28 00 00","28 02 00","28 07 00","20 06 00"};
+            case AIRBAG:        return new String[]{"20 00 00","20 01 00","20 02 00","24 00 00","28 00 00","20 07 00"};
+            case RAIN_SENSOR:   return new String[]{"20 00 00","20 01 00","20 02 00","24 00 00","28 01 00"};
+            default:            return null;
+        }
+    }
+
+    /** Sequentially send the WJdiag-Pro warm-up blocks before the DTC scan. */
+    private void sendWarmup(final String[] cmds, final int i, final Runnable done) { sendWarmup(cmds, i, 0, done); }
+
+    private void sendWarmup(final String[] cmds, final int i, final int retry, final Runnable done) {
         if (i >= cmds.length) { done.run(); return; }
         conn.sendCommand(cmds[i], 2000, new Elm327.Callback() {
             @Override public void onResponse(String r) {
                 conn.log("[DTC warm] " + cmds[i] + " -> " + r.replace("\r", " | "));
-                h.postDelayed(new Runnable() { @Override public void run() { sendWarmup(cmds, i + 1, done); } }, 80);
+                // WJdiag-Pro resends a warm block once when it comes back 7F (pending/conditions-not-correct).
+                if (Models.hasToken(r, 0x7F) && retry < 1)
+                    h.postDelayed(new Runnable() { @Override public void run() { sendWarmup(cmds, i, retry + 1, done); } }, 120);
+                else
+                    h.postDelayed(new Runnable() { @Override public void run() { sendWarmup(cmds, i + 1, 0, done); } }, 80);
             }
         });
     }
