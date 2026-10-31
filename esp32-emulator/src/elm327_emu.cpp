@@ -341,6 +341,17 @@ String ELM327Emu::processCommand(const String &rawCmd) {
             // Return NRC 0x21 instead — Qt must retry
             resp = "26 " + hex8(targetModule) + " 7F 22 21 00 78";
         }
+        // Real car (ABS 0x28, 2026-10-31 log): 2E DTC reads come back "7F 22 21" 0-3 times in a
+        // row before the real answer, so the client must retry per PID. Deterministic by PID.
+        if (targetModule == 0x28 && headerMode == 0x22 && cmdUpper.startsWith("2E ") && nBytes >= 2) {
+            if (cmdUpper != absLastCmd) { absLastCmd = cmdUpper; absNrcLeft = bytes[1] & 3; }
+            if (absNrcLeft > 0) { absNrcLeft--; resp = "26 28 7F 22 21 00 78"; }
+        }
+        // Flush a late reply (airbag clear) in front of this command's response
+        if (lateResp.length() > 0) {
+            resp = lateResp + "\r" + (resp.length() > 0 ? resp : String("NO DATA"));
+            lateResp = "";
+        }
 
         return resp;
     }
@@ -356,16 +367,21 @@ String ELM327Emu::j1850_generic(uint8_t t, uint8_t m, uint8_t sid, const uint8_t
     // Mode 0x14 DTC Clear
     if (m == 0x14) {
         if (t == 0x58) {
-            // ESP: real vehicle needs ~7 retries before positive response
+            // Real car 2026-10-31: the ORC ignores the first "01 00 00" requests (NO DATA at the
+            // ELM's 200 ms timeout); its positive "54 01 00 00" then arrives late and shows up in
+            // front of the NEXT command's reply. 3 x NO DATA, then the late 54.
             espClearAttempts++;
-            if (espClearAttempts >= 7) {
+            if (espClearAttempts >= 4) {
                 j1850DtcCleared[t] = true;
                 espClearAttempts = 0;
-                return "26 58 54 01 00 00 21";  // positive response 
+                lateResp = "26 58 54 01 00 00 21";
             }
-            return "NO DATA";  // first 6 attempts return NO DATA
+            return "NO DATA";
         }
         j1850DtcCleared[t] = true;
+        // Real-car checksums where captured (BCM 0x40, ABS 0x28)
+        if (t == 0x40) return "26 40 54 FF 00 00 39";
+        if (t == 0x28) return "26 28 54 FF 00 00 10";
         return "26 " + hex8(t) + " 54 FF 00 00 DD";
     }
     // Mode 0x18 DTC Read
@@ -389,7 +405,11 @@ String ELM327Emu::j1850_generic(uint8_t t, uint8_t m, uint8_t sid, const uint8_t
     }
 
     // Mode 0x10 ECUReset
-    if (m == 0x10) return "26 " + hex8(t) + " 50 " + hex8(sid);
+    // Mode 0x10 StartDiagnosticSession: the ABS echoes the request bytes (real car: "26 28 50 02 00 00 53")
+    if (m == 0x10) {
+        if (t == 0x28 && sid == 0x02) return "26 28 50 02 00 00 53";
+        return "26 " + hex8(t) + " 50 " + hex8(sid) + " 00 00 DD";
+    }
     // Mode 0x11 DiagSession
     if (m == 0x11) {
         if (sid == 0x01) return "26 " + hex8(t) + " 51 01";
@@ -1433,7 +1453,14 @@ String ELM327Emu::kwpProcess(uint8_t sid, const uint8_t *data, int dlen) {
     }
     // ClearDTC — only the module being addressed, so TCM/ECU states stay independent
     if (sid == 0x14) {
-        if (klTarget == 0x20) tcmDtcCleared = true; else ecuDtcCleared = true;
+        if (klTarget == 0x20) {
+            // Real car 2026-10-31: the NAG1 answers "7F 14 78" (response pending) and the
+            // clear shows up as "58 00" on the next 18 02 read — never a 54 of its own.
+            tcmDtcCleared = true;
+            uint8_t r[] = {0x7F, 0x14, 0x78};
+            return kwpWrap(r, 3);
+        }
+        ecuDtcCleared = true;
         uint8_t r[] = {0x54, 0x00, 0x00};
         return kwpWrap(r, 3);
     }

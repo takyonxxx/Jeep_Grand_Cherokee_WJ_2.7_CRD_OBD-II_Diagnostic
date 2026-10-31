@@ -527,8 +527,13 @@ public final class WJDiag {
 
     private void setDTCStatus(String s) { dtcStatus = s; log("[DTC] " + s); notifyDtc(); }
 
+    /** Modules whose codes were cleared (positive 54) in this session: a code read again
+     *  afterwards is a fault that is present right now (shown as AKTİF, not KAYITLI). */
+    private final java.util.Set<WJModule> clearedThisSession = new java.util.HashSet<>();
+
     public void readDTCs(final WJModule module) {
         setDTCStatus(module.displayName + ": okunuyor…");
+        setActiveModule(module);   // J1850 module: stop the K-Line "81" keepalive, it hijacks late J1850 replies
         ensureModule(module, new Kwp2000.BoolCb() {
             @Override public void on(boolean ok) {
                 if (!ok) { setDTCStatus(module.displayName + ": init başarısız"); return; }
@@ -547,6 +552,7 @@ public final class WJDiag {
 
     public void clearDTCs(final WJModule module) {
         setDTCStatus(module.displayName + ": siliniyor…");
+        setActiveModule(module);   // see readDTCs: no "81" keepalive while talking J1850
         ensureModule(module, new Kwp2000.BoolCb() {
             @Override public void on(boolean ok) {
                 if (!ok) { setDTCStatus(module.displayName + ": init başarısız"); return; }
@@ -554,6 +560,7 @@ public final class WJDiag {
                     @Override public void on(boolean ok2) {
                         if (ok2) {
                             removeDtcs(module);
+                            clearedThisSession.add(module);
                             setDTCStatus(module.displayName + ": silindi");
                             h.postDelayed(new Runnable() { @Override public void run() { readDTCs(module); } }, 500);
                         } else setDTCStatus(module.displayName + ": silme başarısız (54 yok)");
@@ -590,7 +597,8 @@ public final class WJDiag {
         int found = 0;
         for (int i = idx + 2; i + 2 < b.length && found < count; i += 3) {
             String code = decodeDTC(b[i] & 0xFF, b[i + 1] & 0xFF);
-            dtcList.add(new DtcEntry(module, code, DtcNames.describe(code)));
+            int st = b[i + 2] & 0xFF;   // KWP statusOfDTC byte (real car: TCM 0x20, ECU 0xE0)
+            dtcList.add(new DtcEntry(module, code, DtcNames.describe(code), String.format("0x%02X", st), clearedThisSession.contains(module)));
             found++;
         }
         notifyDtc();
@@ -696,7 +704,7 @@ public final class WJDiag {
                     boolean unsupported = d1 == 0xFF && d2 == 0xFF;
                     if (raw != 0 && raw != 0xFFFF && !unsupported) {
                         String desc = pids[i].length > 2 ? pids[i][2] : DtcNames.describe(pids[i][1]);
-                        found.add(new DtcEntry(module, pids[i][1], desc));
+                        found.add(new DtcEntry(module, pids[i][1], desc, String.format("%02X %02X %02X", d0, d1, d2), clearedThisSession.contains(module)));
                     }
                 }
                 conn.log("[DTC " + module.hex() + "] " + pids[i][0] + " -> " + r.replace("\r", " | "));

@@ -49,7 +49,14 @@ public final class Models {
         public final WJModule module;
         public final String code;
         public final String description;
-        public DtcEntry(WJModule m, String c, String d) { module = m; code = c; description = d; }
+        /** Raw status as the module reported it: K-Line "0x20" (statusOfDTC byte), J1850 "00 8F 00" (62 data bytes). */
+        public final String statusHex;
+        /** true = read again after a successful clear in this session, i.e. the fault is present right now. */
+        public final boolean active;
+        public DtcEntry(WJModule m, String c, String d) { this(m, c, d, "", false); }
+        public DtcEntry(WJModule m, String c, String d, String statusHex, boolean active) {
+            module = m; code = c; description = d; this.statusHex = statusHex; this.active = active;
+        }
     }
 
     /** Actuator button definition: hold (on/off) when offCmd != null, pulse otherwise. */

@@ -98,6 +98,12 @@ private:
     bool j1850DtcCleared[256] = {};
     int espClearAttempts = 0;
     int j1850NoiseCounter = 0;  // bus noise injection counter
+    // Real car 2026-10-31: the ORC's positive clear reply arrives ~0.5-0.8 s late and the ELM
+    // delivers it in front of the NEXT command's response. Queued here, flushed on the next J1850 cmd.
+    String lateResp;
+    // Real car: the ABS answers a burst of NRC 21 (busyRepeatRequest) on 2E DTC reads, 0-3 per PID.
+    String absLastCmd;
+    int    absNrcLeft = 0;
 
     float  transTemp    = 77.0f;
     uint8_t gearSel     = 8;

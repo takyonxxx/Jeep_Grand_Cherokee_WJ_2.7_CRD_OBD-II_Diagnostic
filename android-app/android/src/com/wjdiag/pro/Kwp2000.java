@@ -196,17 +196,27 @@ public final class Kwp2000 {
     private void clearJ1850Main(final WJModule m, final BoolCb cb) {
         // 0x58 (airbag/ORC) clear with "01 00 00" and needs several retries until the
         // positive 54; other modules use "FF 00 00".
-        boolean m58 = (m == WJModule.AIRBAG);   // 0x58 = airbag/ORC, "01 00 00" + retry
+        final boolean m58 = (m == WJModule.AIRBAG);   // 0x58 = airbag/ORC, "01 00 00" + retry
         final String clearCmd = m58 ? "01 00 00" : "FF 00 00";
         final int maxAttempts = m58 ? 10 : 1;
         setJ1850Header(m, 0x14, new Runnable() {
-            @Override public void run() { attempt(1); }
+            @Override public void run() {
+                // Real car (2026-10-31): the ORC answers "54 01 00 00" ~0.5-0.8 s after the
+                // request; with the ELM's default 200 ms timeout every attempt came back
+                // NO DATA and the late 54 surfaced on the next command. Give the ELM 1 s.
+                if (m58) conn.sendCommand("ATST FF", 2000, new Elm327.Callback() { @Override public void onResponse(String r) { attempt(1); } });
+                else attempt(1);
+            }
+            void finish(final boolean ok) {
+                if (!m58) { cb.on(ok); return; }
+                conn.sendCommand("ATST 32", 2000, new Elm327.Callback() { @Override public void onResponse(String r) { cb.on(ok); } });   // back to the ELM default
+            }
             void attempt(final int n) {
                 conn.sendCommand(clearCmd, 3000, new Elm327.Callback() {
                     @Override public void onResponse(String r) {
-                        if (Models.hasToken(r, 0x54)) { cb.on(true); return; }
+                        if (Models.hasToken(r, 0x54)) { finish(true); return; }
                         if (n < maxAttempts) h.postDelayed(new Runnable() { @Override public void run() { attempt(n + 1); } }, 400);
-                        else cb.on(false);
+                        else finish(false);
                     }
                 });
             }

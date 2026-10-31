@@ -700,14 +700,22 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
             LinearLayout r = new LinearLayout(this); r.setOrientation(LinearLayout.HORIZONTAL); r.setGravity(Gravity.CENTER_VERTICAL);
             r.setBackgroundResource(R.drawable.cell_bg); r.setPadding(dp(10), dp(8), dp(10), dp(8));
             TextView code = text(d.code, 17, C_ORANGE, true); code.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+            // AKTİF = read again after a successful clear (fault is present now); KAYITLI = in the module's memory
+            TextView state = text(d.active ? "AKTİF" : "KAYITLI", 11, d.active ? C_RED : C_AMBER, true); state.setPadding(dp(10), 0, 0, 0);
+            TextView raw = text(d.statusHex.isEmpty() ? "" : "[" + d.statusHex + "]", 11, C_DIM, false); raw.setPadding(dp(6), 0, 0, 0);
+            raw.setTypeface(Typeface.MONOSPACE);
             TextView desc = text(d.description, 12, C_DIM, false); desc.setPadding(dp(12), 0, 0, 0);
-            r.addView(code); r.addView(desc, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            r.addView(code); r.addView(state); r.addView(raw); r.addView(desc, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp.setMargins(0, 0, 0, dp(4));
             dtcList.addView(r, lp);
         }
         if (n == 0) {
             TextView t = text("✓  Kayıtlı arıza kodu yok", 14, C_GREEN, false); t.setGravity(Gravity.CENTER); t.setPadding(0, dp(30), 0, 0);
             dtcList.addView(t);
+        } else {
+            TextView legend = text("AKTİF: silindikten sonra yeniden okundu (arıza şu an var)  ·  KAYITLI: modül hafızasındaki kod  ·  [..]: modülün durum baytı", 10, C_DIM, false);
+            legend.setPadding(dp(4), dp(6), dp(4), 0);
+            dtcList.addView(legend);
         }
         dtcCount.setText(m.displayName + ": " + n + " arıza kodu");
         dtcStatus.setText(diag.dtcStatus);

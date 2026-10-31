@@ -432,6 +432,19 @@ class Elm327Emu:
                 resp = noise + "\r" + resp
             if self.headerMode == 0x22 and self.j1850NoiseCounter % 20 == 3 and resp.find("62") > 0:
                 resp = "26 " + hex8(self.targetModule) + " 7F 22 21 00 78"
+            # Real car (ABS 0x28, 2026-10-31 log): 2E DTC reads come back "7F 22 21" 0-3 times
+            # in a row before the real answer, so the client must retry per PID. Deterministic by PID.
+            if self.targetModule == 0x28 and self.headerMode == 0x22 and cmdUpper.startswith("2E ") and len(data) >= 2:
+                if cmdUpper != getattr(self, "absLastCmd", None):
+                    self.absLastCmd = cmdUpper
+                    self.absNrcLeft = data[1] & 3
+                if getattr(self, "absNrcLeft", 0) > 0:
+                    self.absNrcLeft -= 1
+                    resp = "26 28 7F 22 21 00 78"
+            late = getattr(self, "lateResp", None)
+            if late:
+                self.lateResp = None
+                resp = late + "\r" + (resp or "NO DATA")
             return resp
         return self.kwp_process(data[0], data[1:])
 
@@ -441,13 +454,18 @@ class Elm327Emu:
         val = data[1] if len(data) > 1 else 0
         if m == 0x14:
             if t == 0x58:
+                # Real car 2026-10-31: the ORC does not answer the first "01 00 00" requests at
+                # all; the positive "54 01 00 00" then arrives late and the ELM delivers it with
+                # the NEXT command's response. Emulate exactly that (3 x NO DATA, then a late 54).
                 self.espClearAttempts += 1
-                if self.espClearAttempts >= 7:
+                if self.espClearAttempts >= 4:
                     self.j1850DtcCleared[t] = True
                     self.espClearAttempts = 0
-                    return "26 58 54 01 00 00 21"
+                    self.lateResp = "26 58 54 01 00 00 21"
                 return "NO DATA"
             self.j1850DtcCleared[t] = True
+            if t == 0x40: return "26 40 54 FF 00 00 39"   # real-car checksums
+            if t == 0x28: return "26 28 54 FF 00 00 10"
             return "26 " + hex8(t) + " 54 FF 00 00 DD"
         if m == 0x18:
             if self.j1850DtcCleared.get(t):
@@ -463,7 +481,10 @@ class Elm327Emu:
             if t == 0xC0: return "26 C0 58 01 C0 10 20 DD"
             return "26 " + hex8(t) + " 58 00"
         if m == 0x10:
-            return "26 " + hex8(t) + " 50 " + hex8(sid)
+            # StartDiagnosticSession: the ABS echoes the request bytes (real car "26 28 50 02 00 00 53")
+            if t == 0x28 and sid == 0x02:
+                return "26 28 50 02 00 00 53"
+            return "26 " + hex8(t) + " 50 " + hex8(sid) + " 00 00 DD"
         if m == 0x11:
             if sid == 0x01:
                 return "26 " + hex8(t) + " 51 01"
@@ -633,9 +654,11 @@ class Elm327Emu:
         if sid == 0x14:
             # clear only the addressed module so TCM/ECU states stay independent
             if self.klTarget == 0x20:
+                # Real car 2026-10-31: NAG1 answers "7F 14 78" (response pending); the clear
+                # shows up as "58 00" on the next 18 02 read, never as a 54 of its own.
                 self.tcmDtcCleared = True
-            else:
-                self.ecuDtcCleared = True
+                return W([0x7F, 0x14, 0x78])
+            self.ecuDtcCleared = True
             return W([0x54, 0x00, 0x00])
         if sid == 0x30:
             if self.klTarget == 0x20:
