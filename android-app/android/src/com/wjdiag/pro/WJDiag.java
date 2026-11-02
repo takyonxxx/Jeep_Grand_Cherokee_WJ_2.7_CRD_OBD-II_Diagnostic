@@ -352,15 +352,16 @@ public final class WJDiag {
                 break;
             case 0x21:
                 for (int i = 0; i < 7; i++) if (n >= (i + 1) * 2) ecu.fuelQty21[i] = Models.u16(d, i * 2) / 100.0;
-                // Fuel (verified against real car + WJdiag-Pro screen 2026-10-28):
-                //   block 0x21 data[0-1] = fuel sender ADC; voltage = raw * 0.0048  (real: 465 -> 2.23 V)
-                //   WJdiag-Pro "Fuel Level" % is derived from that voltage; linear sender fit from two
-                //   real points (2.02 V~25 %, 2.23 V=32 %): % = (V - 1.27) * 33.3, clamped 0..100.
+                // Fuel, both straight from the ECU (real car + WJdiag-Pro screen 2026-11-02, fuel lamp on):
+                //   data[0-1]  = fuel sender ADC, voltage = raw * 0.0048   (514 -> 2.47 V, Pro 2.43-2.52 V)
+                //   data[16-17] = fuel level /10 = %                       (0x0098 -> 15.2 %, Pro 15 % / 10 %)
+                //   data[14-15] sits at ~0x01F0-0x01F9 (~49.x) regardless of the tank: NOT the level.
+                // The old voltage->percent fit was wrong (showed 52 % with the lamp on); never derive it.
                 if (n >= 2) {
                     ecu.fuelRaw14 = Models.u16(d, 0);
                     ecu.fuelSensorVoltage = ecu.fuelRaw14 * 0.0048;
-                    ecu.fuelLevel = Math.max(0, Math.min(100, (ecu.fuelSensorVoltage - 1.27) * 33.3));
                 }
+                if (n >= 18) ecu.fuelLevel = Math.max(0, Math.min(100, Models.u16(d, 16) / 10.0));
                 break;
             case 0x37:
                 if (n >= 2) ecu.egrMafSetpoint = Models.u16(d, 0);
@@ -704,7 +705,15 @@ public final class WJDiag {
                     boolean unsupported = d1 == 0xFF && d2 == 0xFF;
                     if (raw != 0 && raw != 0xFFFF && !unsupported) {
                         String desc = pids[i].length > 2 ? pids[i][2] : DtcNames.describe(pids[i][1]);
-                        found.add(new DtcEntry(module, pids[i][1], desc, String.format("%02X %02X %02X", d0, d1, d2), clearedThisSession.contains(module)));
+                        String st = String.format("%02X %02X %02X", d0, d1, d2);
+                        // First data byte = fault status flags (WJdiag-Pro screen vs real car 2026-11-02:
+                        // airbag 2E E5 -> "12 00 00" is listed as BOTH "Active Fault" and "Stored Fault";
+                        // low nibble = active/current, high nibble = stored/history). Pro shows one row
+                        // per flag, so do the same; no flag byte (ABS style "00 8F 00") -> stored.
+                        boolean act = (d0 & 0x0F) != 0, sto = (d0 & 0xF0) != 0;
+                        if (!act && !sto) sto = true;
+                        if (act) found.add(new DtcEntry(module, pids[i][1], desc, st, true));
+                        if (sto) found.add(new DtcEntry(module, pids[i][1], desc, st, false));
                     }
                 }
                 conn.log("[DTC " + module.hex() + "] " + pids[i][0] + " -> " + r.replace("\r", " | "));

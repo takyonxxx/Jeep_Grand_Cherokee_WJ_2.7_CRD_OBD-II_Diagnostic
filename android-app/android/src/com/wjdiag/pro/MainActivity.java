@@ -713,7 +713,7 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
             TextView t = text("✓  Kayıtlı arıza kodu yok", 14, C_GREEN, false); t.setGravity(Gravity.CENTER); t.setPadding(0, dp(30), 0, 0);
             dtcList.addView(t);
         } else {
-            TextView legend = text("AKTİF: silindikten sonra yeniden okundu (arıza şu an var)  ·  KAYITLI: modül hafızasındaki kod  ·  [..]: modülün durum baytı", 10, C_DIM, false);
+            TextView legend = text("AKTİF = Active Fault (arıza şu an var)  ·  KAYITLI = Stored Fault (modül hafızası)  ·  [..] modülün durum baytları", 10, C_DIM, false);
             legend.setPadding(dp(4), dp(6), dp(4), 0);
             dtcList.addView(legend);
         }
