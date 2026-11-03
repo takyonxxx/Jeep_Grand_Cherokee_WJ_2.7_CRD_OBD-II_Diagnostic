@@ -442,8 +442,13 @@ public final class WJDiag {
                 if (n >= 8) tcm.engineRPM = Models.u16(d, 6);
                 break;
             case 0x34:
+                // WJdiag-Pro TCM screen vs its own capture (tcm_live.pcap, idle in P):
+                //   data[0-1] 537 -> "Battery 13.10 V"      => /41   (TCM-measured supply)
+                //   data[4-5] 818 -> "Sensor Supply 5.73 V"  => x7/1000
+                //   data[6-7] 534 -> "Solenoid Supply 13.05" => /41   (/40 read 0.3 V too high)
+                if (n >= 2) tcm.tcmBatteryVoltage = Models.u16(d, 0) / 41.0;
                 if (n >= 6) tcm.sensorSupply = Models.u16(d, 4) * 7.0 / 1000.0;
-                if (n >= 8) tcm.solenoidVoltage = Models.u16(d, 6) / 40.0;
+                if (n >= 8) tcm.solenoidVoltage = Models.u16(d, 6) / 41.0;
                 break;
             case 0x33:
                 if (n >= 2) tcm.tccPressure = Models.u16(d, 0) / 1000.0;

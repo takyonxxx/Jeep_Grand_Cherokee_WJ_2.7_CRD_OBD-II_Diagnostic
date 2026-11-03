@@ -228,8 +228,9 @@ struct TCMStatus {
     var engineRPM: Double = 0
     // Block 0x31[0-1]: raw RPM
     var inputN2: Double = 0
-    // Block 0x34[6-7]: /40 = V (solenoid supply)
+    // Block 0x34[6-7]: /41 = V (solenoid supply); [0-1] /41 = TCM battery (WJdiag-Pro "Battery")
     var solenoidVoltage: Double = 0
+    var tcmBatteryVoltage: Double = 0
     // Block 0x34[8-9]: /154.5 = V
     var batteryVoltage: Double = 0
     // Block 0x32[0]: single byte km/h

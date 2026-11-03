@@ -566,7 +566,9 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         set("t.line", f("%.2f", t.shiftPressure));
         set("t.tcc", f("%.0f", t.actualTCCSlip));
         set("t.sol", f("%.1f", t.solenoidVoltage), t.solenoidVoltage < 9 ? C_RED : t.solenoidVoltage < 11 ? C_ORANGE : C_GREEN);
-        set("t.batt", t.batteryVoltage > 0 ? f("%.1f", t.batteryVoltage) : "-", t.batteryVoltage > 0 && t.batteryVoltage < 11.5 ? C_RED : C_GREEN);
+        // Battery as WJdiag-Pro shows it on the transmission page: the TCM's own measurement (block 0x34), ATRV as fallback
+        double tb = t.tcmBatteryVoltage > 0 ? t.tcmBatteryVoltage : t.batteryVoltage;
+        set("t.batt", tb > 0 ? f("%.1f", tb) : "-", tb > 0 && tb < 11.5 ? C_RED : C_GREEN);
         set("t.eng", f("%.0f", t.engineRPM)); set("t.n2", f("%.0f", t.inputN2)); set("t.out", f("%.0f", t.outputRPM)); set("t.mod", f("%.2f", t.modulationPressure));
     }
 

@@ -612,7 +612,10 @@ final class WJDiagnostics: ObservableObject {
                 // and differs between sessions (0x0807 in the BLE captures,
                 // 0x0504 = "8.3 V" in the real log 2026-09-25 while ATRV read
                 // 13.3 V). Battery comes from ATRV only (end of each cycle).
-                if data.count >= 8 { self.tcmStatus.solenoidVoltage = Double(u16(data, 6)) / 40.0 }
+                // WJdiag-Pro TCM screen vs its capture (idle in P): data[0-1] 537 -> Battery 13.10 V,
+                // data[6-7] 534 -> Solenoid 13.05 V  => both /41 (/40 read 0.3 V too high).
+                if data.count >= 2 { self.tcmStatus.tcmBatteryVoltage = Double(u16(data, 0)) / 41.0 }
+                if data.count >= 8 { self.tcmStatus.solenoidVoltage = Double(u16(data, 6)) / 41.0 }
 
             case 0x33:
                 // Block 0x33: Pressures (NOT wheel speeds!)

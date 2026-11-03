@@ -140,9 +140,10 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 | LIMP | 0x30 | data[9]+maxGear | logic | Normal |
 | LINE-P | 0x33 | data[6-7] | **/365 = Bar** | 1.871 |
 | TCC | 0x30 | data[0-1] | signed raw RPM | 12 |
-| SOL V | 0x34 | data[6-7] | /40 = V | 13.05 |
+| SOL V | 0x34 | data[6-7] | /41 = V (Pro 534 → 13.05) | 13.05 |
+| BATT (TCM) | 0x34 | data[0-1] | /41 = V (Pro 537 → 13.10); ATRV only as fallback | 13.10 |
 | BATT | ATRV | ELM327 | adapter-side V | 13.3 |
-| (0x34 data[8-9]) | 0x34 | data[8-9] | **not battery** — constant per session (0x0807 / 0x0504), unmapped | — |
+| (0x34 data[8-9]) | 0x34 | data[8-9] | **not a voltage** — constant per session (0x0807 / 0x0504), unmapped | — |
 
 ## Known ECU Constants
 

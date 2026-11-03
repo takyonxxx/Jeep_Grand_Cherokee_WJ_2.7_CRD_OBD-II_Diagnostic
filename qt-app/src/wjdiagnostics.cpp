@@ -1041,13 +1041,14 @@ void WJDiagnostics::parseTCMBlock(uint8_t blk, const QByteArray &d, TCMStatus &t
         // [0-1] is NOT Trans Temp! Trans Temp comes from 0x30 byte[11]
         // SensorV=5.73V, SolV=13.28V, BattV=13.32V
         if (n >= 12) {
-            // [0-1] unknown (535/1175 - NOT temperature)
-            // [2-3]=03FF=1023 (unknown/max)
-            tcm.sensorSupply = u16(6) * 7.0 / 1000.0;  // [4-5] Sensor V (818*7/1000=5.73) ✓
-            tcm.solenoidSupply = u16(8) / 40.0;  // [6-7] Solenoid V (532/40=13.3≈13.28)
-            // [8-9] is NOT battery: constant per session, 0x0807 in BLE captures but
-            // 0x0504 ("8.3 V") in the 2026-09-25 real log while ATRV read 13.3 V.
-            tcm.tcmBattery = tcm.batteryVoltage;   // ATRV (see pollTCM) is the only battery source
+            // WJdiag-Pro TCM screen vs its own capture (tcm_live.pcap, idle in P):
+            //   data[0-1] 537 -> "Battery 13.10 V"       => /41  (TCM-measured supply, NOT temperature)
+            //   data[4-5] 818 -> "Sensor Supply 5.73 V"  => x7/1000
+            //   data[6-7] 534 -> "Solenoid Supply 13.05" => /41  (/40 read 0.3 V too high)
+            //   data[8-9] constant per session (0x0807 / 0x0504): not a voltage.
+            tcm.tcmBattery = u16(2) / 41.0;              // [0-1]
+            tcm.sensorSupply = u16(6) * 7.0 / 1000.0;    // [4-5]
+            tcm.solenoidSupply = u16(8) / 41.0;          // [6-7]
         }
         break;
     case 0x33:

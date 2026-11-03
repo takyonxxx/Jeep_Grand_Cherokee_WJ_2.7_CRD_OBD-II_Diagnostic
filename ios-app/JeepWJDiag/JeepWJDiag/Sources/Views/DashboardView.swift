@@ -155,8 +155,8 @@ struct DashboardPanel: View {
                 GaugeCell(title: "TCC", value: String(format: "%.0f", tcm.actualTCCSlip), unit: "rpm")
                 GaugeCell(title: "SOL V", value: String(format: "%.1f", tcm.solenoidVoltage), unit: "V",
                           color: tcm.solenoidVoltage < 9 ? .red : tcm.solenoidVoltage < 11 ? .orange : .green)
-                GaugeCell(title: "BATT", value: String(format: "%.1f", tcm.batteryVoltage), unit: "V",
-                          color: tcm.batteryVoltage < 11.5 ? .red : .green)
+                GaugeCell(title: "BATT", value: String(format: "%.1f", tcm.tcmBatteryVoltage > 0 ? tcm.tcmBatteryVoltage : tcm.batteryVoltage), unit: "V",
+                          color: (tcm.tcmBatteryVoltage > 0 ? tcm.tcmBatteryVoltage : tcm.batteryVoltage) < 11.5 ? .red : .green)
             }
         }
     }

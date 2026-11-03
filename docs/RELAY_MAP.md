@@ -430,17 +430,21 @@ Real BLE idle: `01BB 0000 02D8 02F0 0000...`
 | [4-5] | u16 | **Turbine RPM** | raw | ✓ 726 |
 | [6-7] | u16 | **Engine RPM** (from TCM) | raw | ✓ 750 |
 
+N2 vs turbine in the WJdiag-Pro capture (tcm_live.pcap): P and 1st gear N2 = 0.61 × turbine (448/736, 1054/1733),
+2nd and 3rd gear N2 = turbine (1503/1503, 750/749) and N3 = turbine too. So N2 ≈ 450 rpm at idle in P is the normal
+reading, not a fault; the user's 2026-11-03 screen (N2 452 / turbine 743 = 0.608) matches the Pro capture exactly.
+
 ### Block 0x34 (14 data bytes) — Voltages
 Real BLE: `0217 03FF 0332 0214 0807 0001 0028`
 Real 2026-09-25 (engine running, P, ATRV 13.3 V): `021E 0134 0332 021D 0504 0000 0007`
 
 | Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
-| [0-1] | u16 | Supply voltage? (tracks [6-7]; NOT trans temp) | /40 = V | 535→13.4, 542→13.55 |
+| [0-1] | u16 | **Battery (TCM-measured)** — WJdiag-Pro "Battery" | **/41 = V** | 537→13.10 (Pro 13.10) |
 | [2-3] | u16 | Unknown (0x03FF / 0x0134) | — | |
 | [4-5] | u16 | **Sensor Supply** | ×7/1000 = V | ✓ 5.73V |
-| [6-7] | u16 | **Solenoid Supply** | /40 = V | ✓ 13.28V |
-| [8-9] | u16 | **Unknown — NOT battery** | constant per session (0x0807 → 0x0504) | old "/154.5" mapping gave 8.3 V while ATRV read 13.3 V; apps use ATRV |
+| [6-7] | u16 | **Solenoid Supply** | **/41 = V** | 534→13.02 (Pro 13.05; /40 read 0.3 V high) |
+| [8-9] | u16 | **Unknown — not a voltage** | constant per session (0x0807 → 0x0504) | old "/154.5" mapping gave 8.3 V while ATRV read 13.3 V |
 
 ### Block 0x33 (16 data bytes) — Pressures (NOT wheel speeds!)
 Real BLE: `0024 0771 05DC 02B8 02B4 02E3 02E1 0000`
@@ -450,6 +454,9 @@ Real BLE: `0024 0771 05DC 02B8 02B4 02E3 02E1 0000`
 | [0-1] | u16 | **TCC Pressure** | /1000 = Bar | ✓ 0.000 |
 | [6-7] | u16 | **Shift PSI** | /365 = Bar | ✓ 1.904 |
 | [8-9] | u16 | **Modulation PSI** | /462 = Bar | ✓ 1.499 |
+
+Idle in P the capture reads 683/683 → 1.87 / 1.48 bar (Pro list 1.904 / 1.499); while driving in gear both fields
+drop to 0 / 3 and [2-3]/[4-5] move instead (7700, 500–1321) — unmapped, so the apps show ~0 bar on the move.
 
 ### Block 0x32 (13 data bytes) — Vehicle Speed (Verified 2026-03-18)
 Real vehicle idle: all zeros. Driving: `17 00 ...` (23 km/h), `1F 00 ...` (31 km/h)

@@ -115,6 +115,7 @@ public final class Models {
         public int selector;
         public double actualTCCSlip, desiredTCCSlip, outputRPM, transTemp, turbineRPM, engineRPM, inputN2;
         public double solenoidVoltage, sensorSupply, batteryVoltage, vehicleSpeed;
+        public double tcmBatteryVoltage;     // block 0x34 data[0-1] / 41 (what WJdiag-Pro lists as "Battery")
         public double tccPressure, shiftPressure, modulationPressure;
     }
 

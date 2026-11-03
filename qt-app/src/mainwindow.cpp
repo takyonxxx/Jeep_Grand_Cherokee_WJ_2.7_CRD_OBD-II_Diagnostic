@@ -1815,11 +1815,12 @@ void MainWindow::onLiveDataUpdated(const QMap<uint8_t, double> &values)
 void MainWindow::onFullStatusUpdated(const TCMDiagnostics::TCMStatus &status)
 {
     updateStatusLabels(status);
-    // Battery voltage from ATRV
-    if (status.batteryVoltage > 0 && m_dashBatVoltVal) {
-        m_dashBatVoltVal->setText(QString::number(status.batteryVoltage, 'f', 1));
-        setGaugeColor(m_dashBatVoltVal,
-            status.batteryVoltage < 11.5 ? "#e04040" : status.batteryVoltage < 12.5 ? "#d09030" : "#00d4b4");
+    // Battery as WJdiag-Pro lists it on the transmission page: the TCM's own measurement
+    // (block 0x34 data[0-1] / 41); ATRV only as a fallback.
+    const double tb = status.tcmBattery > 0 ? status.tcmBattery : status.batteryVoltage;
+    if (tb > 0 && m_dashBatVoltVal) {
+        m_dashBatVoltVal->setText(QString::number(tb, 'f', 1));
+        setGaugeColor(m_dashBatVoltVal, tb < 11.5 ? "#e04040" : tb < 12.5 ? "#d09030" : "#00d4b4");
     }
 }
 
