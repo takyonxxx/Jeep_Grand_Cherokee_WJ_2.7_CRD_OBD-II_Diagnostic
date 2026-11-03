@@ -78,7 +78,7 @@ struct DashboardPanel: View {
                             .foregroundColor(col)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: .infinity, alignment: .center)
-                        Text(String(format: "(%.0f%%)", ecu.fuelLevel))
+                        Text(String(format: "(%.0f%%)  %.2f V", ecu.fuelLevel, ecu.fuelSensorVoltage))
                             .font(.system(size: 16, weight: .semibold, design: .monospaced))
                             .foregroundColor(col)
                             .multilineTextAlignment(.center)

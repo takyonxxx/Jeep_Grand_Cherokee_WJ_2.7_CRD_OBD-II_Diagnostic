@@ -1282,10 +1282,12 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
             // data[8-9] = NOT fuelActual (fuelActual comes from 0x32)
             ecu.fuelStartSet = u16(12) / 100.0;        // data[10-11] Fuel QTY Start Setpoint
             ecu.fuelLimit = u16(14) / 100.0;           // data[12-13] Fuel QTY Limit
-            // Fuel (verified real car + WJdiag-Pro 2026-10-28): data[0-1] = fuel sender ADC;
-            //   voltage = raw*0.0048 (465 -> 2.23 V). "Fuel Level" % = (V - 1.27)*33.3 clamped.
+            // Fuel, matched against the WJdiag-Pro screen on three real-car days (2026-10-28 / 11-02 / 11-03):
+            //   data[0-1]  = fuel sender ADC, voltage = raw * 0.0048          (443 -> 2.13 V, Pro 2.13 V)
+            //   data[16-17] = fuel level, % = raw - 137                        (169 -> 32 %, 152 -> 15 %, 175 -> 38 %)
+            //   data[14-15] sits at ~49.x whatever the tank holds: NOT the level. Never derive % from the voltage.
             ecu.fuelLevelV = u16(2) * 0.0048;          // data[0-1] Fuel Level Sensor Voltage
-            ecu.fuelLevel = qBound(0.0, (ecu.fuelLevelV - 1.27) * 33.3, 100.0);
+            if (n >= 20) ecu.fuelLevel = qBound(0.0, u16(18) - 137.0, 100.0);   // data[16-17] Fuel Level %
         }
         break;
 

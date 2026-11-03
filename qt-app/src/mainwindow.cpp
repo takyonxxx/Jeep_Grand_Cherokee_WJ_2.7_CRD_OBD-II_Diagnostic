@@ -1803,12 +1803,12 @@ void MainWindow::onECUDataUpdated(const TCMDiagnostics::ECUStatus &ecu)
     ESET(m_dashEgrVal, QString::number(ecu.egrDuty, 'f', 0));
     ESET(m_dashWgVal, QString::number(ecu.wastegate, 'f', 0));
 
-    // Fuel Level (liters) from block 0x21 data[14-15] / 10 = %
+    // Fuel Level: block 0x21 data[16-17] - 137 = % (WJdiag-Pro match), sender data[0-1] * 0.0048 V
     // Tank: 78L (resmi spec), liters = pct * 78.0 / 100
     if (m_dashFuelLevelVal && ecu.fuelLevel > 0) {
         double liters = ecu.fuelLevel * 78.0 / 100.0;
         m_dashFuelLevelVal->setText(QString::number(liters, 'f', 1));
-        m_dashFuelLevelUnit->setText(QString("L (%1%)").arg(ecu.fuelLevel, 0, 'f', 0));
+        m_dashFuelLevelUnit->setText(QString("L (%1%)  %2 V").arg(ecu.fuelLevel, 0, 'f', 0).arg(ecu.fuelLevelV, 0, 'f', 2));
         QString col = liters < 10 ? "#e04040" : liters < 20 ? "#d09030" : "#60b8a0";
         m_dashFuelLevelVal->setStyleSheet(QString("color:%1;font-size:28px;font-weight:bold;"
             "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;").arg(col));
@@ -2430,12 +2430,12 @@ void MainWindow::runDiscoveryPhases(
                                 .arg(u16(0)/100.0,0,'f',2).arg(u16(2)/100.0,0,'f',2)
                                 .arg(u16(4)/100.0,0,'f',2).arg(u16(6)/100.0,0,'f',2).arg(u16(8)/100.0,0,'f',2);
                             if (n >= 20) {
-                                double fuelPct = u16(14) / 10.0;
-                                double fuelV = u16(16) / 100.0;
+                                double fuelPct = u16(16) - 137.0;          // data[16-17] - 137 = % (Pro match)
+                                double fuelV = u16(0) * 0.0048;            // data[0-1] sender voltage
                                 double fuelL = fuelPct * 78.0 / 100.0;
-                                p += QString(" FuelLevel=%1%(%2L) SensorV=%3V [18-19]=%4")
-                                    .arg(fuelPct,0,'f',1).arg(fuelL,0,'f',1)
-                                    .arg(fuelV,0,'f',2).arg(u16(18)/100.0,0,'f',2);
+                                p += QString(" FuelLevel=%1%(%2L) SensorV=%3V [14-15]=%4")
+                                    .arg(fuelPct,0,'f',0).arg(fuelL,0,'f',1)
+                                    .arg(fuelV,0,'f',2).arg(u16(14)/10.0,0,'f',1);
                             }
                         } else if (isECU && blk == 0x23 && n >= 10) {
                             p = QString("BoostSens=%1mbar MAP=%2 [4-5]=%3(s16=%4) BoostSet=%5mbar")

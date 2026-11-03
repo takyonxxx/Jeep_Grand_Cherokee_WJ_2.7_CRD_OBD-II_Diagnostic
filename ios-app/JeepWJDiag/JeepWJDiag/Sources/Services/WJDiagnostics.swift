@@ -496,12 +496,15 @@ final class WJDiagnostics: ObservableObject {
                 for i in 0..<7 where data.count >= (i + 1) * 2 {
                     self.ecuStatus.fuelQty21[i] = Double(u16(data, i * 2)) / 100.0
                 }
-                // Fuel level [14-15] /10 = %, Fuel sensor V [16-17] /100
-                // Fuel (verified real car + WJdiag-Pro 2026-10-28): block 0x21 data[0-1] = fuel sender
-                // ADC; voltage = raw*0.0048 (465 -> 2.23 V). "Fuel Level" % = (V - 1.27)*33.3 clamped.
+                // Fuel, matched against the WJdiag-Pro screen on three real-car days (2026-10-28 / 11-02 / 11-03):
+                //   data[0-1]  = fuel sender ADC, voltage = raw * 0.0048   (443 -> 2.13 V, Pro 2.13 V)
+                //   data[16-17] = fuel level, % = raw - 137                 (169 -> 32 %, 152 -> 15 %, 175 -> 38 %)
+                //   data[14-15] sits at ~49.x whatever the tank holds: NOT the level. Never derive % from the voltage.
                 if data.count >= 2 {
                     self.ecuStatus.fuelSensorVoltage = Double(u16(data, 0)) * 0.0048
-                    self.ecuStatus.fuelLevel = max(0, min(100, (self.ecuStatus.fuelSensorVoltage - 1.27) * 33.3))
+                }
+                if data.count >= 18 {
+                    self.ecuStatus.fuelLevel = max(0, min(100, Double(u16(data, 16)) - 137))
                 }
 
             case 0x37:

@@ -361,7 +361,7 @@ Real BLE: `0254 0253 03FE 0000 0094 0048 01A8 0163 0108 02E5 024D 0090 00BF 03A0
 ### Block 0x23 (20 data bytes) — Boost/MAP detail
 Real BLE: `097F 0250 FFFC 0BD7 03A0 02A3 0085 0043 03FD 012A`
 
-### Block 0x21 (20 data bytes) — Fuel quantities + Fuel Level (Verified 2026-03-18)
+### Block 0x21 (20 data bytes) — Fuel quantities + Fuel Level (Verified 2026-03-18; fuel level / sender voltage re-verified against WJdiag-Pro 2026-11-03)
 Real vehicle idle: `018F 03E3 03FD 004A 012A 03FD 024A 01EF 00B4 015D`
 
 | Offset | Bytes | Field | Formula | Verified |
@@ -373,8 +373,9 @@ Real vehicle idle: `018F 03E3 03FD 004A 012A 03FD 024A 01EF 00B4 015D`
 | [8-9] | u16 | Fuel QTY Start Setpoint | /100 = mg/str | 2.98 |
 | [10-11] | u16 | (reserved) | /100 | 10.21 |
 | [12-13] | u16 | (reserved) | /100 | 5.86 |
-| [14-15] | u16 | **Fuel Level** | **/10 = %** | **49.5% = 39.0L** |
-| [16-17] | u16 | **Fuel Level Sensor Voltage** | **/100 = V** | **1.80V** |
+| [0-1] | u16 | **Fuel Level Sensor Voltage** | **× 0.0048 = V** | **443 = 2.13 V** (WJdiag-Pro 2.13 V) |
+| [14-15] | u16 | ~49.x constant (NOT the fuel level) | /10 | 49.5 |
+| [16-17] | u16 | **Fuel Level** | **raw − 137 = %** (WJdiag-Pro match on 3 real-car days: 169→32 %, 152→15 %, 175→38 %) | **175 = 38 %** |
 | [18-19] | u16 | (reserved) | /100 | 3.49 |
 
 ### Block 0x37 (34 data bytes) — EGR/Wastegate

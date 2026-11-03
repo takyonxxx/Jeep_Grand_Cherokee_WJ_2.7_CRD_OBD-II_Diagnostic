@@ -32,7 +32,7 @@ Native iOS port targeting iPhone (iOS 17+). Source code: `ios-app/JeepWJDiag/`
 
 ### Features
 - **5 tabs**: Conn (connection + dashboard + module list), DTC, Ctrl (quick controls), Acts (actuators), Log
-- **ECU Dashboard**: Big FUEL center (L/h stopped, L/100km driving + fuel level liters), SPEED, RPM, RAIL, BOOST, M-TEMP, MAF, BATT
+- **ECU Dashboard**: Big FUEL center (L/h stopped, L/100km driving + tank % / litres / sender voltage, the same pair WJdiag-Pro shows), SPEED, RPM, RAIL, BOOST, M-TEMP, MAF, BATT
 - **TCM Dashboard**: Big GEAR center (D1-D5 green, P/N/R amber, LIMP red), SPEED, TURBIN, T-TEMP, LIMP, LINE-P, TCC, SOL V, BATT
 - **Actuator controls**: Hold-to-activate buttons with green highlight for all modules
 - **Quick Controls tab**: Driver Door / Passenger Door / BCM quick-access grid
