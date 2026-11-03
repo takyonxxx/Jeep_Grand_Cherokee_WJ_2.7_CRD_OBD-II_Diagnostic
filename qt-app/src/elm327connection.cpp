@@ -290,6 +290,15 @@ void ELM327Connection::sendCommand(const QString &cmd,
     atCmd.callback = callback;
     atCmd.timeoutMs = (timeoutMs > 0) ? timeoutMs : m_defaultTimeoutMs;
 
+    // No link at all (socket dropped / never connected): answer TIMEOUT at once instead of
+    // letting every command wait out its full timeout on a dead socket.
+    if (m_state == ConnectionState::Disconnected || m_state == ConnectionState::Scanning) {
+        emit logMessage(QString::fromUtf8("→ %1  (no connection)").arg(cmd));
+        if (callback)
+            QTimer::singleShot(0, this, [callback]() { callback("TIMEOUT"); });
+        return;
+    }
+
     m_commandQueue.enqueue(atCmd);
 
     if (!m_commandPending)
@@ -321,7 +330,18 @@ void ELM327Connection::onSocketConnected()
 
 void ELM327Connection::onSocketDisconnected()
 {
-    emit logMessage("Disconnected");
+    // Drop everything still queued: otherwise each command times out in turn and the
+    // ATSP2 callback would still announce "ELM327 ready" on a dead socket.
+    const int dropped = m_commandQueue.size() + (m_commandPending ? 1 : 0);
+    m_timeoutTimer->stop();
+    m_commandQueue.clear();
+    m_commandPending = false;
+    m_responseBuffer.clear();
+    if (dropped > 0)
+        emit logMessage(QString::fromUtf8("Disconnected by the device (%1 command(s) dropped). "
+                                          "ESP32/ELM327 kapandı ya da başka bir istemci bağlı mı?").arg(dropped));
+    else
+        emit logMessage("Disconnected");
     setState(ConnectionState::Disconnected);
     emit disconnected();
 }

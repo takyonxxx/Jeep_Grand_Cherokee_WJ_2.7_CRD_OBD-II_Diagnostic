@@ -225,21 +225,27 @@ void setup() {
 
 static WiFiClient elmClient;
 static String rxBuf;
+static uint32_t lastClientRx = 0;                 // for the idle timeout below
+static const uint32_t CLIENT_IDLE_MS = 90000;     // no bytes for 90 s -> drop the session
 
 void loop() {
     httpServer.handleClient();
 
     // Accept new ELM327 client
     if (elmServer.hasClient()) {
+        // Newest client wins. A head unit or PC that went away without closing the
+        // socket (or a second app) used to lock the emulator until lwIP noticed;
+        // now the old session is dropped and the new one takes over.
         if (elmClient && elmClient.connected()) {
-            // Already have a client, reject new one
-            WiFiClient reject = elmServer.accept();
-            reject.stop();
-        } else {
+            logWrite("---", "CLIENT REPLACED " + elmClient.remoteIP().toString());
+            elmClient.stop();
+        }
+        {
             elmClient = elmServer.accept();
             elmClient.setNoDelay(true);
             rxBuf = "";
             clientConnected = true;
+            lastClientRx = millis();
             emu.reset();
             digitalWrite(LED_PIN, HIGH); // LED ON = client connected
 
@@ -250,9 +256,14 @@ void loop() {
     }
 
     // Handle ELM327 client data
+    if (elmClient && elmClient.connected() && (millis() - lastClientRx) > CLIENT_IDLE_MS) {
+        logWrite("---", "CLIENT IDLE TIMEOUT");
+        elmClient.stop();
+    }
     if (elmClient && elmClient.connected()) {
         while (elmClient.available()) {
             char c = elmClient.read();
+            lastClientRx = millis();
             // Skip NULL bytes (app sends \0 after \r\n)
             if (c == '\0') continue;
             if (c == '\r' || c == '\n') {
