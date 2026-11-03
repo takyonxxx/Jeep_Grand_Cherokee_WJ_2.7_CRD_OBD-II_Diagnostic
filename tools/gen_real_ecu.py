@@ -3,7 +3,8 @@
 Base = real-car frames captured 2026-11-02 18:31 (fuel lamp on, idle), patched so that
 the fields WJdiag-Pro shows on its Engine live screens read like the user's Pro
 screenshots: 754 rpm, coolant 85.7 C, IAT 30.0 C, boost 0.930 bar / setpoint 0.997,
-MAF 724.9 mg/str, fuel level 15 % / sender 2.43 V, rail 386.69 bar / setpoint 356.175,
+MAF 724.9 mg/str, fuel level 38 % / sender 2.13 V (real block 0x21 of 2026-11-03 18:42,
+Pro showed 38 % / 2.13 V: level = data[16-17] - 137), rail 386.69 bar / setpoint 356.175,
 actual fuel qty 8.80 mg/str. Run after editing: python tools/gen_real_ecu.py
 """
 import re, io
@@ -13,7 +14,7 @@ BASE = {
  0x22:"0C 31 0B 7C 08 B7 08 B7 00 00 00 00 02 3A 03 8B 0B BB 03 92 02 4E 02 E4 02 E4 02 B5 08 B7 00 00",
  0x20:"02 97 02 B9 03 FE 00 00 00 93 00 48 01 A7 01 62 01 0A 02 E2 02 50 00 8E 00 98 03 A0 02 2D",
  0x23:"09 7F 02 52 FF F9 0B A9 03 A0 02 0E 00 16 00 5A 03 FD 01 2A",
- 0x21:"02 02 03 E4 03 FD 00 02 01 2A 03 FE 02 53 01 F2 00 98 01 EF",
+ 0x21:"01 BB 03 E3 03 FC 00 4A 01 2A 03 FD 02 4A 01 EF 00 AF 00 F4",
  0x16:"01 2C 21 34 01 2C 00 00 00 00 00 00 00 00 00 00 01 F4 00 00 27 10 07 B4 00 00 00 00 00 00 00 00 01 F4 00 00 00 00",
  0x32:"04 46 0C C1 00 00 00 00 0D 56 04 46 04 46 01 A9 01 9A 01 13 00 4F 02 74 02 F2 00 00 00 00 00 00",
  0x37:"0B AB 12 0F 00 79 00 4C 00 08 00 00 00 00 00 00 00 6C 00 00 00 00 01 05 00 40 00 00 00 00 00 01 00 00",
@@ -24,7 +25,7 @@ BASE = {
  0x28:"02 EE 04 49 02 EE 02 F0 02 EE 02 EC 02 EC 00 00 00 0A FF ED FF AA FF EC 00 71 00 00",
 }
 RPM=754; COOL=int((85.7+273.1)*10); IAT=int((30.0+273.1)*10); MAP=930; BSET=997; MAF=7249
-RAIL=int(round(386.69/0.101)); RSET=int(round(356.175/0.101)); FUELV=int(round(2.43/0.0048)); IQ=880
+RAIL=int(round(386.69/0.101)); RSET=int(round(356.175/0.101)); FUELV=int(round(2.13/0.0048)); FUELPCT=38; IQ=880
 PATCH = {
  0x12:{0:COOL, 2:IAT, 10:RPM, 16:MAP, 18:RAIL},
  0x22:{0:COOL, 2:IAT, 14:MAP, 16:RAIL},
@@ -32,7 +33,7 @@ PATCH = {
  0x13:{16:RAIL},
  0x23:{6:RAIL},
  0x30:{18:RSET},
- 0x21:{0:FUELV},
+ 0x21:{0:FUELV, 16:FUELPCT+137},
  0x32:{0:IQ, 10:IQ, 12:IQ},
  0x28:{0:RPM, 2:IQ},
 }
