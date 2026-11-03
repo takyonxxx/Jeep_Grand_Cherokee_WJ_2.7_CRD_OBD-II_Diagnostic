@@ -45,6 +45,8 @@ public class MainActivity extends Activity {
     private EditText mCmd;
     private final Handler mH = new Handler();
     private UsbManager mUsb;
+    private boolean mWantStart = false;        // Başlat pressed, waiting for the serial device to enumerate
+    private String mLastUsbList = "";
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -100,6 +102,9 @@ public class MainActivity extends Activity {
         setContentView(root);
 
         registerReceiver(mPermReceiver, new IntentFilter(ACTION_PERM));
+        IntentFilter uf = new IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+        uf.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+        registerReceiver(mUsbReceiver, uf);
         // Launched by the USB attach intent: start straight away
         UsbDevice attached = getIntent() != null ? (UsbDevice) getIntent().getParcelableExtra(UsbManager.EXTRA_DEVICE) : null;
         if (attached != null) startWith(attached);
@@ -119,8 +124,19 @@ public class MainActivity extends Activity {
             else if (since >= 0) { mElm.setText("ELM bulundu, " + since + " s'dir trafik yok  ·  AP " + SniffService.channelInfo); mElm.setTextColor(C_ORANGE); }
             else { mElm.setText("ELM bulundu, henüz paket yok  ·  AP " + SniffService.channelInfo); mElm.setTextColor(C_ORANGE); }
             mTotals.setText(SniffService.elmFrames + " paket · " + fmtBytes(SniffService.bytes));
-            mCounters.setText("WiFi çerçeve " + SniffService.frames + "   ·   IP " + SniffService.ipFrames
+            // USB devices as the head unit sees them right now (FTDI = 0403:6001 is the ESP32 board)
+            StringBuilder ul = new StringBuilder();
+            UsbDevice serial = null;
+            for (UsbDevice d : mUsb.getDeviceList().values()) {
+                ul.append(String.format("%04X:%04X", d.getVendorId(), d.getProductId()));
+                if (UsbSerial.looksLikeSerial(d)) { ul.append("=seri"); if (serial == null) serial = d; }
+                ul.append("  ");
+            }
+            String usbLine = ul.length() == 0 ? "USB: cihaz yok" : "USB: " + ul.toString().trim();
+            if (!usbLine.equals(mLastUsbList)) { mLastUsbList = usbLine; SniffService.addLog(usbLine); }
+            mCounters.setText("WiFi çerçeve " + SniffService.frames + "   ·   IP " + SniffService.ipFrames + "   ·   " + usbLine
                     + (SniffService.pcapPath.isEmpty() ? "" : "\nkayıt: " + SniffService.pcapPath));
+            if (mWantStart && !on && serial != null) { mWantStart = false; startWith(serial); }
             List<String> l = SniffService.logSnapshot();
             String joined = TextUtils.join("\n", l);
             if (!joined.equals(mLog.getText().toString())) {
@@ -137,7 +153,9 @@ public class MainActivity extends Activity {
         Map<String, UsbDevice> devs = mUsb.getDeviceList();
         for (UsbDevice d : devs.values()) if (UsbSerial.looksLikeSerial(d)) { found = d; break; }
         if (found == null) {
-            SniffService.status = "USB seri cihaz yok (ESP32 takılı mı?)";
+            // Not enumerated yet (just plugged in / port shared with the stick): keep watching, start when it shows up
+            mWantStart = true;
+            SniffService.status = "USB seri cihaz bekleniyor (ESP32'yi takın, otomatik başlar)";
             StringBuilder sb = new StringBuilder("USB cihazları: ");
             for (UsbDevice d : devs.values()) sb.append(String.format("%04X:%04X ", d.getVendorId(), d.getProductId()));
             SniffService.addLog(sb.toString());
@@ -156,6 +174,19 @@ public class MainActivity extends Activity {
             SniffService.status = "USB izni bekleniyor";
         }
     }
+
+    private final BroadcastReceiver mUsbReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) {
+            UsbDevice d = i.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+            String id = d == null ? "?" : String.format("%04X:%04X", d.getVendorId(), d.getProductId());
+            if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(i.getAction())) {
+                SniffService.addLog("USB takıldı: " + id);
+                if (d != null && UsbSerial.looksLikeSerial(d) && !SniffService.running) startWith(d);
+            } else {
+                SniffService.addLog("USB çıkarıldı: " + id);
+            }
+        }
+    };
 
     private final BroadcastReceiver mPermReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) {
@@ -206,6 +237,7 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy() {
         mH.removeCallbacks(mTick);
         try { unregisterReceiver(mPermReceiver); } catch (Exception e) {}
+        try { unregisterReceiver(mUsbReceiver); } catch (Exception e) {}
         super.onDestroy();
     }
 
