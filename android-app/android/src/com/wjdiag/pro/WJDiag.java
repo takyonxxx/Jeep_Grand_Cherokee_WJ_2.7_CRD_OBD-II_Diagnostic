@@ -352,16 +352,18 @@ public final class WJDiag {
                 break;
             case 0x21:
                 for (int i = 0; i < 7; i++) if (n >= (i + 1) * 2) ecu.fuelQty21[i] = Models.u16(d, i * 2) / 100.0;
-                // Fuel, both straight from the ECU (real car + WJdiag-Pro screen 2026-11-02, fuel lamp on):
-                //   data[0-1]  = fuel sender ADC, voltage = raw * 0.0048   (514 -> 2.47 V, Pro 2.43-2.52 V)
-                //   data[16-17] = fuel level /10 = %                       (0x0098 -> 15.2 %, Pro 15 % / 10 %)
+                // Fuel, both straight from the ECU. Matched against the WJdiag-Pro screen on three
+                // real-car days (raw data[16-17] -> Pro "Fuel Level"):
+                //   2026-10-28: 169 -> 32 %     2026-11-02: 152 -> 15 % (lamp on)     2026-11-03: 175 -> 38 %
+                // i.e. Fuel Level % = data[16-17] - 137 (exact on all three; /10 only matched by chance once).
+                //   data[0-1]  = fuel sender ADC, voltage = raw * 0.0048   (443 -> 2.13 V, Pro 2.13 V)
                 //   data[14-15] sits at ~0x01F0-0x01F9 (~49.x) regardless of the tank: NOT the level.
-                // The old voltage->percent fit was wrong (showed 52 % with the lamp on); never derive it.
+                // Never derive the percentage from the voltage.
                 if (n >= 2) {
                     ecu.fuelRaw14 = Models.u16(d, 0);
                     ecu.fuelSensorVoltage = ecu.fuelRaw14 * 0.0048;
                 }
-                if (n >= 18) ecu.fuelLevel = Math.max(0, Math.min(100, Models.u16(d, 16) / 10.0));
+                if (n >= 18) ecu.fuelLevel = Math.max(0, Math.min(100, Models.u16(d, 16) - 137.0));
                 break;
             case 0x37:
                 if (n >= 2) ecu.egrMafSetpoint = Models.u16(d, 0);

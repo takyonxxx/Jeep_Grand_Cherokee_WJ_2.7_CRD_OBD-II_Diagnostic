@@ -120,8 +120,8 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 | PEDAL | 0x36 / 0x12 | data[12-13] | **raw / 100 = %** | 2710 → 100.00% | **0x36[0-1] is NOT the pedal** (small signed word, goes negative on overrun → "655%" bug). Clamp 0–100 |
 | GEAR (ECU) | 0x36 | data[2] | 0=P/N, 1–5 | 1@9 km/h, 2@17, 3 in pull, 5 cruise | matches TCM 0x30[9] |
 | FUEL L/h | calculated | rpm × fuelActual | L/h or L/100km | 1.2 | — |
-| FUEL LEVEL | 0x21 | data[14-15] | **raw / 10 = %** | 49.5% = 39.0L | 78.7L tank |
-| FUEL SENS V | 0x21 | data[16-17] | **raw / 100 = V** | 1.80V | — |
+| FUEL LEVEL | 0x21 | data[16-17] | **raw − 137 = %** (matches WJdiag-Pro on 3 real-car days: 169→32 %, 152→15 %, 175→38 %) | 175 = 38 % | 78 L tank; data[14-15] is a ~49.x constant, not the level |
+| FUEL SENS V | 0x21 | data[0-1] | **raw × 0.0048 = V** | 443 = 2.13 V (Pro 2.13 V) | — |
 | INJ-Q | 0x32 (0x28 alt) | data[0-1] | /100 = mg/str | 8.81 | 0x28[2-3] for actual |
 | M-TEMP | 0x22 | data[0-1] | /10 - 273.1 = °C | 57.8°C | — |
 | BOOST | 0x22 | data[14-15] | /1000 = Bar | 0.910 | — |
