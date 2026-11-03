@@ -21,6 +21,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include "soc/rtc_cntl_reg.h"
+#include "soc/soc.h"
 
 static String   g_ssid = "WiFi_OBDII";
 static uint16_t g_port = 35000;
@@ -111,8 +113,9 @@ static void sniff(void* buf, wifi_promiscuous_pkt_type_t type)
 
 static bool findAp()
 {
-    out("scanning for \"" + g_ssid + "\"...");
-    int n = WiFi.scanNetworks(false, true);
+    out("scanning for \"" + g_ssid + "\" (passive)...");
+    // Passive scan: listen for beacons only, no probe requests -> no TX current spikes.
+    int n = WiFi.scanNetworks(false, true, true, 400);
     for (int i = 0; i < n; i++) {
         if (WiFi.SSID(i) == g_ssid) {
             g_chan = WiFi.channel(i);
@@ -150,10 +153,21 @@ void setup()
     Serial0.begin(115200);
 #endif
     delay(1500);
-    out("ESP32 ELM327 WiFi sniffer");
+    out("ESP32 ELM327 WiFi sniffer (low-power build)");
+    // Head-unit USB ports sag when the radio starts (BROWNOUT_RST loop seen on the T527):
+    // run the CPU slower, keep the radio at minimum TX power (we only listen) and bring
+    // the WiFi stack up step by step. The brownout detector is switched off last so a
+    // short dip does not restart the board mid-capture.
+    setCpuFrequencyMhz(80);
+    WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
+    delay(300);
+    WiFi.setTxPower(WIFI_POWER_2dBm);
+    esp_wifi_set_ps(WIFI_PS_NONE);
     WiFi.disconnect();
-    delay(200);
+    delay(500);
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+    out("cpu 80 MHz, tx 2 dBm, brownout detector off");
     if (!findAp()) g_chan = 1;
     startSniff();
 }
