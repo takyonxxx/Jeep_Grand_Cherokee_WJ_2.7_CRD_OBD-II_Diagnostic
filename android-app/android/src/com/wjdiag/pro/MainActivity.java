@@ -528,7 +528,9 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         set("e.boost", f("%.2f", e.boostPressure), e.boostPressure > 2.0 ? C_RED : C_GREEN);
         set("e.temp", f("%.0f", e.coolantTemp), e.coolantTemp > 105 ? C_RED : e.coolantTemp > 95 ? C_ORANGE : C_GREEN);
         set("e.maf", f("%.0f", e.mafFlow));
-        set("e.batt", e.batteryVoltage > 0 ? f("%.1f", e.batteryVoltage) : "-", e.batteryVoltage > 0 && e.batteryVoltage < 11.5 ? C_RED : C_GREEN);
+        // AKÜ as WJdiag-Pro shows it: the ECU's own measurement (block 0x16), ELM ATRV only as fallback
+        double eb = e.ecuBatteryVoltage > 0 ? e.ecuBatteryVoltage : e.batteryVoltage;
+        set("e.batt", eb > 0 ? f("%.1f", eb) : "-", eb > 0 && eb < 11.5 ? C_RED : C_GREEN);
         set("e.pedal", f("%.0f", e.pedalPos), e.pedalPos > 60 ? C_ORANGE : C_GREEN);
         set("e.bset", f("%.2f", e.boostSetpoint), (e.boostSetpoint - e.boostPressure) > 0.4 && e.pedalPos > 50 ? C_RED : C_GREEN);
         set("e.iat", f("%.0f", e.iat), e.iat > 60 ? C_ORANGE : C_GREEN);

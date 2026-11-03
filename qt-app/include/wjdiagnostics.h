@@ -182,6 +182,7 @@ public:
 
     struct ABSStatus {
         double wheelLF=0, wheelRF=0, wheelLR=0, wheelRR=0;
+        double ignitionV=0, pumpV=0, referenceV=0;   // ABS 32 10 / 32 11 / 32 13
         double vehicleSpeed=0;
         bool absActive=false;
         bool tractionControl=false;
@@ -209,6 +210,7 @@ public:
 
     // --- Protocol Switch ---
     void switchToModule(Module mod, std::function<void(bool)> done=nullptr);
+    static double fuelPercentFromVolts(double v);
     Module activeModule() const { return m_activeModule; }
     BusType activeBus() const { return m_activeBus; }
     void setActiveBus(BusType bus) { m_activeBus = bus; }

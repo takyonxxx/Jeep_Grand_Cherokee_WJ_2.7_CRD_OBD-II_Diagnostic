@@ -81,6 +81,7 @@ public final class Models {
         public double blk36signed, blk36torque, boostSetpoint, blk36c, iat, mapActual;
         public double[] fuelQty21 = new double[7];
         public double egrMafSetpoint, wastegateRaw, blk20a, blk20b, blk23a, blk23g;
+        public double ecuBatteryVoltage;      // block 0x16 data[2-3] * 5 / 3072 (WJdiag-Pro "Battery Voltage")
         // security / calibration blocks
         public double egrDuty, wastegateDuty;
         public double fuelRaw14;        // block 0x21[14-15] raw (ECU "fuel level" word, often ~constant)

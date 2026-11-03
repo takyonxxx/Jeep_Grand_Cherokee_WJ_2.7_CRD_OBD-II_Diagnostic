@@ -1862,7 +1862,7 @@ void MainWindow::onECUDataUpdated(const TCMDiagnostics::ECUStatus &ecu)
     ESET(m_dashEgrVal, QString::number(ecu.egrDuty, 'f', 0));
     ESET(m_dashWgVal, QString::number(ecu.wastegate, 'f', 0));
 
-    // Fuel Level: block 0x21 data[16-17] - 137 = % (WJdiag-Pro match), sender data[0-1] * 0.0048 V
+    // Fuel Level: from the sender voltage (block 0x21 data[0-1] * 0.0048 V) with the WJdiag-Pro curve
     // Tank: 78L (resmi spec), liters = pct * 78.0 / 100
     if (m_dashFuelLevelVal && ecu.fuelLevel > 0) {
         double liters = ecu.fuelLevel * 78.0 / 100.0;

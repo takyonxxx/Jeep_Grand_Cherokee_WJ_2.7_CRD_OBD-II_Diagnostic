@@ -1046,9 +1046,10 @@ void WJDiagnostics::parseTCMBlock(uint8_t blk, const QByteArray &d, TCMStatus &t
             //   data[4-5] 818 -> "Sensor Supply 5.73 V"  => x7/1000
             //   data[6-7] 534 -> "Solenoid Supply 13.05" => /41  (/40 read 0.3 V too high)
             //   data[8-9] constant per session (0x0807 / 0x0504): not a voltage.
-            tcm.tcmBattery = u16(2) / 41.0;              // [0-1]
+            // Same-second capture 2026-11-03 22:52: 535 -> "Battery 13.38 V", 534 -> "Solenoid 13.35 V" => /40
+            tcm.tcmBattery = u16(2) / 40.0;              // [0-1]
             tcm.sensorSupply = u16(6) * 7.0 / 1000.0;    // [4-5]
-            tcm.solenoidSupply = u16(8) / 41.0;          // [6-7]
+            tcm.solenoidSupply = u16(8) / 40.0;          // [6-7]
         }
         break;
     case 0x33:
@@ -1056,10 +1057,11 @@ void WJDiagnostics::parseTCMBlock(uint8_t blk, const QByteArray &d, TCMStatus &t
         // TCC press=0.000, Shift PSI=1.904, Mod PSI=1.499
         // NOT wheel speeds! Pressure data
         if (n >= 12) {
-            tcm.tccPressure = u16(2) / 1000.0;  // [0-1] TCC pressure (36→0.036≈0)
-            // [2-3]=0x0771=1905, [4-5]=0x05DC=1500
-            tcm.shiftPsi = u16(6) / 365.0;      // [4-5] Shift PSI (696/365=1.9≈1.904)
-            tcm.modulationPsi = u16(8) / 462.0;  // [6-7] Modulation PSI (692/462=1.5≈1.499)
+            // Same-second WJdiag-Pro capture 2026-11-03 22:52: data[2-3] 1935 -> "Shift PSI 1.934 Bar",
+            // data[4-5] 1500 -> "Modulation PSI 1.499 Bar", data[14-15] 0 -> "TCC pressure 0.000 Bar": all /1000.
+            tcm.shiftPsi = u16(4) / 1000.0;          // data[2-3]
+            tcm.modulationPsi = u16(6) / 1000.0;     // data[4-5]
+            if (n >= 18) tcm.tccPressure = u16(16) / 1000.0;   // data[14-15]
         }
         break;
     case 0x32:
@@ -1089,12 +1091,18 @@ void WJDiagnostics::readABSLiveData(std::function<void(const ABSStatus&)> cb)
 
             // WJ CRD live data params: LF/RF/LR/RR Wheel Speed, Vehicle Speed
             struct PIDRead { QString cmd; QString name; };
+            // PIDs from the WJdiag-Pro capture (ABS page, 2026-11-03 22:54): wheel speeds 36 01..04,
+            // vehicle speed 36 05 (u16 / 100 = km/h: 0x0034 -> 0.52), ignition 32 10 (u8 / 8 V: 0x6D -> 13.6),
+            // pump 32 11 (u8 / 8 V), reference 32 13 (u8 * 0.053 V: 0xBC -> 9.96).
             auto pids = std::make_shared<QList<PIDRead>>(QList<PIDRead>{
-                {"20 01 00", "LF Wheel Speed"},
-                {"20 02 00", "RF Wheel Speed"},
-                {"20 03 00", "LR Wheel Speed"},
-                {"20 04 00", "RR Wheel Speed"},
-                {"20 10 00", "Vehicle Speed"},
+                {"36 01 00", "LF Wheel Speed"},
+                {"36 02 00", "RF Wheel Speed"},
+                {"36 03 00", "LR Wheel Speed"},
+                {"36 04 00", "RR Wheel Speed"},
+                {"36 05 00", "Vehicle Speed"},
+                {"32 10 00", "Ignition Voltage"},
+                {"32 11 00", "Pump Voltage"},
+                {"32 13 00", "Reference Voltage"},
             });
 
             *doNext = [this, abs, step, doNext, pids, cb]() {
@@ -1112,11 +1120,14 @@ void WJDiagnostics::readABSLiveData(std::function<void(const ABSStatus&)> cb)
                         int v = c.mid(4, 4).toInt(&ok, 16);
                         if (!ok) v = c.mid(4, 2).toInt(&ok, 16);
                         if (ok) {
-                            if (p.cmd == "20 01 00") abs->wheelLF = v;
-                            else if (p.cmd == "20 02 00") abs->wheelRF = v;
-                            else if (p.cmd == "20 03 00") abs->wheelLR = v;
-                            else if (p.cmd == "20 04 00") abs->wheelRR = v;
-                            else if (p.cmd == "20 10 00") { abs->vehicleSpeed = v; }
+                            if (p.cmd == "36 01 00") abs->wheelLF = v / 100.0;
+                            else if (p.cmd == "36 02 00") abs->wheelRF = v / 100.0;
+                            else if (p.cmd == "36 03 00") abs->wheelLR = v / 100.0;
+                            else if (p.cmd == "36 04 00") abs->wheelRR = v / 100.0;
+                            else if (p.cmd == "36 05 00") abs->vehicleSpeed = v / 100.0;
+                            else if (p.cmd == "32 10 00") abs->ignitionV = (v >> 8) / 8.0;
+                            else if (p.cmd == "32 11 00") abs->pumpV = (v >> 8) / 8.0;
+                            else if (p.cmd == "32 13 00") abs->referenceV = (v >> 8) * 0.053;
                         }
                     }
                     (*step)++;
@@ -1196,6 +1207,14 @@ void WJDiagnostics::rawSendCommand(const QString &cmd, std::function<void(const 
 }
 
 // --- ECU Block Parser ---
+
+// WJdiag-Pro fuel level: 5 V resistive-divider fit through three real-car Pro readings
+// (2.13 V -> 38 %, 2.23 V -> 32 %, 2.47 V -> 15 %).
+double WJDiagnostics::fuelPercentFromVolts(double v)
+{
+    if (v <= 0.05 || v >= 4.95) return 0.0;
+    return qBound(0.0, 111.15 - 98.46 * v / (5.0 - v), 100.0);
+}
 
 void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatus &ecu)
 {
@@ -1292,12 +1311,14 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
             // data[8-9] = NOT fuelActual (fuelActual comes from 0x32)
             ecu.fuelStartSet = u16(12) / 100.0;        // data[10-11] Fuel QTY Start Setpoint
             ecu.fuelLimit = u16(14) / 100.0;           // data[12-13] Fuel QTY Limit
-            // Fuel, matched against the WJdiag-Pro screen on three real-car days (2026-10-28 / 11-02 / 11-03):
-            //   data[0-1]  = fuel sender ADC, voltage = raw * 0.0048          (443 -> 2.13 V, Pro 2.13 V)
-            //   data[16-17] = fuel level, % = raw - 137                        (169 -> 32 %, 152 -> 15 %, 175 -> 38 %)
-            //   data[14-15] sits at ~49.x whatever the tank holds: NOT the level. Never derive % from the voltage.
-            ecu.fuelLevelV = u16(2) * 0.0048;          // data[0-1] Fuel Level Sensor Voltage
-            if (n >= 20) ecu.fuelLevel = qBound(0.0, u16(18) - 137.0, 100.0);   // data[16-17] Fuel Level %
+            // data[0-1] = fuel sender ADC, voltage = raw * 0.0048 (443 -> 2.13 V, Pro 2.13 V).
+            // Fuel level: WJdiag-Pro derives it from the sender voltage, not from a block field (same
+            // day data[16-17] went 175 -> 206 while Pro stayed at 38 % with 2.13 V). Three Pro readings
+            // (2.13 V -> 38 %, 2.23 V -> 32 %, 2.47 V -> 15 %) fit a 5 V resistive divider exactly:
+            //   level % = 111.15 - 98.46 * V / (5 - V)      (clamped 0..100)
+            // Verified range 15..38 %; 100 % ~ 0.5 V, 0 % ~ 2.65 V by extrapolation.
+            ecu.fuelLevelV = u16(2) * 0.0048;
+            ecu.fuelLevel = fuelPercentFromVolts(ecu.fuelLevelV);
         }
         break;
 
@@ -1374,6 +1395,7 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
             ecu.idleRpmSet = u16(2);                    // data[0-1] = 750 Idle RPM ✓
             ecu.lowIdleSetpoint = ecu.idleRpmSet;       // Alias for live data display
         }
+        if (n >= 10) ecu.mafEgrSetpoint = u16(8) / 10.0; // data[6-7] 13521 -> Pro "MAF for EGR Setpoint 1352 mg/str"
         break;
 
     case 0x32:
@@ -1433,10 +1455,9 @@ void WJDiagnostics::parseECUBlock(uint8_t localID, const QByteArray &d, ECUStatu
         // Real idle: 0C97 11E8 0079 0000 0008 0000 0000 0000 0076
         // [0-1]=3223 const, [2-3]=4584 dynamic(3144-4584), [4-5]=121
         // [16-17]=118 dyn(118-122)
-        if (n >= 8) {
-            ecu.mafEgrSetpoint = u16(2);                // data[0-1] EGR/MAF raw (3223)
-            ecu.wastegate = u16(4);                     // data[2-3] Wastegate raw (4584 dyn)
-        }
+        // Same-second WJdiag-Pro capture 2026-11-03: data[16-17] 0x55/0x56 = "Wastegate Solenoid 85 %";
+        // "MAF for EGR Setpoint 1352 mg/str" is block 0x30 data[6-7] (13521) / 10, not this block.
+        if (n >= 20) ecu.wastegate = u16(18);          // data[16-17] wastegate duty %
         break;
     case 0x62:
         // Block 0x62: 4 data bytes after "61 62"

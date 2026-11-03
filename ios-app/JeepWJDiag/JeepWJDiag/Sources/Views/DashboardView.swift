@@ -110,8 +110,8 @@ struct DashboardPanel: View {
                 GaugeCell(title: "M-TEMP", value: String(format: "%.0f", ecu.coolantTemp), unit: "C",
                           color: ecu.coolantTemp > 105 ? .red : ecu.coolantTemp > 95 ? .orange : .green)
                 GaugeCell(title: "MAF", value: String(format: "%.0f", ecu.mafFlow), unit: "mg/s")
-                GaugeCell(title: "BATT", value: String(format: "%.1f", ecu.batteryVoltage), unit: "V",
-                          color: ecu.batteryVoltage < 11.5 ? .red : .green)
+                GaugeCell(title: "BATT", value: String(format: "%.1f", ecu.ecuBatteryVoltage > 0 ? ecu.ecuBatteryVoltage : ecu.batteryVoltage), unit: "V",
+                          color: (ecu.ecuBatteryVoltage > 0 ? ecu.ecuBatteryVoltage : ecu.batteryVoltage) < 11.5 ? .red : .green)
             }
         }
     }

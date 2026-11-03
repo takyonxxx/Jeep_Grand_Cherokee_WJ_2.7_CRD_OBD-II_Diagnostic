@@ -122,14 +122,16 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 | PEDAL | 0x36 / 0x12 | data[12-13] | **raw / 100 = %** | 2710 → 100.00% | **0x36[0-1] is NOT the pedal** (small signed word, goes negative on overrun → "655%" bug). Clamp 0–100 |
 | GEAR (ECU) | 0x36 | data[2] | 0=P/N, 1–5 | 1@9 km/h, 2@17, 3 in pull, 5 cruise | matches TCM 0x30[9] |
 | FUEL L/h | calculated | rpm × fuelActual | L/h or L/100km | 1.2 | — |
-| FUEL LEVEL | 0x21 | data[16-17] | **raw − 137 = %** (matches WJdiag-Pro on 3 real-car days: 169→32 %, 152→15 %, 175→38 %) | 175 = 38 % | 78 L tank; data[14-15] is a ~49.x constant, not the level |
+| FUEL LEVEL | 0x21 | data[0-1] (sender V) | **111.15 − 98.46 × V/(5−V) = %** (5 V divider fit through 3 WJdiag-Pro readings: 2.13 V→38 %, 2.23→32, 2.47→15; same-second capture 2026-11-03) | 2.13 V = 38 % | 78 L tank. data[16-17] is NOT the level (175 and 206 on the same day while Pro stayed 38 %) |
 | FUEL SENS V | 0x21 | data[0-1] | **raw × 0.0048 = V** | 443 = 2.13 V (Pro 2.13 V) | — |
 | INJ-Q | 0x32 (0x28 alt) | data[0-1] | /100 = mg/str | 8.81 | 0x28[2-3] for actual |
 | M-TEMP | 0x22 | data[0-1] | /10 - 273.1 = °C | 57.8°C | — |
 | BOOST | 0x22 | data[14-15] | /1000 = Bar | 0.910 | — |
 | RAIL | 0x12 | data[18-19] | **×0.101 = Bar** | 245.5 | constant 0.101 |
 | MAF | 0x36 | data[6-7] | /10 = Mg/Str | 473 | — |
-| BATT | 0x16 | data[2-3] | **×5/3072 = V** | 13.85 | ATRV overrides at cycle end |
+| WASTEGATE | 0x37 | data[16-17] | raw (%) | 85 (Pro "Wastegate Solenoid 85 %", same second) | data[2-3] (old mapping) is something else |
+| MAF for EGR setpoint | 0x30 | data[6-7] | /10 = mg/str | 13521 → 1352 (Pro 1352) | live table only |
+| BATT | 0x16 | data[2-3] | **×5/3072 = V** | 8519 → 13.86 (Pro "Battery Voltage" 13.81) | ATRV only as fallback |
 
 ### TCM Dashboard
 
@@ -140,10 +142,12 @@ Blocks 0x62/0xB0/0xB1/0xB2 are readable without explicit security unlock when se
 | TURBIN | 0x31 | data[4-5] | raw RPM | 738 |
 | T-TEMP | 0x30 | data[11] | **raw - 50 = °C** | 58°C |
 | LIMP | 0x30 | data[9]+maxGear | logic | Normal |
-| LINE-P | 0x33 | data[6-7] | **/365 = Bar** | 1.871 |
+| LINE-P (shift) | 0x33 | data[2-3] | **/1000 = Bar** | 1935 → 1.934 (Pro 1.934, same second) |
+| MOD-P | 0x33 | data[4-5] | **/1000 = Bar** | 1500 → 1.499 (Pro 1.499) |
+| TCC pressure | 0x33 | data[14-15] | /1000 = Bar | 0 → 0.000 (Pro 0.000) |
 | TCC | 0x30 | data[0-1] | signed raw RPM | 12 |
-| SOL V | 0x34 | data[6-7] | /41 = V (Pro 534 → 13.05) | 13.05 |
-| BATT (TCM) | 0x34 | data[0-1] | /41 = V (Pro 537 → 13.10); ATRV only as fallback | 13.10 |
+| SOL V | 0x34 | data[6-7] | **/40 = V** | 534 → 13.35 (Pro 13.35, same second) |
+| BATT (TCM) | 0x34 | data[0-1] | **/40 = V** | 535 → 13.38 (Pro 13.38, same second); ATRV only as fallback |
 | BATT | ATRV | ELM327 | adapter-side V | 13.3 |
 | (0x34 data[8-9]) | 0x34 | data[8-9] | **not a voltage** — constant per session (0x0807 / 0x0504), unmapped | — |
 

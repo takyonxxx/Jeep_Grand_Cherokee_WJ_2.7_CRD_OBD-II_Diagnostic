@@ -375,11 +375,25 @@ Real vehicle idle: `018F 03E3 03FD 004A 012A 03FD 024A 01EF 00B4 015D`
 | [12-13] | u16 | (reserved) | /100 | 5.86 |
 | [0-1] | u16 | **Fuel Level Sensor Voltage** | **× 0.0048 = V** | **443 = 2.13 V** (WJdiag-Pro 2.13 V) |
 | [14-15] | u16 | ~49.x constant (NOT the fuel level) | /10 | 49.5 |
-| [16-17] | u16 | **Fuel Level** | **raw − 137 = %** (WJdiag-Pro match on 3 real-car days: 169→32 %, 152→15 %, 175→38 %) | **175 = 38 %** |
+| [16-17] | u16 | **not the fuel level** (175 and 206 on 2026-11-03 while Pro stayed at 38 %); meaning unknown | raw | 175 / 206 |
+
+**Fuel Level (WJdiag-Pro)** is derived from the sender voltage, not read from a block. Three Pro readings
+(2.13 V → 38 %, 2.23 V → 32 %, 2.47 V → 15 %) fit a 5 V resistive divider exactly:
+`level % = 111.15 − 98.46 × V / (5 − V)`, clamped 0–100 (verified 15–38 %; 100 % ≈ 0.5 V, 0 % ≈ 2.65 V extrapolated).
+The same-second ESP32 sniffer capture of 2026-11-03 22:55 is the reference (`captures/pcap/elmsniff_20261103_224924.*`).
 | [18-19] | u16 | (reserved) | /100 | 3.49 |
 
 ### Block 0x37 (34 data bytes) — EGR/Wastegate
 Real BLE: `0C67 105D 0079 0000 0008...`
+Real 2026-11-03 22:55: `0D01 0F87 0079 0000 0008 0000 0000 0000 0056 0000 0000 0105 0040 0000 0000 0001 0000`
+
+| Offset | Bytes | Field | Formula | Verified Value |
+|--------|-------|-------|---------|-------------------|
+| [0-1] | u16 | unknown (3329, slowly varying) | — | |
+| [2-3] | u16 | unknown (3953–4006, dynamic) — NOT the wastegate | — | |
+| [16-17] | u16 | **Wastegate Solenoid** — WJdiag-Pro "Wastegate Solenoid 85 %" | raw = % | 0x55/0x56 → 85/86 (same second) |
+
+"MAF for EGR Setpoint 1352 mg/str" is block 0x30 data[6-7] / 10 (13521), duplicated in data[8-9].
 
 ### Block 0x13 (26 data bytes) — Oil/AC/Baro
 Real BLE: `0393 024A 02E4 02E4 0000 08B7 0000 0250 FFFC 0BD7 0085 03FD 0BCC`
@@ -440,10 +454,10 @@ Real 2026-09-25 (engine running, P, ATRV 13.3 V): `021E 0134 0332 021D 0504 0000
 
 | Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
-| [0-1] | u16 | **Battery (TCM-measured)** — WJdiag-Pro "Battery" | **/41 = V** | 537→13.10 (Pro 13.10) |
+| [0-1] | u16 | **Battery (TCM-measured)** — WJdiag-Pro "Battery" | **/40 = V** | 535→13.38 (Pro 13.38, same second 2026-11-03) |
 | [2-3] | u16 | Unknown (0x03FF / 0x0134) | — | |
 | [4-5] | u16 | **Sensor Supply** | ×7/1000 = V | ✓ 5.73V |
-| [6-7] | u16 | **Solenoid Supply** | **/41 = V** | 534→13.02 (Pro 13.05; /40 read 0.3 V high) |
+| [6-7] | u16 | **Solenoid Supply** | **/40 = V** | 534→13.35 (Pro 13.35, same second) |
 | [8-9] | u16 | **Unknown — not a voltage** | constant per session (0x0807 → 0x0504) | old "/154.5" mapping gave 8.3 V while ATRV read 13.3 V |
 
 ### Block 0x33 (16 data bytes) — Pressures (NOT wheel speeds!)
@@ -451,12 +465,13 @@ Real BLE: `0024 0771 05DC 02B8 02B4 02E3 02E1 0000`
 
 | Offset | Bytes | Field | Formula | Verified Value |
 |--------|-------|-------|---------|-------------------|
-| [0-1] | u16 | **TCC Pressure** | /1000 = Bar | ✓ 0.000 |
-| [6-7] | u16 | **Shift PSI** | /365 = Bar | ✓ 1.904 |
-| [8-9] | u16 | **Modulation PSI** | /462 = Bar | ✓ 1.499 |
+| [0-1] | u16 | unknown (36 at idle, 0 driving) | — | 36 |
+| [2-3] | u16 | **Shift PSI** | **/1000 = Bar** | 1935 → 1.934 (Pro 1.934, same second 2026-11-03); 7700 → 7.7 bar in gear |
+| [4-5] | u16 | **Modulation PSI** | **/1000 = Bar** | 1500 → 1.499 (Pro 1.499); 500–1321 in gear |
+| [6-13] | u16×4 | unknown (686 686 730 732 at idle, 0 3 798 796 in gear) | — | |
+| [14-15] | u16 | **TCC Pressure** | /1000 = Bar | 0 → 0.000 (Pro 0.000) |
 
-Idle in P the capture reads 683/683 → 1.87 / 1.48 bar (Pro list 1.904 / 1.499); while driving in gear both fields
-drop to 0 / 3 and [2-3]/[4-5] move instead (7700, 500–1321) — unmapped, so the apps show ~0 bar on the move.
+The old /365 and /462 divisors were a fit to the wrong fields; the same-second capture settles the layout.
 
 ### Block 0x32 (13 data bytes) — Vehicle Speed (Verified 2026-03-18)
 Real vehicle idle: all zeros. Driving: `17 00 ...` (23 km/h), `1F 00 ...` (31 km/h)

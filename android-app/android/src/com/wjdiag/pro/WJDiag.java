@@ -153,6 +153,13 @@ public final class WJDiag {
         if (m == null || m.bus != Bus.KLINE) stopKeepalive();
     }
 
+    /** WJdiag-Pro fuel level: 5 V resistive-divider fit through three real-car Pro readings. */
+    static double fuelPercentFromVolts(double v) {
+        if (v <= 0.05 || v >= 4.95) return 0;
+        double pct = 111.15 - 98.46 * v / (5.0 - v);
+        return Math.max(0, Math.min(100, pct));
+    }
+
     static double pedalPercent(int raw) { return Math.min(100.0, Math.max(0.0, raw / 100.0)); }
 
     // ------------------------------------------------------------------ keepalive
@@ -363,11 +370,21 @@ public final class WJDiag {
                     ecu.fuelRaw14 = Models.u16(d, 0);
                     ecu.fuelSensorVoltage = ecu.fuelRaw14 * 0.0048;
                 }
-                if (n >= 18) ecu.fuelLevel = Math.max(0, Math.min(100, Models.u16(d, 16) - 137.0));
+                // Fuel level: WJdiag-Pro derives it from the sender voltage, not from a block field (same
+                // day data[16-17] went 175 -> 206 while Pro stayed at 38 % with 2.13 V). Three Pro readings
+                // (2.13 V -> 38 %, 2.23 V -> 32 %, 2.47 V -> 15 %) fit a 5 V resistive divider exactly:
+                //   level % = 111.15 - 98.46 * V / (5 - V)      (clamped 0..100)
+                // Verified range 15..38 %; 100 % ~ 0.5 V, 0 % ~ 2.65 V by extrapolation.
+                if (n >= 2) ecu.fuelLevel = fuelPercentFromVolts(ecu.fuelSensorVoltage);
                 break;
             case 0x37:
                 if (n >= 2) ecu.egrMafSetpoint = Models.u16(d, 0);
                 if (n >= 4) ecu.wastegateRaw = Models.u16(d, 2);
+                if (n >= 18) ecu.wastegateDuty = Models.u16(d, 16);   // % (Pro "Wastegate Solenoid": 85 <-> 0x55)
+                break;
+            case 0x16:
+                // data[2-3] * 5 / 3072 = battery as the ECU measures it (8519 -> 13.86 V, Pro "Battery Voltage" 13.81 V)
+                if (n >= 4) ecu.ecuBatteryVoltage = Models.u16(d, 2) * 5.0 / 3072.0;
                 break;
             case 0x20:
                 if (n >= 2) ecu.blk20a = Models.u16(d, 0);
@@ -379,7 +396,7 @@ public final class WJDiag {
                 break;
             case 0x62:
                 // real vehicle: 33 4A 94 84 -> EGR 51 %, wastegate 74 %
-                if (n >= 4) { ecu.egrDuty = (d[0] & 0xFF) * 100.0 / 100.0; ecu.wastegateDuty = (d[2] & 0xFF) * 100.0 / 200.0; }
+                if (n >= 4) ecu.egrDuty = (d[0] & 0xFF) * 100.0 / 100.0;   // wastegate comes from block 0x37 data[16-17]
                 break;
             default: break;
         }
@@ -446,14 +463,17 @@ public final class WJDiag {
                 //   data[0-1] 537 -> "Battery 13.10 V"      => /41   (TCM-measured supply)
                 //   data[4-5] 818 -> "Sensor Supply 5.73 V"  => x7/1000
                 //   data[6-7] 534 -> "Solenoid Supply 13.05" => /41   (/40 read 0.3 V too high)
-                if (n >= 2) tcm.tcmBatteryVoltage = Models.u16(d, 0) / 41.0;
+                if (n >= 2) tcm.tcmBatteryVoltage = Models.u16(d, 0) / 40.0;   // 535 -> 13.38 V (Pro 13.38)
                 if (n >= 6) tcm.sensorSupply = Models.u16(d, 4) * 7.0 / 1000.0;
-                if (n >= 8) tcm.solenoidVoltage = Models.u16(d, 6) / 41.0;
+                if (n >= 8) tcm.solenoidVoltage = Models.u16(d, 6) / 40.0;     // 534 -> 13.35 V (Pro 13.35)
                 break;
             case 0x33:
-                if (n >= 2) tcm.tccPressure = Models.u16(d, 0) / 1000.0;
-                if (n >= 8) tcm.shiftPressure = Models.u16(d, 6) / 365.0;
-                if (n >= 10) tcm.modulationPressure = Models.u16(d, 8) / 462.0;
+                // WJdiag-Pro Transmission screen vs the same-second capture (2026-11-03 22:52):
+                //   data[2-3] 1935 -> "Shift PSI 1.934 Bar", data[4-5] 1500 -> "Modulation PSI 1.499 Bar",
+                //   data[14-15] 0 -> "TCC pressure 0.000 Bar"  => all three are /1000 bar
+                if (n >= 4) tcm.shiftPressure = Models.u16(d, 2) / 1000.0;
+                if (n >= 6) tcm.modulationPressure = Models.u16(d, 4) / 1000.0;
+                if (n >= 16) tcm.tccPressure = Models.u16(d, 14) / 1000.0;
                 break;
             case 0x32:
                 if (n >= 1) tcm.vehicleSpeed = d[0] & 0xFF;

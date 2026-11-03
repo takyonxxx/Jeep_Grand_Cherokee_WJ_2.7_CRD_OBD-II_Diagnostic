@@ -161,6 +161,7 @@ struct ECUStatus {
     var fuelLevel: Double = 0
     // Block 0x21[16-17]: /100 = V
     var fuelSensorVoltage: Double = 0
+    var ecuBatteryVoltage: Double = 0     // block 0x16 data[2-3] * 5 / 3072 (WJdiag-Pro "Battery Voltage")
     // Block 0x28[2-3]: /100 = mg/str
     var injectionQty: Double = 0
     // Block 0x28[4-13]: per-cylinder RPMs

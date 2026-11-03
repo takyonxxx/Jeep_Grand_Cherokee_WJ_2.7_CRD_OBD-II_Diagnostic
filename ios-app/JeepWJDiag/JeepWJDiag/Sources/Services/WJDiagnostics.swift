@@ -162,6 +162,12 @@ final class WJDiagnostics: ObservableObject {
     /// Pedal word -> 0...100 %. Anything outside the physical range means the
     /// word was not the pedal (wrong offset / sign) and is clamped so the smoke
     /// test never sees a "655 %" pedal again.
+    /// WJdiag-Pro fuel level: 5 V resistive-divider fit through three real-car Pro readings.
+    static func fuelPercentFromVolts(_ v: Double) -> Double {
+        if v <= 0.05 || v >= 4.95 { return 0 }
+        return max(0, min(100, 111.15 - 98.46 * v / (5.0 - v)))
+    }
+
     static func pedalPercent(_ raw: UInt16) -> Double {
         return min(100.0, max(0.0, Double(raw) / 100.0))
     }
@@ -484,8 +490,8 @@ final class WJDiagnostics: ObservableObject {
                 if data.count >= 2 { self.ecuStatus.fuelQuantity = Double(u16(data, 0)) / 100.0 }
 
             case 0x16:
-                // Block 0x16: Alternator data only. Battery voltage comes from ATRV (Qt behavior)
-                break
+                // data[2-3] * 5 / 3072 = battery as the ECU measures it (8519 -> 13.86 V, Pro 13.81 V)
+                if data.count >= 4 { self.ecuStatus.ecuBatteryVoltage = Double(u16(data, 2)) * 5.0 / 3072.0 }
 
             case 0x26:
                 // Speed [2-3] /100
@@ -503,14 +509,21 @@ final class WJDiagnostics: ObservableObject {
                 if data.count >= 2 {
                     self.ecuStatus.fuelSensorVoltage = Double(u16(data, 0)) * 0.0048
                 }
-                if data.count >= 18 {
-                    self.ecuStatus.fuelLevel = max(0, min(100, Double(u16(data, 16)) - 137))
+                // Fuel level: WJdiag-Pro derives it from the sender voltage, not from a block field (same
+                // day data[16-17] went 175 -> 206 while Pro stayed at 38 % with 2.13 V). Three Pro readings
+                // (2.13 V -> 38 %, 2.23 V -> 32 %, 2.47 V -> 15 %) fit a 5 V resistive divider exactly:
+                //   level % = 111.15 - 98.46 * V / (5 - V)      (clamped 0..100)
+                // Verified range 15..38 %; 100 % ~ 0.5 V, 0 % ~ 2.65 V by extrapolation.
+                if data.count >= 2 {
+                    self.ecuStatus.fuelLevel = WJDiagnostics.fuelPercentFromVolts(self.ecuStatus.fuelSensorVoltage)
                 }
 
             case 0x37:
                 // EGR/MAF setpoint [0-1] raw, wastegate/EGR actuator [2-3] raw
                 if data.count >= 2 { self.ecuStatus.egrMafSetpoint = Double(u16(data, 0)) }
                 if data.count >= 4 { self.ecuStatus.wastegateRaw = Double(u16(data, 2)) }
+                // data[16-17] 0x55 = Pro "Wastegate Solenoid 85 %" (same-second capture 2026-11-03)
+                if data.count >= 18 { self.ecuStatus.wastegateRaw = Double(u16(data, 16)) }
 
             case 0x20:
                 // MAF detail words [0-1], [2-3] raw
@@ -614,15 +627,17 @@ final class WJDiagnostics: ObservableObject {
                 // 13.3 V). Battery comes from ATRV only (end of each cycle).
                 // WJdiag-Pro TCM screen vs its capture (idle in P): data[0-1] 537 -> Battery 13.10 V,
                 // data[6-7] 534 -> Solenoid 13.05 V  => both /41 (/40 read 0.3 V too high).
-                if data.count >= 2 { self.tcmStatus.tcmBatteryVoltage = Double(u16(data, 0)) / 41.0 }
-                if data.count >= 8 { self.tcmStatus.solenoidVoltage = Double(u16(data, 6)) / 41.0 }
+                if data.count >= 2 { self.tcmStatus.tcmBatteryVoltage = Double(u16(data, 0)) / 40.0 }   // 535 -> 13.38 V (Pro)
+                if data.count >= 8 { self.tcmStatus.solenoidVoltage = Double(u16(data, 6)) / 40.0 }      // 534 -> 13.35 V (Pro)
 
             case 0x33:
                 // Block 0x33: Pressures (NOT wheel speeds!)
                 // [0-1]=TCC pressure /1000=Bar, [6-7]=shift PSI /365=Bar, [8-9]=mod PSI /462=Bar
-                if data.count >= 2 { self.tcmStatus.tccPressure = Double(u16(data, 0)) / 1000.0 }
-                if data.count >= 8 { self.tcmStatus.shiftPressure = Double(u16(data, 6)) / 365.0 }
-                if data.count >= 10 { self.tcmStatus.modulationPressure = Double(u16(data, 8)) / 462.0 }
+                // Same-second WJdiag-Pro capture 2026-11-03: data[2-3] 1935 -> Shift 1.934 bar,
+                // data[4-5] 1500 -> Modulation 1.499 bar, data[14-15] 0 -> TCC 0.000 bar (all /1000)
+                if data.count >= 4 { self.tcmStatus.shiftPressure = Double(u16(data, 2)) / 1000.0 }
+                if data.count >= 6 { self.tcmStatus.modulationPressure = Double(u16(data, 4)) / 1000.0 }
+                if data.count >= 16 { self.tcmStatus.tccPressure = Double(u16(data, 14)) / 1000.0 }
 
             case 0x32:
                 // [0]=single byte km/h
