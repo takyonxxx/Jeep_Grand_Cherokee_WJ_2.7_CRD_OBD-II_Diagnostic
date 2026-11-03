@@ -515,7 +515,8 @@ public class MainActivity extends Activity implements Elm327.Listener, WJDiag.Li
         double pct = Math.max(0, Math.min(100, e.fuelLevel));
         double liters = pct * 78.0 / 100.0;
         int col = pct < 10 ? C_RED : pct < 25 ? C_ORANGE : C_CYAN;
-        set("e.fuelL", String.format(Locale.US, "DEPO %%%.0f  (~%.0f L)", pct, liters), col);
+        // Tank % and litres plus the sender voltage, the same pair WJdiag-Pro lists (Fuel Level / Sensor Voltage)
+        set("e.fuelL", String.format(Locale.US, "DEPO %%%.0f ~%.0fL %.2fV", pct, liters, e.fuelSensorVoltage), col);
         set("e.map", f("%.0f", e.mapActual));
         double iqNow = e.fuelQuantity > 0 ? e.fuelQuantity : e.injectionQty;
         set("e.fuelMg", f("enj %.1f mg/str", iqNow) + "   ·   " + f("hava %.0f mg/str", e.mafFlow), C_CYAN);
