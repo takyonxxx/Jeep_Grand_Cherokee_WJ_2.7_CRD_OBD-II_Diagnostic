@@ -1,42 +1,34 @@
 """Generate the REAL_ECU block tables for the PC sim and the ESP32 emulator.
 
-Base = real-car frames captured 2026-11-02 18:31 (fuel lamp on, idle), patched so that
-the fields WJdiag-Pro shows on its Engine live screens read like the user's Pro
-screenshots: 754 rpm, coolant 85.7 C, IAT 30.0 C, boost 0.930 bar / setpoint 0.997,
+Base = real-car frames from the ESP32 sniffer capture of 2026-11-03 (WJdiag-Pro screens
+photographed at the same time). Earlier (2026-11-02) frames were patched to look like Pro; 754 rpm, coolant 85.7 C, IAT 30.0 C, boost 0.930 bar / setpoint 0.997,
 MAF 724.9 mg/str, fuel level 38 % / sender 2.13 V (real block 0x21 of 2026-11-03 18:42,
 Pro showed 38 % / 2.13 V: level = data[16-17] - 137), rail 386.69 bar / setpoint 356.175,
 actual fuel qty 8.80 mg/str. Run after editing: python tools/gen_real_ecu.py
 """
 import re, io
 BASE = {
- 0x12:"0C 31 0B 7C 08 B7 08 B7 00 00 02 EF 00 00 02 3A 03 8B 0B BB 02 0E 01 2A 00 50 09 7F 03 A0 00 00",
- 0x30:"02 EE 00 00 00 00 35 03 35 03 03 AC 00 00 00 00 00 00 0B 9D 00 00 00 00",
- 0x22:"0C 31 0B 7C 08 B7 08 B7 00 00 00 00 02 3A 03 8B 0B BB 03 92 02 4E 02 E4 02 E4 02 B5 08 B7 00 00",
- 0x20:"02 97 02 B9 03 FE 00 00 00 93 00 48 01 A7 01 62 01 0A 02 E2 02 50 00 8E 00 98 03 A0 02 2D",
- 0x23:"09 7F 02 52 FF F9 0B A9 03 A0 02 0E 00 16 00 5A 03 FD 01 2A",
- 0x21:"01 BB 03 E3 03 FC 00 4A 01 2A 03 FD 02 4A 01 EF 00 AF 00 F4",
- 0x16:"01 2C 21 34 01 2C 00 00 00 00 00 00 00 00 00 00 01 F4 00 00 27 10 07 B4 00 00 00 00 00 00 00 00 01 F4 00 00 00 00",
- 0x32:"04 46 0C C1 00 00 00 00 0D 56 04 46 04 46 01 A9 01 9A 01 13 00 4F 02 74 02 F2 00 00 00 00 00 00",
- 0x37:"0B AB 12 0F 00 79 00 4C 00 08 00 00 00 00 00 00 00 6C 00 00 00 00 01 05 00 40 00 00 00 00 00 01 00 00",
- 0x13:"03 92 02 4D 02 E4 02 E4 00 00 08 B7 00 00 02 50 FF F9 0B A9 00 16 03 FD 0B 5B",
- 0x36:"00 00 00 00 03 02 13 BB 03 8A 03 92 00 00 00 00 03 A6 00 00 02 B5 0B BB FF FF 13 BB 00 19 FF D4 00 2D 89 04 00 00",
- 0x26:"00 00 00 00 00 00 79 F1 7F FF 00 00 2F A0 00 29 00 29 00 29 00 29 00 48 00 23 00 00 0C 31",
+ 0x12:"0C B5 0B E4 08 B7 08 B7 00 00 02 EE 00 00 02 28 03 91 0B BB 02 0E 01 2A 00 50 09 7F 03 A0 00 00",
+ 0x13:"03 95 02 4C 02 E4 02 E4 00 00 08 B7 00 00 02 4F FF FC 0B A9 00 16 03 FD 0B 5B",
+ 0x16:"01 2C 21 41 01 2C 00 00 00 00 00 00 00 00 00 00 01 F4 00 00 27 10 07 B4 00 00 00 00 00 00 00 00 01 F4 00 00 00 00",
+ 0x20:"02 1B 02 56 03 FE 00 00 00 94 00 48 01 94 01 64 01 04 02 E2 02 50 00 8E 00 98 03 A0",
+ 0x21:"01 BB 03 E3 03 FD 00 3C 01 2A 03 FE 02 4D 01 F7 00 C3 01 F4",
+ 0x22:"0C B5 0B E4 08 B7 08 B7 00 00 00 00 02 29 03 94 0B 4D 03 92 02 4E 02 E4 02 E4 02 B5 08 B7 00 00",
+ 0x23:"09 7F 02 4B FF FC 0B F9 03 A0 02 B1 00 5E 00 39 03 FD 01 2A",
+ 0x26:"00 00 00 00 00 00 7A 0D 7F FF 00 00 2F A0 00 29 00 29 00 29 00 29 00 48 00 23 00 00 0C 31",
+ 0x28:"02 EE 03 67 02 EE 02 EE 02 EE 02 EC 02 EE 00 00 00 16 FF ED FF AA FF EC 00 71 00 00",
+ 0x30:"02 EE 00 00 00 00 34 AC 34 AC 03 AC 00 00 00 00 00 00 0B 9D 00 00 00 00",
+ 0x32:"03 6B 0A B9 00 00 00 00 0D 56 03 6B 03 6B 01 98 01 7F 00 13 00 4F 02 74 02 F2 00 00 00 00 00 00",
  0x34:"00 08 10 00 00 00 00 04 00 00 00 00 00 00 00 00 03 FF 00 03 00 00 00 00 00 03 00 00 00 00 00 04 00 00",
- 0x28:"02 EE 04 49 02 EE 02 F0 02 EE 02 EC 02 EC 00 00 00 0A FF ED FF AA FF EC 00 71 00 00",
+ 0x36:"00 00 00 00 03 02 13 14 03 91 03 95 00 00 00 00 03 9A 00 00 02 B5 0B BB FF FF 13 BB 00 19 FF D4 00 2D 89 04",
+ 0x37:"0D 0B 0F A6 00 79 00 00 00 08 00 00 00 00 00 00 00 53 00 00 00 00 01 05 00 40 00 00 00 00 00 01 00 00",
 }
-RPM=754; COOL=int((85.7+273.1)*10); IAT=int((30.0+273.1)*10); MAP=930; BSET=997; MAF=7249
-RAIL=int(round(386.69/0.101)); RSET=int(round(356.175/0.101)); FUELV=int(round(2.13/0.0048)); FUELPCT=38; IQ=880
-PATCH = {
- 0x12:{0:COOL, 2:IAT, 10:RPM, 16:MAP, 18:RAIL},
- 0x22:{0:COOL, 2:IAT, 14:MAP, 16:RAIL},
- 0x36:{6:MAF, 8:BSET, 22:RAIL, 26:MAF},
- 0x13:{16:RAIL},
- 0x23:{6:RAIL},
- 0x30:{18:RSET},
- 0x21:{0:FUELV, 16:FUELPCT+137},
- 0x32:{0:IQ, 10:IQ, 12:IQ},
- 0x28:{0:RPM, 2:IQ},
-}
+# Frames are the real ones from captures/pcap/elmsniff_20261103_224924.txt (22:49-22:56,
+# engine idling in P) recorded while WJdiag-Pro showed: 751 rpm, coolant 59.5 C, IAT 33 C,
+# baro 0.916 bar, boost setpoint 0.938, MAF 486 mg/str, rail 292.3 bar / setpoint 292.6,
+# fuel level 38 % (sender 2.13 V), actual fuel 8.23 mg/str, wastegate 85 %, battery 13.81 V.
+# Nothing is patched any more.
+PATCH = {}
 def frames():
     out={}
     for blk,h in BASE.items():
