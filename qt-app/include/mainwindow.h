@@ -119,6 +119,9 @@ private:
     QWidget *m_dashPanel=nullptr;
     QWidget *m_dashStack=nullptr;
     QVBoxLayout *m_dashLayout=nullptr;
+    QLabel *m_dashLiveLbl=nullptr;          // "● Durdu" / "● CANLI" under the gauges
+    QPushButton *m_dashLiveBtn=nullptr;     // CANLI BAŞLAT / DURDUR toggle (same as the Android app)
+    void syncLiveControls();                // mirror polling state into both start/stop UIs
     QProgressBar *m_throttleBar;
     // ABS tab
     QTableWidget *m_absDtcTable=nullptr;

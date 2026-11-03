@@ -215,12 +215,54 @@ QFrame* MainWindow::createGaugeCard(const QString &title, const QString &initVal
 
 QWidget* MainWindow::createDashboardPanel()
 {
+    QWidget *outer = new QWidget();
+    QVBoxLayout *ol = new QVBoxLayout(outer);
+    ol->setContentsMargins(0,0,0,0);
+    ol->setSpacing(2);
+
     m_dashStack = new QWidget();
     m_dashLayout = new QVBoxLayout(m_dashStack);
     m_dashLayout->setContentsMargins(0,0,0,0);
     m_dashLayout->setSpacing(0);
     rebuildDashboard();
-    return m_dashStack;
+    ol->addWidget(m_dashStack);
+
+    // Live row under the gauges, like the Android app's connection tab:
+    // "● Durdu / ● CANLI" + one CANLI BAŞLAT / DURDUR button (the Live tab's Start/Stop stay in sync).
+    QHBoxLayout *lr = new QHBoxLayout();
+    lr->setContentsMargins(4,0,4,2);
+    lr->setSpacing(8);
+    m_dashLiveLbl = new QLabel(QString::fromUtf8("● Durdu"));
+    m_dashLiveLbl->setStyleSheet("color:#607080;font-size:12px;font-weight:bold;border:none;background:transparent;");
+    lr->addWidget(m_dashLiveLbl, 1);
+    m_dashLiveBtn = new QPushButton(QString::fromUtf8("CANLI BAŞLAT"));
+    m_dashLiveBtn->setMinimumHeight(30);
+    m_dashLiveBtn->setMinimumWidth(140);
+    m_dashLiveBtn->setEnabled(false);   // enabled once the Engine ECU or TCM module is active
+    m_dashLiveBtn->setToolTip(QString::fromUtf8("Seçili modülün canlı verisini başlat / durdur (Live sekmesindeki Start/Stop ile aynı)"));
+    connect(m_dashLiveBtn, &QPushButton::clicked, this, [this]() {
+        if (m_liveData->isPolling()) onStopLiveData(); else onStartLiveData();
+    });
+    lr->addWidget(m_dashLiveBtn);
+    ol->addLayout(lr);
+    syncLiveControls();
+    return outer;
+}
+
+void MainWindow::syncLiveControls()
+{
+    const bool on = m_liveData && m_liveData->isPolling();
+    if (m_dashLiveLbl) {
+        m_dashLiveLbl->setText(QString::fromUtf8(on ? "● CANLI" : "● Durdu"));
+        m_dashLiveLbl->setStyleSheet(QString("color:%1;font-size:12px;font-weight:bold;border:none;background:transparent;")
+                                         .arg(on ? "#00d4b4" : "#607080"));
+    }
+    if (m_dashLiveBtn) {
+        m_dashLiveBtn->setText(QString::fromUtf8(on ? "DURDUR" : "CANLI BAŞLAT"));
+        m_dashLiveBtn->setStyleSheet(on ? "QPushButton{background:#5a2020;color:#ffd0d0;font-weight:bold;border:1px solid #a03030;border-radius:5px;}"
+                                        : "QPushButton{background:#0a3830;color:#00d4b4;font-weight:bold;border:1px solid #00806a;border-radius:5px;}"
+                                          "QPushButton:disabled{background:#0a0e14;color:#303840;border:1px solid #1a1e24;}");
+    }
 }
 
 void MainWindow::rebuildDashboard()
@@ -644,6 +686,7 @@ QWidget* MainWindow::createConnectionTab()
                     m_readDtcBtn->setEnabled(true);
                     m_clearDtcBtn->setEnabled(true);
                     m_startLiveBtn->setEnabled(true);
+                    if (m_dashLiveBtn) m_dashLiveBtn->setEnabled(true);
 
                     // Auto-set live data mode
                     if (me.id == WJDiagnostics::Module::KLineTCM) {
@@ -653,6 +696,7 @@ QWidget* MainWindow::createConnectionTab()
                     } else {
                         // J1850 modules - no live data yet
                         m_startLiveBtn->setEnabled(false);
+                        if (m_dashLiveBtn) m_dashLiveBtn->setEnabled(false);
                     }
 
                     // Auto-set DTC source + update DTC tab buttons
@@ -903,6 +947,7 @@ QWidget* MainWindow::createLiveDataTab()
     m_stopLiveBtn->setMinimumHeight(36);
     m_logBtn->setMinimumHeight(36);
     m_startLiveBtn->setEnabled(false);
+    if (m_dashLiveBtn) m_dashLiveBtn->setEnabled(false);
     m_stopLiveBtn->setEnabled(false);
 
     btnLayout->addWidget(m_startLiveBtn);
@@ -1500,6 +1545,7 @@ void MainWindow::onConnectionStateChanged(ELM327Connection::ConnectionState stat
         m_readDtcBtn->setEnabled(false);
         m_clearDtcBtn->setEnabled(false);
         m_startLiveBtn->setEnabled(false);
+        if (m_dashLiveBtn) m_dashLiveBtn->setEnabled(false);
         m_ctrlActiveHdr.clear();
         m_ctrlInitBusy = false;
         m_actHdrActive.clear();
@@ -1684,6 +1730,13 @@ void MainWindow::onStartLiveData()
     }
 
     if (selected.isEmpty()) {
+        // Nothing ticked yet: take the active module's default parameter set
+        updateLiveTableForModule();
+        for (int i = 0; i < m_liveTable->rowCount() && i < params.size(); ++i)
+            if (m_liveTable->item(i, 0)->checkState() == Qt::Checked)
+                selected.append(params[i].localID);
+    }
+    if (selected.isEmpty()) {
         QMessageBox::warning(this, "Parameter Selection",
                              "You must select at least one parameter!");
         return;
@@ -1694,6 +1747,7 @@ void MainWindow::onStartLiveData()
 
     m_startLiveBtn->setEnabled(false);
     m_stopLiveBtn->setEnabled(true);
+    syncLiveControls();
     statusBar()->showMessage("Live data stream started...");
 }
 
@@ -1701,7 +1755,9 @@ void MainWindow::onStopLiveData()
 {
     m_liveData->stopPolling();
     m_startLiveBtn->setEnabled(true);
+    if (m_dashLiveBtn) m_dashLiveBtn->setEnabled(true);
     m_stopLiveBtn->setEnabled(false);
+    syncLiveControls();
     statusBar()->showMessage("Live data stopped");
 }
 
