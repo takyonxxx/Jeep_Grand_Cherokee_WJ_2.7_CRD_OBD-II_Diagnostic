@@ -47,3 +47,6 @@ WJKEY.keystore
 # --- session scratch (VM transfer ISOs) ---
 tools/w7fix/
 tools/*.iso
+
+# ElmSniff gradle-less build output
+android-app/elmsniff/build/

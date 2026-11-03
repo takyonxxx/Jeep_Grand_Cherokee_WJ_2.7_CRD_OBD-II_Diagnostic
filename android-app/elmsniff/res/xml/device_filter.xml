@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- FTDI FT232 (the ESP32 board's USB-serial bridge) -->
+    <usb-device vendor-id="1027" product-id="24577"/>
+    <!-- Espressif native USB CDC (ESP32-S3 USB port) -->
+    <usb-device vendor-id="12346" product-id="4097"/>
+    <!-- CP210x / CH340 just in case -->
+    <usb-device vendor-id="4292" product-id="60000"/>
+    <usb-device vendor-id="6790" product-id="29987"/>
+</resources>
