@@ -3,6 +3,7 @@
 #include <QMap>
 #include <QVariant>
 #include <QTimer>
+#include <QElapsedTimer>
 #include "elm327connection.h"
 #include "kwp2000handler.h"
 
@@ -275,6 +276,7 @@ private:
     Module m_activeModule = Module::MotorECU;
     BusType m_activeBus = BusType::J1850;  // init: ATSP2 ile J1850 basliyor
     bool m_ecuSecurityUnlocked = false;
+    QElapsedTimer m_klineLastOk;            // restarted on every good K-Line block; a fresh session skips the 81 probe
 
     ECUStatus m_lastECU;
     TCMStatus m_lastTCM;

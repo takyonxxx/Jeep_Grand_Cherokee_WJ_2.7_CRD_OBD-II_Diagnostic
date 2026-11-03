@@ -376,9 +376,15 @@ void WJDiagnostics::switchToModule(Module mod, std::function<void(bool)> done)
             // because each module needs different ATSH/ATWM/ATFI sequence
             // Even if m_activeModule matches, the bus may have timed out
             if (targetMod == m_activeModule) {
-                // Same module - verify session is alive with a quick test
-                // Use 81 (StartCommunication) instead of 3E (TesterPresent)
-                // Real vehicle never sends 3E, uses 81 for both keepalive and session check
+                // Same module. The live loop lands here every cycle; when the last block of
+                // this session answered less than 4 s ago the session cannot have timed out,
+                // so skip the 81 probe (saves ~0.35 s per cycle on the real car).
+                if (m_klineLastOk.isValid() && m_klineLastOk.elapsed() < 4000) {
+                    if (done) done(true);
+                    return;
+                }
+                // Otherwise verify the session with 81 (StartCommunication); the real
+                // vehicle never sends 3E, it uses 81 for both keepalive and session check.
                 m_elm->sendCommand("81", [this, done, targetMod](const QString &resp) {
                     // StartComm (81) - if we get C1 back, session is alive
                     if (resp.contains("C1") || resp.contains("c1")) {
@@ -943,6 +949,9 @@ void WJDiagnostics::readECULiveData(std::function<void(const ECUStatus&)> cb)
         m_kwp->readLocalData(ids->at(*step), [this, ecu, step, doNext, ids](const QByteArray &data) {
             if (!data.isEmpty()) {
                 parseECUBlock(ids->at(*step), data, *ecu);
+                m_klineLastOk.restart();
+            } else {
+                m_klineLastOk.invalidate();   // a failed read -> next cycle probes the session again
             }
             (*step)++;
             (*doNext)(); // No delay between reads
