@@ -377,14 +377,16 @@ void MainWindow::rebuildDashboard()
         fl->addWidget(m_dashFuelAdaptUnit);
 
         // Fuel Level sub-row (liters remaining)
-        m_dashFuelLevelVal = new QLabel("---");
+        // Tank line like the Android app: big cyan "DEPO %38", litres + sender voltage under it
+        m_dashFuelLevelVal = new QLabel("DEPO ---");
         m_dashFuelLevelVal->setAlignment(Qt::AlignCenter);
-        m_dashFuelLevelVal->setStyleSheet("color:#60b8a0;font-size:28px;font-weight:bold;"
+        m_dashFuelLevelVal->setStyleSheet("color:#40d0ff;font-size:28px;font-weight:bold;"
             "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;");
         fl->addWidget(m_dashFuelLevelVal);
-        m_dashFuelLevelUnit = new QLabel("L");
+        m_dashFuelLevelUnit = new QLabel("--- L");
         m_dashFuelLevelUnit->setAlignment(Qt::AlignCenter);
-        m_dashFuelLevelUnit->setStyleSheet("color:#406888;font-size:11px;border:none;background:transparent;");
+        m_dashFuelLevelUnit->setStyleSheet("color:#40d0ff;font-size:15px;font-weight:bold;"
+            "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;");
         fl->addWidget(m_dashFuelLevelUnit);
 
         g->addWidget(fuelCard, 0, 1, 2, 2);
@@ -1863,10 +1865,13 @@ void MainWindow::onECUDataUpdated(const TCMDiagnostics::ECUStatus &ecu)
     // Tank: 78L (resmi spec), liters = pct * 78.0 / 100
     if (m_dashFuelLevelVal && ecu.fuelLevel > 0) {
         double liters = ecu.fuelLevel * 78.0 / 100.0;
-        m_dashFuelLevelVal->setText(QString::number(liters, 'f', 1));
-        m_dashFuelLevelUnit->setText(QString("L (%1%)  %2 V").arg(ecu.fuelLevel, 0, 'f', 0).arg(ecu.fuelLevelV, 0, 'f', 2));
-        QString col = liters < 10 ? "#e04040" : liters < 20 ? "#d09030" : "#60b8a0";
+        m_dashFuelLevelVal->setText(QString("DEPO %") + QString::number(ecu.fuelLevel, 'f', 0));
+        m_dashFuelLevelUnit->setText(QString::fromUtf8("~%1 L  ·  %2 V").arg(liters, 0, 'f', 0).arg(ecu.fuelLevelV, 0, 'f', 2));
+        // Same thresholds / colours as the Android dashboard: <10 % red, <25 % orange, else cyan
+        QString col = ecu.fuelLevel < 10 ? "#ff4d4d" : ecu.fuelLevel < 25 ? "#ff8c1a" : "#40d0ff";
         m_dashFuelLevelVal->setStyleSheet(QString("color:%1;font-size:28px;font-weight:bold;"
+            "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;").arg(col));
+        m_dashFuelLevelUnit->setStyleSheet(QString("color:%1;font-size:15px;font-weight:bold;"
             "font-family:'Consolas','Courier New',monospace;border:none;background:transparent;").arg(col));
     }
     // Fuel display handled by updateDashboardFromLiveData (averaged values)
