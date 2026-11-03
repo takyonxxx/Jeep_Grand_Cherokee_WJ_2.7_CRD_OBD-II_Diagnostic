@@ -11,7 +11,9 @@ All commands and responses verified on real vehicle via BLE full block dumps and
 |---|---|
 | `ios-app/JeepWJDiag/` | Native iOS app (Swift/SwiftUI, Xcode project) — the version used on the car |
 | `qt-app/` | Qt6 C++ desktop/mobile app (`JeepWJDiag.pro`, `src/`, `include/`, Android/iOS/macOS packaging) |
-| `esp32-emulator/` | ESP32-S3 ELM327 emulator (PlatformIO) with real-vehicle response database and smoke-test engine model |
+| `esp32-emulator/` | ESP32-S3 firmware 1: ELM327 **emulator** (WiFi AP "WiFi_OBDII", real-vehicle response database, smoke-test engine model) |
+| `esp32-sniffer/` | ESP32-S3 firmware 2: passive WiFi **sniffer** of the real ELM327 link (records WJdiag-Pro traffic, see below) |
+| `android-app/elmsniff/` | ElmSniff APK: the head unit reads the sniffer over USB and writes the pcap |
 | `captures/pcap/` | Real-vehicle bus captures (ECU live, TCM live, all modules) — the ground truth for block layouts |
 | `ecu-firmware/` | EDC15C2 flash dumps (`293-822` = this car, stock; `293-822-egr-off` = EGR-off; `293-822-EGR-OFF-BOOST` = currently flashed: EGR-off + eco driver wish + launch boost target + launch fuel, checksum fixed; `409-438` = 2004 reference) and `293-822_maps.md` (extracted maps + applied-changes log) |
 | `docs/` | `RELAY_MAP.md` (full command / block reference), OBD-II pinout, screenshots; `STATUS.md` = current project status / what is flashed / pending work — read this first |
@@ -190,9 +192,20 @@ Verified from WJdiag-Pro capture 2026-10-28. Airbag = **0x58** (not 0x60). 0x60 
 
 **NRC 0x78 on DTC clear**: ECU may return `7F 14 78` (ResponsePending) before `54 00 00` (success). Both arrive in same ELM327 frame.
 
-## ESP32-S3 Emulator (PlatformIO / VS Code)
+## ESP32-S3 board: two firmwares
 
-PlatformIO project for VS Code. WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000. All block responses use exact real vehicle BLE hex data.
+One ESP32-S3 DevKitC board serves two jobs; only one firmware is on the board at a time. Both are PlatformIO
+projects, flashed over the board's **UART** USB port (the FTDI bridge, COM4 on the PC):
+
+```
+pio run -d esp32-emulator -t upload     # ELM327 emulator (bench testing of the apps)
+pio run -d esp32-sniffer  -t upload     # WiFi sniffer (recording WJdiag-Pro in the car)
+```
+
+### Firmware 1 — ELM327 emulator (`esp32-emulator/`)
+
+WiFi AP "WiFi_OBDII", IP 192.168.0.10, TCP 35000. All block responses use exact real vehicle BLE hex data.
+Newest TCP client wins (a stale session no longer blocks a new app), idle sessions expire after 90 s.
 
 ### Verified Behaviors
 - **ATFI two-part response**: `ATFI\rBUS INIT:\r` + 300ms delay + `OK\r\r>` (matches real ELM327 wire format)
@@ -224,18 +237,48 @@ The HTTP status page (http://192.168.0.10/) shows the live model state (phase, p
 ### Real-vehicle response timing
 Responses are delayed to match `captures/pcap/ecu_live.pcap`: ATZ ~900 ms, ATFI ~600 ms, `81` ~350 ms, `27 xx` ~450 ms, `21 xx` block reads ~300 ms (40 ms ECU latency + 2.5 ms per response byte + the ELM post-response wait). `ATST hh` (hex × 4 ms) and `ATAT0/1/2` are honoured, so the smoke test's `ATAT2` + `ATST 19` shortens reads to ~150 ms just like on a real adapter. `ATSIMDELAY0` switches to instant responses for fast bench runs, `ATSIMDELAY1` restores real timing (default, survives ATZ).
 
-## Capturing WJdiag-Pro traffic without root (PC relay)
+### Firmware 2 — WiFi sniffer (`esp32-sniffer/`) + ElmSniff APK: recording WJdiag-Pro
 
-When the head unit cannot record itself, put the PC between WJdiag-Pro and the WiFi ELM327:
-the PC joins `WiFi_OBDII`, shares it as a Windows **Mobile hotspot**, the head unit joins that
-hotspot, and WJdiag-Pro is pointed at the PC (hotspot IP, usually `192.168.137.1`, port 35000).
+WJdiag-Pro talks only to `192.168.0.10:35000` and has no address setting, so nothing can be put
+between it and the ELM327. The ELM's WiFi network is open (no encryption), so a third radio on the
+same channel hears every frame in the clear. The sniffer firmware never joins the network: it
+finds the `WiFi_OBDII` access point with a passive scan, locks its channel, switches the radio to
+promiscuous mode and streams the TCP port-35000 payloads of every frame as text lines over the
+UART USB port (`I <ch> <bssid>` once, `P <ms> <src>:<port> <dst>:<port> <hex>` per packet,
+`S <frames> <ip> <elm>` every 5 s). The ELM and the head unit do not notice it.
+
+Setup in the car (verified on the T527 head unit):
 
 ```
-python tools/elm_relay.py            # listens :35000, forwards to 192.168.0.10:35000
+OBD socket -- WiFi ELM327 (AP 192.168.0.10) ~~WiFi~~ head unit (WJdiag-Pro)
+                                                    |
+                                 ESP32 sniffer --USB (UART port)--> head unit, ElmSniff APK
 ```
 
-Everything is written to `captures/pcap/relay_<date>.pcap` (raw IPv4, Wireshark / `tools` readable)
-and `relay_<date>.txt` (timestamped TX/RX). Over Bluetooth the alternative is Android's
-"Bluetooth HCI snoop log" (Developer options), pulled with `adb bugreport` and opened in Wireshark
-(RFCOMM carries the same ELM327 text); it needs developer options and adb on the head unit.
+1. Flash `esp32-sniffer` onto the board (only when needed; it replaces the emulator).
+2. Install `android-app/ElmSniff.apk` on the head unit. Plug the board's UART USB port into the
+   head unit: the app opens itself (USB attach intent), asks for USB permission once and starts
+   recording. The screen shows `● KAYIT AÇIK`, the AP found (`ELM DİNLENİYOR · AP ch6 …`) and a
+   running packet / KB counter; an ESP32 command box accepts `scan`, `chan <n>`, `ssid <name>`.
+3. Use WJdiag-Pro normally (engine / transmission live data, DTCs). The foreground service keeps
+   recording while Pro is in front.
+4. Back in ElmSniff: **Durdur**, unplug the board, plug a USB stick, **USB'ye gönder** copies
+   `elmsniff_<date>.pcap` (raw IPv4 + TCP, the same layout as `captures/pcap/*.pcap`) and
+   `elmsniff_<date>.txt` (timestamped TX/RX text, `#` lines = ESP32 status) to `ElmSniff/` on the stick.
+
+Power: head-unit USB ports sag when the radio starts, which reset the board in a `BROWNOUT_RST`
+loop. The sniffer build therefore runs at 80 MHz, 2 dBm TX, passive scan, and switches the brownout
+detector off before the radio comes up; with that it runs on the T527 port. If a port is still too
+weak, power the board's other (native) USB port from a car charger and keep the data cable on the UART port.
+
+ElmSniff internals: a minimal FTDI (0403:6001) / CDC-ACM USB-serial driver (no library), a foreground
+service with wake lock, files in the app folder only (nothing is written to the stick live).
+`tools/esp32_sniff.py` does the same job on a PC (`--com COM4`) when a laptop is at hand.
+
+### Other capture routes
+
+`tools/elm_relay.py` is a PC man-in-the-middle (hotspot + relay to 192.168.0.10) that records pcap +
+text; it needs an app whose ELM address can be changed, so it does not work with WJdiag-Pro. Over
+Bluetooth, Android's "Bluetooth HCI snoop log" (Developer options, pulled with `adb bugreport`) shows
+the same ELM327 text as RFCOMM in Wireshark, but needs developer options and adb on the head unit.
 
