@@ -228,10 +228,11 @@ public class SniffService extends Service {
         } else if (line.startsWith("S ")) {
             String[] p = line.split(" ");
             if (p.length >= 4) { try { frames = Long.parseLong(p[1]); ipFrames = Long.parseLong(p[2]); } catch (Exception e) {} }
+            writeTxt("# " + mTs.format(new Date()) + " " + line);          // proves the serial link even with no ELM around
         } else if (line.startsWith("I ")) {
-            channelInfo = line.substring(2); addLog("[esp32] " + line); writeTxt("# " + line);
+            channelInfo = line.substring(2); addLog("[esp32] " + line); writeTxt("# " + mTs.format(new Date()) + " " + line);
         } else {
-            addLog("[esp32] " + line);
+            addLog("[esp32] " + line); writeTxt("# " + mTs.format(new Date()) + " " + line);   // scan results, errors
         }
     }
 
