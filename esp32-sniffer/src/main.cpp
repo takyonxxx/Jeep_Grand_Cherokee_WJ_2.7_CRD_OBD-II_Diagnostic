@@ -148,6 +148,12 @@ static void startSniff()
 
 void setup()
 {
+    // First thing, before anything draws current: the head unit's USB port sags when the
+    // radio comes up and the brownout detector then resets the board in a loop. Switch the
+    // detector off right away (the 19:11 log showed the reset hitting at WiFi.mode(), i.e.
+    // before the old location of this call).
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+    setCpuFrequencyMhz(80);
     Serial.begin(115200);
 #if ARDUINO_USB_CDC_ON_BOOT
     Serial0.begin(115200);
@@ -158,7 +164,8 @@ void setup()
     // run the CPU slower, keep the radio at minimum TX power (we only listen) and bring
     // the WiFi stack up step by step. The brownout detector is switched off last so a
     // short dip does not restart the board mid-capture.
-    setCpuFrequencyMhz(80);
+    out("brownout detector off, cpu 80 MHz; starting radio...");
+    delay(500);                              // let the port settle after the serial burst
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
     delay(300);
@@ -166,8 +173,7 @@ void setup()
     esp_wifi_set_ps(WIFI_PS_NONE);
     WiFi.disconnect();
     delay(500);
-    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
-    out("cpu 80 MHz, tx 2 dBm, brownout detector off");
+    out("radio up, tx 2 dBm");
     if (!findAp()) g_chan = 1;
     startSniff();
 }
