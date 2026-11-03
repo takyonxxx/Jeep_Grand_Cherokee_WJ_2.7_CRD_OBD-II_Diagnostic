@@ -223,3 +223,19 @@ The HTTP status page (http://192.168.0.10/) shows the live model state (phase, p
 
 ### Real-vehicle response timing
 Responses are delayed to match `captures/pcap/ecu_live.pcap`: ATZ ~900 ms, ATFI ~600 ms, `81` ~350 ms, `27 xx` ~450 ms, `21 xx` block reads ~300 ms (40 ms ECU latency + 2.5 ms per response byte + the ELM post-response wait). `ATST hh` (hex × 4 ms) and `ATAT0/1/2` are honoured, so the smoke test's `ATAT2` + `ATST 19` shortens reads to ~150 ms just like on a real adapter. `ATSIMDELAY0` switches to instant responses for fast bench runs, `ATSIMDELAY1` restores real timing (default, survives ATZ).
+
+## Capturing WJdiag-Pro traffic without root (PC relay)
+
+When the head unit cannot record itself, put the PC between WJdiag-Pro and the WiFi ELM327:
+the PC joins `WiFi_OBDII`, shares it as a Windows **Mobile hotspot**, the head unit joins that
+hotspot, and WJdiag-Pro is pointed at the PC (hotspot IP, usually `192.168.137.1`, port 35000).
+
+```
+python tools/elm_relay.py            # listens :35000, forwards to 192.168.0.10:35000
+```
+
+Everything is written to `captures/pcap/relay_<date>.pcap` (raw IPv4, Wireshark / `tools` readable)
+and `relay_<date>.txt` (timestamped TX/RX). Over Bluetooth the alternative is Android's
+"Bluetooth HCI snoop log" (Developer options), pulled with `adb bugreport` and opened in Wireshark
+(RFCOMM carries the same ELM327 text); it needs developer options and adb on the head unit.
+
