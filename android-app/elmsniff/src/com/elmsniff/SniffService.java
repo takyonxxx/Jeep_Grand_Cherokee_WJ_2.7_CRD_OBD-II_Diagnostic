@@ -31,7 +31,8 @@ import java.util.Map;
  * Foreground service: reads the ESP32 sniffer's text lines over USB-serial and writes
  *   elmsniff_<date>.pcap  (raw IPv4 + TCP, same layout as the ElmCap captures)
  *   elmsniff_<date>.txt   (timestamped TX/RX text, TX = towards the ELM)
- * into the app folder and, when a USB stick is mounted, onto the stick as well.
+ * into the app folder (temporary). "USB'ye gönder" in the activity copies the last session
+ * to a USB stick afterwards (the stick usually shares the port with the ESP32).
  * Runs on while WJdiag-Pro is in front (the head unit would otherwise kill a background activity).
  */
 public class SniffService extends Service {
@@ -44,8 +45,11 @@ public class SniffService extends Service {
     static volatile boolean running = false;
     static volatile String status = "bekliyor";
     static volatile long frames = 0, ipFrames = 0, elmFrames = 0, lines = 0;
+    static volatile long bytes = 0;              // ELM payload bytes captured this session
+    static volatile long lastPacketMs = 0;       // wall clock of the last ELM packet
     static volatile String channelInfo = "";
-    static volatile String pcapPath = "", usbPath = "";
+    static volatile String pcapPath = "", txtPath = "";
+    static final String PREFS = "elmsniff", P_PCAP = "lastPcap", P_TXT = "lastTxt";
     static final ArrayDeque<String> log = new ArrayDeque<>();
     private static final int LOG_MAX = 300;
 
@@ -59,7 +63,7 @@ public class SniffService extends Service {
     private volatile boolean mStop = false;
     private PowerManager.WakeLock mWake;
 
-    private FileOutputStream mPcap, mTxt, mPcapUsb, mTxtUsb;
+    private FileOutputStream mPcap, mTxt;
     private final Map<String, Integer> mSeq = new HashMap<>();
     private int mElmPort = 35000;
 
@@ -110,17 +114,9 @@ public class SniffService extends Service {
         File pc = new File(dir, "elmsniff_" + stamp + ".pcap"), tx = new File(dir, "elmsniff_" + stamp + ".txt");
         mPcap = new FileOutputStream(pc); mTxt = new FileOutputStream(tx);
         mPcap.write(pcapHeader());
-        pcapPath = pc.getAbsolutePath();
-        File usb = findUsbStick();
-        if (usb != null) {
-            try {
-                File d2 = new File(usb, "ElmSniff"); d2.mkdirs();
-                mPcapUsb = new FileOutputStream(new File(d2, "elmsniff_" + stamp + ".pcap"));
-                mTxtUsb = new FileOutputStream(new File(d2, "elmsniff_" + stamp + ".txt"));
-                mPcapUsb.write(pcapHeader());
-                usbPath = d2.getAbsolutePath();
-            } catch (Exception e) { usbPath = ""; mPcapUsb = null; mTxtUsb = null; }
-        } else usbPath = "";
+        pcapPath = pc.getAbsolutePath(); txtPath = tx.getAbsolutePath();
+        bytes = 0; elmFrames = 0; frames = 0; ipFrames = 0; lastPacketMs = 0;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(P_PCAP, pcapPath).putString(P_TXT, txtPath).apply();
     }
 
     static File findUsbStick() {
@@ -156,13 +152,11 @@ public class SniffService extends Service {
         mSeq.put(key, seq + payload.length);
         byte[] rec = b.array();
         mPcap.write(rec); mPcap.flush();
-        if (mPcapUsb != null) { try { mPcapUsb.write(rec); mPcapUsb.flush(); } catch (IOException e) { mPcapUsb = null; } }
     }
 
     private void writeTxt(String line) {
         byte[] d = (line + "\n").getBytes();
         try { mTxt.write(d); mTxt.flush(); } catch (IOException e) {}
-        if (mTxtUsb != null) { try { mTxtUsb.write(d); mTxtUsb.flush(); } catch (IOException e) { mTxtUsb = null; } }
     }
 
     private static byte[] ip4(String s) {
@@ -188,7 +182,7 @@ public class SniffService extends Service {
             openFiles();
             status = "dinliyor";
             addLog("USB açıldı: " + dev.getDeviceName() + "  " + String.format("%04X:%04X", dev.getVendorId(), dev.getProductId()));
-            addLog("kayıt: " + pcapPath + (usbPath.isEmpty() ? "" : "  +  " + usbPath));
+            addLog("kayıt: " + pcapPath);
             mSerial.write("scan\n".getBytes());
             byte[] buf = new byte[512];
             StringBuilder sb = new StringBuilder();
@@ -205,7 +199,7 @@ public class SniffService extends Service {
             addLog("hata: " + e);
         } finally {
             if (mSerial != null) mSerial.close();
-            for (FileOutputStream f : new FileOutputStream[]{ mPcap, mTxt, mPcapUsb, mTxtUsb }) { try { if (f != null) f.close(); } catch (IOException e) {} }
+            for (FileOutputStream f : new FileOutputStream[]{ mPcap, mTxt }) { try { if (f != null) f.close(); } catch (IOException e) {} }
             running = false;
             if (!status.startsWith("hata")) status = "durdu";
             try { if (mWake != null && mWake.isHeld()) mWake.release(); } catch (Exception e) {}
@@ -225,7 +219,7 @@ public class SniffService extends Service {
                 byte[] src = ip4(p[2].substring(0, c1)), dst = ip4(p[3].substring(0, c2));
                 int sport = Integer.parseInt(p[2].substring(c1 + 1)), dport = Integer.parseInt(p[3].substring(c2 + 1));
                 byte[] payload = unhex(p[4]);
-                elmFrames++;
+                elmFrames++; bytes += payload.length; lastPacketMs = System.currentTimeMillis();
                 writePcap(src, sport, dst, dport, payload);
                 String text = new String(payload, "ISO-8859-1").replace("\r", "\\r").replace("\n", "\\n");
                 String msg = mTs.format(new Date()) + " " + (dport == mElmPort ? "TX" : "RX") + " " + text;
